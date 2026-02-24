@@ -122,6 +122,10 @@ public:
     
     // 加载默认配置
     void loadDefaults();
+
+    // 日志配置
+    QString logLevel() const { return m_logLevel; }
+    void setLogLevel(const QString& level) { m_logLevel = level; }
     
 private:
     explicit AppConfig(QObject *parent = nullptr);
@@ -176,6 +180,9 @@ private:
     bool m_sendAsHex = false;
     bool m_autoSendNewline = true;
     QString m_newlineSequence = "\r\n";
+
+    // 日志级别: DEBUG/INFO/WARNING/ERROR
+    QString m_logLevel = "INFO";
 };
 
 #endif // APPCONFIG_H

@@ -48,7 +48,7 @@ public:
      * @return 初始化是否成功
      */
     bool initialize();
-    
+
     /**
      * @brief 启动应用（显示窗口，开始数据接收）
      */
@@ -83,6 +83,23 @@ public:
      * @return 创建的窗口指针
      */
     PlotWindow* createPlotWindow(PlotType type = CombinedPlot);
+    
+    /**
+     * @brief 将指令转发到串口模块（线程安全，使用QueuedConnection）
+     */
+    void sendCommand(const QString& command, bool isHex = false);
+
+signals:
+    /**
+     * @brief 应用启动信号
+     * @param success 启动是否成功
+     */
+    void started(bool success);
+    
+    /**
+     * @brief 应用停止信号
+     */
+    void stopped();
 
 private:
     /**

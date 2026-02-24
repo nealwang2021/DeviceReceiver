@@ -5,6 +5,7 @@
 #include <QRandomGenerator>
 #include <QTimer>
 #include <QRegularExpression>
+#include <QDataStream>
 #include <cstring>
 
 SerialReceiver::SerialReceiver(QObject *parent) : QObject(parent)
@@ -38,7 +39,9 @@ bool SerialReceiver::openSerial(const QString& portName, int baudRate)
         m_serialBuffer.clear();
         return true;
     } else {
-        qCritical() << QString("串口[%1]打开失败：%2").arg(portName).arg(m_serialPort->errorString());
+        QString err = QString("串口[%1]打开失败：%2").arg(portName).arg(m_serialPort->errorString());
+        qCritical() << err;
+        emit commandError(err);
         return false;
     }
 }
@@ -126,28 +129,56 @@ void SerialReceiver::processSerialBuffer()
 FrameData SerialReceiver::parseRawData(const QByteArray& rawFrame)
 {
     FrameData frame;
-    // ========== 替换为你的硬件实际解析逻辑 ==========
-    if (rawFrame.size() == FRAME_LENGTH) {
-        // 使用memcpy避免内存对齐问题
-        uint16_t frameId;
-        std::memcpy(&frameId, rawFrame.data() + 2, sizeof(uint16_t));
-        frame.frameId = frameId;
-        
-        float temperature;
-        std::memcpy(&temperature, rawFrame.data() + 4, sizeof(float));
-        frame.temperature = temperature;
-        
-        float humidity;
-        std::memcpy(&humidity, rawFrame.data() + 8, sizeof(float));
-        frame.humidity = humidity;
-        
-        double voltage;
-        std::memcpy(&voltage, rawFrame.data() + 12, sizeof(double));
-        frame.voltage = voltage;
-        
-        frame.isAlarm = (rawFrame[15] & 0x01) == 1;
+    // 使用安全解析，假定帧格式（小端）：
+    // [0-1] head(2) | [2-3] frameId(u16) | [4-7] temperature(float) | [8-11] humidity(float) | [12-15] voltage(float)
+    if (rawFrame.size() != FRAME_LENGTH) {
+        qWarning() << "解析错误：帧长度不匹配，期待" << FRAME_LENGTH << "实际" << rawFrame.size();
+        return frame;
     }
+
+    if (!rawFrame.startsWith(FRAME_HEAD)) {
+        qWarning() << "解析错误：帧头不匹配" << rawFrame.toHex();
+        return frame;
+    }
+
+    QDataStream ds(rawFrame);
+    ds.setByteOrder(QDataStream::LittleEndian);
+
+    quint16 head = 0;
+    ds >> head; // 读取并丢弃帧头
+
+    quint16 frameId = 0;
+    float temperature = 0.0f;
+    float humidity = 0.0f;
+    float voltage = 0.0f;
+
+    ds >> frameId;
+    ds >> temperature;
+    ds >> humidity;
+    ds >> voltage;
+
+    frame.frameId = static_cast<uint32_t>(frameId);
+    frame.temperature = temperature;
+    frame.humidity = humidity;
+    frame.voltage = voltage;
+
+    // 报警：若协议在最后字节具有标志位则使用该位，否则依据温度阈值进行判断
+    bool flagAlarm = false;
+    if (rawFrame.size() >= 16) {
+        quint8 lastByte = static_cast<quint8>(rawFrame.at(15));
+        flagAlarm = (lastByte & 0x01) == 0x01;
+    }
+
+    // 温度阈值使用默认值（如需从配置读取，可在此处扩展）
+    const float temperatureThreshold = 80.0f;
+    frame.isAlarm = flagAlarm || (frame.temperature > temperatureThreshold);
+
     return frame;
+}
+
+FrameData SerialReceiver::parseRawFrameForTest(const QByteArray& rawFrame)
+{
+    return parseRawData(rawFrame);
 }
 
 void SerialReceiver::sendCommand(const QByteArray& command)

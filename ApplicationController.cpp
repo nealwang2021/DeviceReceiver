@@ -10,6 +10,8 @@
 #include <QMetaObject>
 #include <QApplication>
 #include <QDebug>
+#include <QMessageBox>
+#include <QPushButton>
 
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent)
@@ -63,15 +65,15 @@ bool ApplicationController::initialize()
         return false;
     }
     
-    // 再初始化默认绘图窗口（向后兼容）
-    if (!initDefaultPlotWindow()) {
-        qCritical() << "初始化默认绘图窗口失败";
+    // 先初始化主界面窗口（以便获取MDI区域）
+    if (!initMainWindow()) {
+        qCritical() << "初始化主界面窗口失败";
         return false;
     }
     
-    // 初始化主界面窗口
-    if (!initMainWindow()) {
-        qCritical() << "初始化主界面窗口失败";
+    // 再初始化默认绘图窗口（通过MainWindow的MDI区域）
+    if (!initDefaultPlotWindow()) {
+        qCritical() << "初始化默认绘图窗口失败";
         return false;
     }
     
@@ -86,37 +88,84 @@ void ApplicationController::start()
         return;
     }
     
+    // 确保串口线程在运行状态
+    if (m_serialThread && !m_serialThread->isRunning()) {
+        qInfo() << "串口线程未运行，重新启动线程";
+        m_serialThread->start();
+    }
+    
     // 显示绘图窗口
     if (m_plotWindow) {
         m_plotWindow->show();
     }
     
-    // 启动数据接收
+    // 启动数据接收，支持重试/切换到模拟数据
+    bool startedReceiving = false;
     if (m_serialReceiver) {
         if (m_config.useMockData) {
-            // 使用模拟数据
-            QMetaObject::invokeMethod(m_serialReceiver.get(), "startMockData", 
-                                      Qt::QueuedConnection, 
+            QMetaObject::invokeMethod(m_serialReceiver.get(), "startMockData",
+                                      Qt::QueuedConnection,
                                       Q_ARG(int, m_config.mockDataIntervalMs));
             qInfo() << "已启动模拟数据，间隔" << m_config.mockDataIntervalMs << "ms";
+            startedReceiving = true;
         } else {
-            // 使用真实串口
-            QMetaObject::invokeMethod(m_serialReceiver.get(), "openSerial", 
-                                      Qt::QueuedConnection,
-                                      Q_ARG(QString, m_config.serialPort), 
-                                      Q_ARG(int, m_config.baudRate));
-            qInfo() << "已打开串口" << m_config.serialPort << "，波特率" << m_config.baudRate;
+            // 尝试打开真实串口，允许用户重试或切换到模拟数据
+            while (true) {
+                bool opened = false;
+                QMetaObject::invokeMethod(m_serialReceiver.get(), "openSerial",
+                                          Qt::BlockingQueuedConnection,
+                                          Q_RETURN_ARG(bool, opened),
+                                          Q_ARG(QString, m_config.serialPort),
+                                          Q_ARG(int, m_config.baudRate));
+
+                if (opened) {
+                    qInfo() << "已打开串口" << m_config.serialPort << "，波特率" << m_config.baudRate;
+                    startedReceiving = true;
+                    break;
+                }
+
+                // 打开失败，询问用户操作
+                QMessageBox msgBox;
+                msgBox.setWindowTitle("串口打开失败");
+                msgBox.setText(QString("无法打开串口 %1 (波特率 %2)").arg(m_config.serialPort).arg(m_config.baudRate));
+                msgBox.setInformativeText("请选择重试、使用模拟数据或取消。");
+                QPushButton* retryBtn = msgBox.addButton("重试", QMessageBox::AcceptRole);
+                QPushButton* mockBtn = msgBox.addButton("使用模拟数据", QMessageBox::DestructiveRole);
+                msgBox.addButton(QMessageBox::Cancel);
+                msgBox.exec();
+
+                if (msgBox.clickedButton() == retryBtn) {
+                    continue; // 再次尝试打开
+                } else if (msgBox.clickedButton() == mockBtn) {
+                    // 切换为模拟数据
+                    m_config.useMockData = true;
+                    QMetaObject::invokeMethod(m_serialReceiver.get(), "startMockData",
+                                              Qt::QueuedConnection,
+                                              Q_ARG(int, m_config.mockDataIntervalMs));
+                    qInfo() << "切换到模拟数据，间隔" << m_config.mockDataIntervalMs << "ms";
+                    startedReceiving = true;
+                    break;
+                } else {
+                    // 取消，放弃启动数据接收
+                    qInfo() << "用户取消串口打开，放弃启动数据接收";
+                    startedReceiving = false;
+                    break;
+                }
+            }
         }
     }
-    
-    // 启动绘图窗口管理器的数据更新
-    if (m_plotWindowManager) {
+
+    // 启动绘图窗口管理器的数据更新（仅在已开始接收时）
+    if (startedReceiving && m_plotWindowManager) {
         m_plotWindowManager->startUpdates();
         qInfo() << "已启动绘图窗口管理器数据更新";
     }
+
+    m_isRunning = startedReceiving;
+    qInfo() << "应用启动完成，接收状态:" << m_isRunning;
     
-    m_isRunning = true;
-    qInfo() << "应用已启动";
+    // 发射启动信号
+    emit started(m_isRunning);
 }
 
 void ApplicationController::stop()
@@ -127,19 +176,24 @@ void ApplicationController::stop()
     
     qInfo() << "正在停止应用...";
     
-    // 停止数据接收
+    // 停止数据接收，但保持线程运行以便重新连接
     if (m_serialReceiver) {
-        m_serialReceiver->closeSerial();
+        QMetaObject::invokeMethod(m_serialReceiver.get(), "closeSerial",
+                                  Qt::BlockingQueuedConnection);
+        qInfo() << "串口已关闭，串口接收器线程保持运行";
     }
     
-    // 停止串口线程
-    if (m_serialThread) {
-        m_serialThread->quit();
-        if (!m_serialThread->wait(1000)) {
-            qWarning() << "串口线程等待超时，强制终止";
-            m_serialThread->terminate();
-            m_serialThread->wait();
-        }
+    // 不再停止串口线程，保持运行以便重新连接
+    // 但需要确保线程仍在运行，如果线程意外停止，则重新启动
+    if (m_serialThread && !m_serialThread->isRunning()) {
+        qInfo() << "串口线程未运行，重新启动线程";
+        m_serialThread->start();
+    }
+    
+    // 停止绘图窗口管理器的数据更新
+    if (m_plotWindowManager) {
+        m_plotWindowManager->stopUpdates();
+        qInfo() << "绘图窗口管理器数据更新已停止";
     }
     
     // 隐藏窗口
@@ -149,6 +203,9 @@ void ApplicationController::stop()
     
     m_isRunning = false;
     qInfo() << "应用已停止";
+    
+    // 发射停止信号
+    emit stopped();
 }
 
 PlotWindow* ApplicationController::plotWindow() const
@@ -219,15 +276,42 @@ bool ApplicationController::initPlotWindowManager()
 
 bool ApplicationController::initDefaultPlotWindow()
 {
-    // 创建默认绘图窗口（向后兼容）
-    PlotWindowManager::PlotType windowType = static_cast<PlotWindowManager::PlotType>(m_config.initialWindowType);
-    m_plotWindow.reset(m_plotWindowManager->createWindow(windowType));
-    if (!m_plotWindow) {
-        qCritical() << "创建默认绘图窗口失败";
+    if (!m_mainWindow || !m_plotWindowManager) {
+        qCritical() << "无法创建默认绘图窗口：主窗口或窗口管理器未初始化";
         return false;
     }
     
-    qInfo() << "默认绘图窗口已初始化";
+    // 在主窗口的MDI区域中创建默认绘图窗口
+    PlotWindowManager::PlotType windowType = static_cast<PlotWindowManager::PlotType>(m_config.initialWindowType);
+    
+    // 获取MainWindow的MDI区域（需要添加访问方法）
+    // 暂时使用一个变通方法：通过查找子对象获取QMdiArea
+    QMdiArea* mdiArea = m_mainWindow->findChild<QMdiArea*>();
+    if (!mdiArea) {
+        qCritical() << "无法获取主窗口的MDI区域";
+        // 回退：创建独立窗口
+        m_plotWindow.reset(m_plotWindowManager->createWindow(windowType));
+        if (!m_plotWindow) {
+            qCritical() << "创建默认绘图窗口失败";
+            return false;
+        }
+        qInfo() << "创建独立默认绘图窗口";
+        return true;
+    }
+    
+    // 在MDI区域中创建窗口
+    PlotWindow* plotWindow = m_plotWindowManager->createWindowInMdiArea(mdiArea, windowType);
+    if (!plotWindow) {
+        qCritical() << "在MDI区域中创建默认绘图窗口失败";
+        return false;
+    }
+    
+    // 存储引用（但不接管所有权，因为MDI区域会管理窗口）
+    // 注意：QScopedPointer需要释放所有权，因为MDI区域已经管理窗口
+    m_plotWindow.take(); // 释放之前可能持有的指针
+    m_plotWindow.reset(plotWindow); // 存储引用，但后续不会删除，因为MDI区域管理
+    
+    qInfo() << "默认绘图窗口已在MDI区域中初始化";
     return true;
 }
 
@@ -246,11 +330,43 @@ bool ApplicationController::initMainWindow()
     // 初始化主窗口界面
     m_mainWindow->initialize();
     
+    // 将串口模块的信号连接到主窗口用于显示与错误提示（跨线程使用QueuedConnection）
+    if (m_serialReceiver && m_mainWindow) {
+        QObject::connect(m_serialReceiver.get(), &SerialReceiver::dataReceived,
+                         m_mainWindow.get(), &MainWindow::onDataReceived, Qt::QueuedConnection);
+        QObject::connect(m_serialReceiver.get(), &SerialReceiver::commandSent,
+                         m_mainWindow.get(), &MainWindow::onCommandSent, Qt::QueuedConnection);
+        QObject::connect(m_serialReceiver.get(), &SerialReceiver::commandError,
+                         m_mainWindow.get(), &MainWindow::onCommandError, Qt::QueuedConnection);
+    }
+    
+    // 连接应用控制器信号到主窗口的更新连接状态
+    if (m_mainWindow) {
+        QObject::connect(this, &ApplicationController::started,
+                         m_mainWindow.get(), &MainWindow::updateConnectionStatus, Qt::QueuedConnection);
+        QObject::connect(this, &ApplicationController::stopped,
+                         m_mainWindow.get(), [this]() { m_mainWindow->updateConnectionStatus(false); }, Qt::QueuedConnection);
+    }
+    
     // 显示主窗口
     m_mainWindow->show();
     
     qInfo() << "主界面窗口已初始化并显示";
     return true;
+}
+
+void ApplicationController::sendCommand(const QString& command, bool isHex)
+{
+    if (!m_serialReceiver) {
+        qWarning() << "发送指令失败：串口模块未初始化";
+        return;
+    }
+
+    // 使用 QueuedConnection 调用，确保跨线程安全
+    QMetaObject::invokeMethod(m_serialReceiver.get(), "sendCommand",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, command),
+                              Q_ARG(bool, isHex));
 }
 
 PlotWindowManager* ApplicationController::plotWindowManager() const

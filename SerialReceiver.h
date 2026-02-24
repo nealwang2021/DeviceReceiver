@@ -14,6 +14,9 @@ public:
     explicit SerialReceiver(QObject *parent = nullptr);
     ~SerialReceiver();
 
+    // 测试用：对外暴露解析函数以便单元测试调用
+    Q_INVOKABLE FrameData parseRawFrameForTest(const QByteArray& rawFrame);
+
     // 串口操作接口
     bool openSerial(const QString& portName, int baudRate = 115200);
     void closeSerial();

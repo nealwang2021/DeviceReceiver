@@ -601,7 +601,7 @@ void MainWindow::onConnectClicked()
 {
     if (m_appController) {
         m_appController->start();
-        updateConnectionStatus(true);
+        updateConnectionStatus(m_appController->isRunning());
     }
 }
 
@@ -615,6 +615,7 @@ void MainWindow::onDisconnectClicked()
 
 void MainWindow::onUseMockDataChanged(bool use)
 {
+    Q_UNUSED(use)
     // 这个功能将在ApplicationController中处理
 }
 
@@ -646,8 +647,16 @@ void MainWindow::onSendClicked()
     // 在监控区显示发送的指令
     addDataToMonitor(command, isHex, false);
     
-    // TODO: 通过ApplicationController发送指令到SerialReceiver
-    // 这需要在ApplicationController中添加发送接口
+    // 通过 ApplicationController 转发指令到串口模块（线程安全）
+    if (m_appController) {
+        QString outCmd = command;
+        if (!isHex && !newline.isEmpty()) {
+            outCmd += newline;
+        }
+        m_appController->sendCommand(outCmd, isHex);
+    } else {
+        QMessageBox::warning(this, "错误", "未初始化应用控制器，无法发送指令");
+    }
     
     // 清空输入框
     if (m_autoNewlineCheck->isChecked()) {
@@ -670,6 +679,7 @@ void MainWindow::onCommandHistoryDoubleClicked(const QModelIndex& index)
 
 void MainWindow::onSendFormatChanged(bool isHex)
 {
+    Q_UNUSED(isHex)
     // 更新显示格式
 }
 

@@ -54,13 +54,36 @@ goto :eof
 :args_done
 echo 构建类型: %BUILD_TYPE%
 
-REM 1. 检查Visual Studio环境
+REM 1. 检查Visual Studio环境（优先使用环境变量）
 echo.
 echo [1/5] 设置Visual Studio开发环境...
-::set VCVARS="C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsall.bat"
-set VCVARS="C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat"
+
+REM 优先使用已配置的 VCVARS 路径
+if defined VCVARS (
+    echo 使用 VCVARS 环境变量: %VCVARS%
+) else (
+    REM 尝试使用 VSINSTALLDIR 环境变量
+    if defined VSINSTALLDIR (
+        set VCVARS="%VSINSTALLDIR%VC\Auxiliary\Build\vcvarsall.bat"
+    )
+)
+
+REM 如果仍未找到，尝试常见安装路径（VS2019/VS2022）
+if not defined VCVARS (
+    if exist "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat" (
+        set VCVARS="C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat"
+    ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" (
+        set VCVARS="C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat"
+    )
+)
+
+if not defined VCVARS (
+    echo 错误: 未能确定 vcvarsall.bat 的位置。请设置 VCVARS 或 VSINSTALLDIR 环境变量，或将 Visual Studio 安装路径添加到系统中。
+    exit /b 1
+)
+
 if not exist %VCVARS% (
-    echo 错误: 找不到 vcvarsall.bat
+    echo 错误: 找到的 vcvarsall.bat 路径不存在: %VCVARS%
     exit /b 1
 )
 
@@ -72,13 +95,43 @@ if errorlevel 1 (
 chcp 936 >nul
 echo VS环境设置成功
 
-REM 2. 检查Qt
+REM 2. 检查Qt（优先使用环境变量或 PATH 中的 qmake）
 echo.
 echo [2/5] 检查Qt开发环境...
-::set QMAKE="C:\Qt\5.15.2\msvc2019_64\bin\qmake.exe"
-set QMAKE="C:\Qt\Qt5.15.2\5.15.2\msvc2019_64\bin\qmake.exe"
+
+REM 如果外部已定义 QMAKE，优先使用
+if defined QMAKE (
+    echo 使用 QMAKE 环境变量: %QMAKE%
+)
+
+REM 否则尝试使用 QTDIR 环境变量
+if not defined QMAKE if defined QTDIR (
+    set QMAKE="%QTDIR%\bin\qmake.exe"
+)
+
+REM 否则尝试在 PATH 中查找 qmake
+if not defined QMAKE (
+    for /f "usebackq tokens=*" %%i in (`where qmake 2^>nul`) do (
+        set QMAKE=%%i
+        goto :qmake_found
+    )
+)
+:qmake_found
+
+if not defined QMAKE (
+    REM 兜底旧的硬编码路径（保留以兼容旧环境）
+    if exist "C:\Qt\Qt5.15.2\5.15.2\msvc2019_64\bin\qmake.exe" (
+        set QMAKE="C:\Qt\Qt5.15.2\5.15.2\msvc2019_64\bin\qmake.exe"
+    )
+)
+
+if not defined QMAKE (
+    echo 错误: 未能找到 qmake。请设置 QTDIR/QMAKE 环境变量或将 Qt 的 bin 添加到 PATH。
+    exit /b 1
+)
+
 if not exist %QMAKE% (
-    echo 错误: 找不到 qmake.exe
+    echo 错误: 找到的 qmake 路径不存在: %QMAKE%
     exit /b 1
 )
 

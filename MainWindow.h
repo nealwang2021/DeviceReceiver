@@ -66,6 +66,12 @@ public:
      */
     ApplicationController* appController() const { return m_appController; }
 
+public slots:
+    // 数据接收槽函数（对外可见以允许跨模块连接）
+    void onDataReceived(const QByteArray& data, bool isHex = false);
+    void onCommandSent(const QByteArray& command);
+    void onCommandError(const QString& error);
+
 protected:
     /**
      * @brief 关闭事件处理
@@ -98,10 +104,7 @@ private slots:
     void onShowPlotPanelChanged(bool show);
     void onShowMonitorPanelChanged(bool show);
     
-    // 数据接收槽函数
-    void onDataReceived(const QByteArray& data, bool isHex = false);
-    void onCommandSent(const QByteArray& command);
-    void onCommandError(const QString& error);
+    // （这些槽已移至 public slots）
     
     // 定时器槽函数
     void onUpdateTimer();

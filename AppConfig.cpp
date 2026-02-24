@@ -55,6 +55,8 @@ bool AppConfig::loadFromFile(const QString& filename)
     
     // 加载报警配置
     m_temperatureAlarmThreshold = settings.value("Alarm/TemperatureThreshold", m_temperatureAlarmThreshold).toFloat();
+    // 日志配置
+    m_logLevel = settings.value("Log/Level", m_logLevel).toString();
     
     qInfo() << "配置文件加载成功：" << filename;
     return true;
@@ -89,6 +91,8 @@ bool AppConfig::saveToFile(const QString& filename)
     
     // 保存报警配置
     settings.setValue("Alarm/TemperatureThreshold", m_temperatureAlarmThreshold);
+    // 保存日志配置
+    settings.setValue("Log/Level", m_logLevel);
     
     settings.sync();
     
@@ -117,6 +121,7 @@ void AppConfig::loadDefaults()
     m_temperatureAlarmThreshold = 80.0f;
     m_appTitle = "实时数据监控";
     m_windowSize = QSize(800, 600);
+    m_logLevel = "INFO";
     
     qInfo() << "已加载默认配置";
 }
