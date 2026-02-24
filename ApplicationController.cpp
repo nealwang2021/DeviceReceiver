@@ -2,6 +2,7 @@
 #include "DataCacheManager.h"
 #include "SerialReceiver.h"
 #include "PlotWindow.h"
+#include "PlotWindowManager.h"
 #include "DataProcessor.h"
 #include "AppConfig.h"
 #include <QThread>
@@ -12,6 +13,7 @@
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent)
     , m_cacheManager(nullptr)
+    , m_plotWindowManager(nullptr)
 {
     qInfo() << "应用控制器已创建";
     
@@ -54,8 +56,15 @@ bool ApplicationController::initialize()
         return false;
     }
     
-    if (!initPlotWindow()) {
-        qCritical() << "初始化绘图窗口失败";
+    // 先初始化绘图窗口管理器
+    if (!initPlotWindowManager()) {
+        qCritical() << "初始化绘图窗口管理器失败";
+        return false;
+    }
+    
+    // 再初始化默认绘图窗口（向后兼容）
+    if (!initDefaultPlotWindow()) {
+        qCritical() << "初始化默认绘图窗口失败";
         return false;
     }
     
@@ -91,6 +100,12 @@ void ApplicationController::start()
                                       Q_ARG(int, m_config.baudRate));
             qInfo() << "已打开串口" << m_config.serialPort << "，波特率" << m_config.baudRate;
         }
+    }
+    
+    // 启动绘图窗口管理器的数据更新
+    if (m_plotWindowManager) {
+        m_plotWindowManager->startUpdates();
+        qInfo() << "已启动绘图窗口管理器数据更新";
     }
     
     m_isRunning = true;
@@ -183,16 +198,53 @@ bool ApplicationController::initDataProcessor()
     return true;
 }
 
-bool ApplicationController::initPlotWindow()
+bool ApplicationController::initPlotWindowManager()
 {
-    m_plotWindow.reset(new PlotWindow);
-    if (!m_plotWindow) {
-        qCritical() << "创建绘图窗口失败";
+    m_plotWindowManager = PlotWindowManager::instance();
+    if (!m_plotWindowManager) {
+        qCritical() << "无法获取绘图窗口管理器实例";
         return false;
     }
     
-    qInfo() << "绘图窗口已初始化";
+    qInfo() << "绘图窗口管理器已初始化";
     return true;
+}
+
+bool ApplicationController::initDefaultPlotWindow()
+{
+    // 创建默认绘图窗口（向后兼容）
+    PlotWindowManager::PlotType windowType = static_cast<PlotWindowManager::PlotType>(m_config.initialWindowType);
+    m_plotWindow.reset(m_plotWindowManager->createWindow(windowType));
+    if (!m_plotWindow) {
+        qCritical() << "创建默认绘图窗口失败";
+        return false;
+    }
+    
+    qInfo() << "默认绘图窗口已初始化";
+    return true;
+}
+
+PlotWindowManager* ApplicationController::plotWindowManager() const
+{
+    return m_plotWindowManager;
+}
+
+PlotWindow* ApplicationController::createPlotWindow(PlotType type)
+{
+    if (!m_plotWindowManager) {
+        qWarning() << "绘图窗口管理器未初始化";
+        return nullptr;
+    }
+    
+    // 将ApplicationController::PlotType转换为PlotWindowManager::PlotType
+    PlotWindowManager::PlotType windowType = static_cast<PlotWindowManager::PlotType>(type);
+    PlotWindow* window = m_plotWindowManager->createWindow(windowType);
+    if (window) {
+        window->show();
+        qInfo() << "创建新绘图窗口:" << window->windowTitle();
+    }
+    
+    return window;
 }
 
 void ApplicationController::cleanup()
@@ -211,7 +263,11 @@ void ApplicationController::cleanup()
     // 销毁线程
     m_serialThread.reset();
     
-    // 注意：缓存管理器是单例，不在这里销毁
+    // 清理绘图窗口管理器（单例，由管理器自身管理销毁）
+    if (m_plotWindowManager) {
+        PlotWindowManager::destroy();
+        m_plotWindowManager = nullptr;
+    }
     
     qInfo() << "应用资源已清理";
 }

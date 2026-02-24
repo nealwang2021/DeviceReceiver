@@ -10,6 +10,7 @@ class SerialReceiver;
 class PlotWindow;
 class DataProcessor;
 class AppConfig;
+class PlotWindowManager;
 class QThread;
 
 /**
@@ -21,6 +22,15 @@ class ApplicationController : public QObject
 {
     Q_OBJECT
 public:
+    // PlotWindowManager::PlotType的前向声明
+    enum PlotType {
+        CombinedPlot,
+        TemperaturePlot,
+        HumidityPlot,
+        VoltagePlot,
+        HistoryPlot
+    };
+
     /**
      * @brief 构造函数
      * @param parent 父对象指针
@@ -49,16 +59,29 @@ public:
     void stop();
     
     /**
-     * @brief 获取绘图窗口指针（用于在main中显示）
+     * @brief 获取绘图窗口指针（用于向后兼容）
      * @return PlotWindow指针，如果未初始化则返回nullptr
      */
     PlotWindow* plotWindow() const;
+    
+    /**
+     * @brief 获取PlotWindowManager实例
+     * @return PlotWindowManager指针
+     */
+    PlotWindowManager* plotWindowManager() const;
     
     /**
      * @brief 检查应用是否正在运行
      * @return 运行状态
      */
     bool isRunning() const { return m_isRunning; }
+
+    /**
+     * @brief 创建新的绘图窗口
+     * @param type 窗口类型
+     * @return 创建的窗口指针
+     */
+    PlotWindow* createPlotWindow(PlotType type = CombinedPlot);
 
 private:
     /**
@@ -80,10 +103,16 @@ private:
     bool initDataProcessor();
     
     /**
-     * @brief 初始化绘图窗口
+     * @brief 初始化绘图窗口管理器
      * @return 初始化是否成功
      */
-    bool initPlotWindow();
+    bool initPlotWindowManager();
+    
+    /**
+     * @brief 初始化默认绘图窗口（向后兼容）
+     * @return 初始化是否成功
+     */
+    bool initDefaultPlotWindow();
     
     /**
      * @brief 清理所有资源
@@ -97,8 +126,9 @@ private:
     DataCacheManager* m_cacheManager = nullptr;
     QScopedPointer<QThread> m_serialThread;
     QScopedPointer<SerialReceiver> m_serialReceiver;
-    QScopedPointer<PlotWindow> m_plotWindow;
+    QScopedPointer<PlotWindow> m_plotWindow;  // 向后兼容的默认窗口
     QScopedPointer<DataProcessor> m_dataProcessor;
+    PlotWindowManager* m_plotWindowManager = nullptr;  // 绘图窗口管理器
     
     // 配置参数（后续可迁移到AppConfig类）
     struct {
@@ -108,6 +138,8 @@ private:
         int baudRate = 115200;           // 波特率
         bool useMockData = true;         // 是否使用模拟数据
         int mockDataIntervalMs = 100;    // 模拟数据间隔（毫秒）
+        int initialWindowCount = 1;      // 初始窗口数量
+        PlotType initialWindowType = CombinedPlot; // 初始窗口类型
     } m_config;
 };
 

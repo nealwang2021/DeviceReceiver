@@ -104,7 +104,8 @@ SOURCES += main.cpp \
            PlotWindow.cpp \
            DataProcessor.cpp \
            ApplicationController.cpp \
-           AppConfig.cpp
+           AppConfig.cpp \
+           PlotWindowManager.cpp
 
 # 头文件列表
 HEADERS += FrameData.h \
@@ -113,7 +114,8 @@ HEADERS += FrameData.h \
            PlotWindow.h \
            DataProcessor.h \
            ApplicationController.h \
-           AppConfig.h
+           AppConfig.h \
+           PlotWindowManager.h
 
 # 编译选项
 !msvc {

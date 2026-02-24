@@ -57,7 +57,8 @@ echo 构建类型: %BUILD_TYPE%
 REM 1. 检查Visual Studio环境
 echo.
 echo [1/5] 设置Visual Studio开发环境...
-set VCVARS="C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsall.bat"
+::set VCVARS="C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsall.bat"
+set VCVARS="C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat"
 if not exist %VCVARS% (
     echo 错误: 找不到 vcvarsall.bat
     exit /b 1
@@ -74,7 +75,8 @@ echo VS环境设置成功
 REM 2. 检查Qt
 echo.
 echo [2/5] 检查Qt开发环境...
-set QMAKE="C:\Qt\5.15.2\msvc2019_64\bin\qmake.exe"
+::set QMAKE="C:\Qt\5.15.2\msvc2019_64\bin\qmake.exe"
+set QMAKE="C:\Qt\Qt5.15.2\5.15.2\msvc2019_64\bin\qmake.exe"
 if not exist %QMAKE% (
     echo 错误: 找不到 qmake.exe
     exit /b 1

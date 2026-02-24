@@ -1,5 +1,4 @@
 ﻿#include "PlotWindow.h"
-#include "DataCacheManager.h"
 #include <QVBoxLayout>
 #include <QDateTime>
 #include <QDebug>
@@ -20,20 +19,18 @@ PlotWindow::PlotWindow(QWidget *parent) : QWidget(parent)
     // 初始化绘图样式
     initPlot();
 
-    // 绘图定时器（20Hz刷新，50ms间隔）
+    // 保留定时器用于平滑动画（可选，可以移除或保留）
     m_refreshTimer = new QTimer(this);
     m_refreshTimer->setInterval(50);
-    connect(m_refreshTimer, &QTimer::timeout, this, &PlotWindow::onRefreshTimer);
-    m_refreshTimer->start();
-
-    // 连接报警信号
-    connect(DataCacheManager::instance(), &DataCacheManager::criticalFrameReceived,
-            this, &PlotWindow::onCriticalFrame);
+    // 不再连接onRefreshTimer，数据由PlotWindowManager提供
+    // m_refreshTimer->start(); // 暂时不启动，等待数据更新
 }
 
 PlotWindow::~PlotWindow()
 {
-    m_refreshTimer->stop();
+    if (m_refreshTimer) {
+        m_refreshTimer->stop();
+    }
 }
 
 void PlotWindow::initPlot()
@@ -65,12 +62,24 @@ void PlotWindow::initPlot()
     m_plot->yAxis->setTickLabelFont(QFont("Microsoft YaHei", 8));
 }
 
-void PlotWindow::onRefreshTimer()
+void PlotWindow::onDataUpdated(const QVector<FrameData>& frames)
 {
-    // 批量拉取最近5帧数据（减少缓存访问次数）
-    auto frames = DataCacheManager::instance()->getLastNFrames(5);
-    if (frames.isEmpty()) return;
+    if (frames.isEmpty()) {
+        return;
+    }
+    
+    // 更新绘图数据
+    updatePlotData(frames);
+    
+    // 如果定时器未启动，可以启动用于平滑动画
+    if (m_refreshTimer && !m_refreshTimer->isActive()) {
+        // 可选：启动定时器用于平滑重绘
+        // m_refreshTimer->start();
+    }
+}
 
+void PlotWindow::updatePlotData(const QVector<FrameData>& frames)
+{
     // 更新本地绘图数据
     for (const auto& frame : frames) {
         m_xTime.append(frame.timestamp);
