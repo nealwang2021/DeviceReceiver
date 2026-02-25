@@ -3,7 +3,7 @@
 #include <QDateTime>
 #include <QDebug>
 
-PlotWindow::PlotWindow(QWidget *parent) : QWidget(parent)
+PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
 {
     // 窗口基础配置
     setWindowTitle("实时数据监控");

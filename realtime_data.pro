@@ -102,6 +102,9 @@ SOURCES += main.cpp \
            DataCacheManager.cpp \
            SerialReceiver.cpp \
            PlotWindow.cpp \
+           PlotWindowBase.cpp \
+           HeatMapPlotWindow.cpp \
+           ArrayPlotWindow.cpp \
            DataProcessor.cpp \
            ApplicationController.cpp \
            AppConfig.cpp \
@@ -113,6 +116,9 @@ HEADERS += FrameData.h \
            DataCacheManager.h \
            SerialReceiver.h \
            PlotWindow.h \
+           PlotWindowBase.h \
+           HeatMapPlotWindow.h \
+           ArrayPlotWindow.h \
            DataProcessor.h \
            ApplicationController.h \
            AppConfig.h \

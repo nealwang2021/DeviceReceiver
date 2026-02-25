@@ -1,5 +1,7 @@
 ﻿#include "PlotWindowManager.h"
 #include "PlotWindow.h"
+#include "HeatMapPlotWindow.h"
+#include "ArrayPlotWindow.h"
 #include "DataCacheManager.h"
 #include <QMdiArea>
 #include <QMdiSubWindow>
@@ -77,43 +79,51 @@ void PlotWindowManager::cleanup()
 
 PlotWindow* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
 {
-    // 创建PlotWindow实例
-    PlotWindow* window = new PlotWindow(parent);
+    PlotWindow* window = nullptr;
+    QString title;
+
+    switch (type) {
+    case CombinedPlot:
+        window = new PlotWindow(parent);
+        title = "温湿度监控";
+        break;
+    case TemperaturePlot:
+        window = new PlotWindow(parent);
+        title = "温度监控";
+        break;
+    case HumidityPlot:
+        window = new PlotWindow(parent);
+        title = "湿度监控";
+        break;
+    case VoltagePlot:
+        window = new PlotWindow(parent);
+        title = "电压监控";
+        break;
+    case HistoryPlot:
+        window = new PlotWindow(parent);
+        title = "历史数据";
+        break;
+    case HeatmapPlot:
+        window = new HeatMapPlotWindow(parent);
+        title = "热力图";
+        break;
+    case ArrayPlot:
+        window = new ArrayPlotWindow(parent);
+        title = "阵列图";
+        break;
+    default:
+        window = new PlotWindow(parent);
+        title = "温湿度监控";
+        break;
+    }
+
     if (!window) {
         qCritical() << "创建PlotWindow失败";
         return nullptr;
     }
 
-    // 根据类型配置窗口
-    QString title;
-    switch (type) {
-    case CombinedPlot:
-        title = "温湿度监控";
-        // 组合图是默认配置，不需要特殊设置
-        break;
-    case TemperaturePlot:
-        title = "温度监控";
-        // TODO: 可配置为只显示温度
-        break;
-    case HumidityPlot:
-        title = "湿度监控";
-        // TODO: 可配置为只显示湿度
-        break;
-    case VoltagePlot:
-        title = "电压监控";
-        // TODO: 可配置为显示电压
-        break;
-    case HistoryPlot:
-        title = "历史数据";
-        // TODO: 可配置为显示更长时间范围
-        break;
-    }
-
     window->setWindowTitle(title);
-    
-    // 注册窗口
     registerWindow(window);
-    
     return window;
 }
 

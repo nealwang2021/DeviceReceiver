@@ -1,13 +1,13 @@
 ﻿#ifndef PLOTWINDOW_H
 #define PLOTWINDOW_H
 
-#include <QWidget>
 #include <QTimer>
 #include "qcustomplot.h"
 #include "FrameData.h"
+#include "PlotWindowBase.h"
 
 // QCustomPlot实时绘图窗口（由PlotWindowManager统一管理）
-class PlotWindow : public QWidget
+class PlotWindow : public PlotWindowBase
 {
     Q_OBJECT
 public:
@@ -19,13 +19,13 @@ public slots:
      * @brief 处理来自PlotWindowManager的数据更新
      * @param frames 最新的数据帧
      */
-    void onDataUpdated(const QVector<FrameData>& frames);
+    void onDataUpdated(const QVector<FrameData>& frames) override;
     
     /**
      * @brief 处理报警帧
      * @param frame 报警帧数据
      */
-    void onCriticalFrame(const FrameData& frame);
+    void onCriticalFrame(const FrameData& frame) override;
 
 private:
     void initPlot();                // 初始化绘图配置
@@ -39,7 +39,7 @@ private:
     QVector<double> m_xTime;        // 时间轴
     QVector<double> m_yTemp;        // 温度数据
     QVector<double> m_yHumidity;    // 湿度数据
-    const int MAX_PLOT_POINTS = 200;// 最大绘图点数（避免卡顿）
+    const int MAX_PLOT_POINTS = 1000;// 最大绘图点数（避免卡顿）
 };
 
 #endif // PLOTWINDOW_H

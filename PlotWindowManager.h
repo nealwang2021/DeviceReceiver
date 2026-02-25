@@ -27,7 +27,9 @@ public:
         TemperaturePlot,  // 温度图
         HumidityPlot,     // 湿度图
         VoltagePlot,      // 电压图
-        HistoryPlot       // 历史数据图
+        HistoryPlot,      // 历史数据图
+        HeatmapPlot,      // 热力图
+        ArrayPlot         // 阵列图（多通道分轴显示）
     };
 
     /**
