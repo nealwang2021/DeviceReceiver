@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/files">
+        <file>files/css/darkStyle.css</file>
+        <file>files/css/lightStyle.css</file>
+        <file>files/css/toolBar_dark.css</file>
+        <file>files/css/toolBar_light.css</file>
+        <file>files/images/db_icon.svg</file>
+    </qresource>
+</RCC>

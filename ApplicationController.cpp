@@ -71,13 +71,7 @@ bool ApplicationController::initialize()
         return false;
     }
     
-    // 再初始化默认绘图窗口（通过MainWindow的MDI区域）
-    if (!initDefaultPlotWindow()) {
-        qCritical() << "初始化默认绘图窗口失败";
-        return false;
-    }
-    
-    qInfo() << "所有应用模块初始化完成";
+    qInfo() << "所有应用模块初始化完成（不创建默认MDI子窗口）";
     return true;
 }
 
@@ -310,6 +304,16 @@ bool ApplicationController::initDefaultPlotWindow()
     // 注意：QScopedPointer需要释放所有权，因为MDI区域已经管理窗口
     m_plotWindow.take(); // 释放之前可能持有的指针
     m_plotWindow.reset(plotWindow); // 存储引用，但后续不会删除，因为MDI区域管理
+    
+    // 强制立即显示窗口
+    if (mdiArea) {
+        QList<QMdiSubWindow*> subWindows = mdiArea->subWindowList();
+        if (!subWindows.isEmpty()) {
+            subWindows.last()->showNormal();
+            subWindows.last()->raise();
+            qInfo() << "强制显示并置顶MDI子窗口";
+        }
+    }
     
     qInfo() << "默认绘图窗口已在MDI区域中初始化";
     return true;

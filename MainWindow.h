@@ -8,6 +8,8 @@
 #include <QList>
 #include <QMdiArea>
 #include <QMdiSubWindow>
+#include <QFile>
+#include "AppConfig.h"
 
 // 前置声明
 class ApplicationController;
@@ -164,9 +166,37 @@ private:
      */
     void addDataToMonitor(const QString& data, bool isHex = false, bool isReceived = true);
 
+    /**
+     * @brief 切换样式（深色/浅色）
+     */
+    void switchStyle();
+
+    /**
+     * @brief 设置指定样式
+     * @param style 要设置的样式
+     */
+    void setStyle(AppConfig::Style style);
+
+    /**
+     * @brief 获取默认样式
+     * @param style 样式类型
+     * @return 默认样式字符串
+     */
+    QString getDefaultStyle(AppConfig::Style style);
+
+    /**
+     * @brief 获取默认工具栏样式
+     * @param style 样式类型
+     * @return 默认工具栏样式字符串
+     */
+    QString getDefaultToolbarStyle(AppConfig::Style style);
+
 private:
     ApplicationController* m_appController; // 应用控制器
     PlotWindowManager* m_plotWindowManager; // 绘图窗口管理器
+    
+    // 样式相关
+    AppConfig::Style m_currentStyle; // 当前样式
     
     // MDI区域
     QMdiArea* m_mdiArea;

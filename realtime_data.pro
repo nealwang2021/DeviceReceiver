@@ -128,6 +128,9 @@ HEADERS += FrameData.h \
 # UI文件列表
 FORMS += MainWindow.ui
 
+# 资源文件列表
+RESOURCES += realtime_data.qrc
+
 # 编译选项
 !msvc {
     QMAKE_CXXFLAGS += -Wall -Wextra

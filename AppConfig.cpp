@@ -55,6 +55,11 @@ bool AppConfig::loadFromFile(const QString& filename)
     
     // 加载报警配置
     m_temperatureAlarmThreshold = settings.value("Alarm/TemperatureThreshold", m_temperatureAlarmThreshold).toFloat();
+    
+    // 加载样式配置
+    int styleValue = settings.value("Style/CurrentStyle", static_cast<int>(m_currentStyle)).toInt();
+    m_currentStyle = (styleValue == 0) ? DarkStyle : LightStyle;
+    
     // 日志配置
     m_logLevel = settings.value("Log/Level", m_logLevel).toString();
     
@@ -91,6 +96,10 @@ bool AppConfig::saveToFile(const QString& filename)
     
     // 保存报警配置
     settings.setValue("Alarm/TemperatureThreshold", m_temperatureAlarmThreshold);
+    
+    // 保存样式配置
+    settings.setValue("Style/CurrentStyle", static_cast<int>(m_currentStyle));
+    
     // 保存日志配置
     settings.setValue("Log/Level", m_logLevel);
     
@@ -122,6 +131,7 @@ void AppConfig::loadDefaults()
     m_appTitle = "实时数据监控";
     m_windowSize = QSize(800, 600);
     m_logLevel = "INFO";
+    m_currentStyle = LightStyle;  // 确保默认使用浅色主题
     
-    qInfo() << "已加载默认配置";
+    qInfo() << "已加载默认配置（浅色主题）";
 }

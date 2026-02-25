@@ -1,0 +1,52 @@
+/* 深色工具栏样式 - Dark Toolbar Style */
+
+QToolBar {
+    background-color: #3d3d3d;
+    border-bottom: 1px solid #505050;
+    border: none;
+    margin: 0px;
+    padding: 4px 2px;
+    spacing: 2px;
+}
+
+QToolBar::separator {
+    background-color: #505050;
+    width: 2px;
+    margin: 0px 4px;
+}
+
+QToolButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 4px 6px;
+    margin: 1px;
+    color: #e0e0e0;
+    font-size: 8pt;
+}
+
+QToolButton:hover {
+    background-color: #505050;
+    border: 1px solid #607080;
+}
+
+QToolButton:pressed {
+    background-color: #606060;
+    border: 1px solid #0078d4;
+}
+
+QToolButton:checked {
+    background-color: #606060;
+    border: 1px solid #0078d4;
+}
+
+QToolButton:disabled {
+    color: #666666;
+    background-color: transparent;
+}
+
+QToolButton::menu-indicator {
+    width: 0px;
+}
+
+

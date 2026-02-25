@@ -15,6 +15,12 @@ class AppConfig : public QObject
 {
     Q_OBJECT
 public:
+    // 样式枚举
+    enum Style {
+        DarkStyle,
+        LightStyle
+    };
+    
     // 单例模式访问
     static AppConfig* instance();
     
@@ -116,6 +122,10 @@ public:
     QString newlineSequence() const { return m_newlineSequence; }
     void setNewlineSequence(const QString& sequence) { m_newlineSequence = sequence; }
     
+    // ========== 样式配置 ==========
+    Style currentStyle() const { return m_currentStyle; }
+    void setCurrentStyle(Style style) { m_currentStyle = style; }
+    
     // ========== 文件操作 ==========
     bool loadFromFile(const QString& filename);
     bool saveToFile(const QString& filename);
@@ -183,6 +193,9 @@ private:
 
     // 日志级别: DEBUG/INFO/WARNING/ERROR
     QString m_logLevel = "INFO";
+    
+    // 样式配置
+    Style m_currentStyle = LightStyle;
 };
 
 #endif // APPCONFIG_H
