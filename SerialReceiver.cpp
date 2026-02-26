@@ -7,6 +7,7 @@
 #include <QRegularExpression>
 #include <QDataStream>
 #include <cstring>
+#include <cmath>
 
 SerialReceiver::SerialReceiver(QObject *parent) : QObject(parent)
 {
@@ -82,6 +83,33 @@ void SerialReceiver::onMockDataTimer()
     frame.humidity = 30 + QRandomGenerator::global()->bounded(50.0);   // 30-80%
     frame.voltage = 3.0 + QRandomGenerator::global()->bounded(1.5);    // 3.0-4.5V
     frame.isAlarm = (frame.temperature > 75); // 模拟报警
+
+    // 模拟单个多通道信号（用于开发），周期性切换实数/复数
+    const int MOCK_CHANNEL_COUNT = 8;
+    static bool makeComplex = false;
+    frame.channelCount = static_cast<uint8_t>(MOCK_CHANNEL_COUNT);
+    double t = frame.timestamp / 1000.0;
+    if (!makeComplex) {
+        frame.detectMode = FrameData::MultiChannelReal;
+        frame.channels_comp0.resize(MOCK_CHANNEL_COUNT);
+        frame.channels_comp1.clear();
+        for (int i = 0; i < MOCK_CHANNEL_COUNT; ++i) {
+            double phase = (i * 0.5);
+            double value = 10.0 + 3.0 * i + 5.0 * std::sin(t * (0.5 + i * 0.04) + phase) + (QRandomGenerator::global()->bounded(100) / 100.0 - 0.5);
+            frame.channels_comp0[i] = value;
+        }
+    } else {
+        frame.detectMode = FrameData::MultiChannelComplex;
+        frame.channels_comp0.resize(MOCK_CHANNEL_COUNT);
+        frame.channels_comp1.resize(MOCK_CHANNEL_COUNT);
+        for (int i = 0; i < MOCK_CHANNEL_COUNT; ++i) {
+            double re = 5.0 * std::sin(t * (0.3 + i * 0.02)) + (QRandomGenerator::global()->bounded(100) / 100.0 - 0.5);
+            double im = 5.0 * std::cos(t * (0.3 + i * 0.02)) + (QRandomGenerator::global()->bounded(100) / 100.0 - 0.5);
+            frame.channels_comp0[i] = re;
+            frame.channels_comp1[i] = im;
+        }
+    }
+    //makeComplex = !makeComplex;
 
     // 写入缓存
     DataCacheManager::instance()->addFrame(frame);
@@ -161,6 +189,39 @@ FrameData SerialReceiver::parseRawData(const QByteArray& rawFrame)
     frame.temperature = temperature;
     frame.humidity = humidity;
     frame.voltage = voltage;
+
+    // 如果帧长度超出基础16字节，尝试读取扩展字段：mode/count及通道数据
+    if (rawFrame.size() >= 18) { // 至少要有 mode 和 count
+        // 将数据流定位到第16字节之后
+        ds.device()->seek(16);
+        quint8 modeByte = 0;
+        quint8 chCount = 0;
+        ds >> modeByte;
+        ds >> chCount;
+        frame.detectMode = static_cast<FrameData::DetectionMode>(modeByte);
+        frame.channelCount = chCount;
+        if (frame.channelCount > 0) {
+            if (frame.detectMode == FrameData::MultiChannelReal) {
+                frame.channels_comp0.resize(frame.channelCount);
+                for (int i = 0; i < frame.channelCount && !ds.atEnd(); ++i) {
+                    float v;
+                    ds >> v;
+                    frame.channels_comp0[i] = v;
+                }
+                frame.channels_comp1.clear();
+            } else if (frame.detectMode == FrameData::MultiChannelComplex) {
+                frame.channels_comp0.resize(frame.channelCount);
+                frame.channels_comp1.resize(frame.channelCount);
+                for (int i = 0; i < frame.channelCount && !ds.atEnd(); ++i) {
+                    float realV, imagV;
+                    ds >> realV;
+                    ds >> imagV;
+                    frame.channels_comp0[i] = realV;
+                    frame.channels_comp1[i] = imagV;
+                }
+            }
+        }
+    }
 
     // 报警：若协议在最后字节具有标志位则使用该位，否则依据温度阈值进行判断
     bool flagAlarm = false;

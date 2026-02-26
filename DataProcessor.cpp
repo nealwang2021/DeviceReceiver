@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <algorithm>
+#include <cmath>
 DataProcessor::DataProcessor(QObject *parent) : QObject(parent)
 {
     // 1Hz统计定时器
@@ -29,13 +30,31 @@ void DataProcessor::calcStats()
     double humiSum = 0, humiMax = 0, humiMin = 100;
 
     for (const auto& frame : frames) {
-        tempSum += frame.temperature;
-        tempMax = std::max(tempMax, static_cast<double>(frame.temperature));
-        tempMin = std::min(tempMin, static_cast<double>(frame.temperature));
+        // 根据模式决定统计数值
+        double tempVal = 0.0;
+        double humVal = 0.0;
+        if (frame.detectMode == FrameData::Legacy) {
+            tempVal = frame.temperature;
+            humVal = frame.humidity;
+        } else if (frame.detectMode == FrameData::MultiChannelReal) {
+            // 使用第一个通道值作为温度统计，湿度留空
+            if (!frame.channels_comp0.isEmpty()) tempVal = frame.channels_comp0.first();
+        } else if (frame.detectMode == FrameData::MultiChannelComplex) {
+            // 复数模式用第一个通道幅值
+            if (!frame.channels_comp0.isEmpty()) {
+                double re = frame.channels_comp0.first();
+                double im = frame.channels_comp1.isEmpty() ? 0.0 : frame.channels_comp1.first();
+                tempVal = std::hypot(re, im);
+            }
+        }
 
-        humiSum += frame.humidity;
-        humiMax = std::max(humiMax, static_cast<double>(frame.humidity));
-        humiMin = std::min(humiMin, static_cast<double>(frame.humidity));
+        tempSum += tempVal;
+        tempMax = std::max(tempMax, tempVal);
+        tempMin = std::min(tempMin, tempVal);
+
+        humiSum += humVal;
+        humiMax = std::max(humiMax, humVal);
+        humiMin = std::min(humiMin, humVal);
     }
 
     // 输出统计结果

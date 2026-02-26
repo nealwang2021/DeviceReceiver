@@ -18,17 +18,27 @@ ApplicationController::ApplicationController(QObject *parent)
     , m_cacheManager(nullptr)
     , m_plotWindowManager(nullptr)
 {
-    qInfo() << "应用控制器已创建";
-    
-    // 加载配置
-    AppConfig* config = AppConfig::instance();
-    if (config) {
-        m_config.maxCacheSize = config->maxCacheSize();
-        m_config.expireTimeMs = config->expireTimeMs();
-        m_config.serialPort = config->serialPort();
-        m_config.baudRate = config->baudRate();
-        m_config.useMockData = config->useMockData();
-        m_config.mockDataIntervalMs = config->mockDataIntervalMs();
+    try {
+        qDebug() << "[ApplicationController] 构造函数开始";
+        
+        // 加载配置
+        AppConfig* config = AppConfig::instance();
+        if (config) {
+            m_config.maxCacheSize = config->maxCacheSize();
+            m_config.expireTimeMs = config->expireTimeMs();
+            m_config.serialPort = config->serialPort();
+            m_config.baudRate = config->baudRate();
+            m_config.useMockData = config->useMockData();
+            m_config.mockDataIntervalMs = config->mockDataIntervalMs();
+            qDebug() << "[ApplicationController] 配置加载完成";
+        }
+        qDebug() << "[ApplicationController] 构造函数结束";
+    } catch (const std::exception& e) {
+        qCritical() << "[ApplicationController] 构造函数异常:" << e.what();
+        throw;
+    } catch (...) {
+        qCritical() << "[ApplicationController] 构造函数未知异常";
+        throw;
     }
 }
 

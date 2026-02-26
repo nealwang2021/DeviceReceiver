@@ -6,6 +6,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
+#include <iostream>
 
 static QFile* g_logFile = nullptr;
 
@@ -23,48 +24,78 @@ static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &con
     case QtFatalMsg: level = "FATAL"; break;
     }
     QString time = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
-    out << time << " [" << level << "] " << msg << Qt::endl;
+    QString full = time + " [" + level + "] " + msg;
+    out << full << Qt::endl;
     out.flush();
+    // also print to standard error so output appears in console
+    fprintf(stderr, "%s\n", full.toLocal8Bit().constData());
 }
 
 int main(int argc, char *argv[])
 {
-    QApplication app(argc, argv);
-    
-    // 注册FrameData类型用于跨线程信号槽
-    qRegisterMetaType<FrameData>("FrameData");
+    try {
+        QApplication app(argc, argv);
+        
+        // 注册FrameData类型用于跨线程信号槽
+        qRegisterMetaType<FrameData>("FrameData");
 
-    // 加载配置文件（不存在或格式错误时回退到默认配置）
-    AppConfig::instance()->loadFromFile("config.ini");
+        // 加载配置文件（不存在或格式错误时回退到默认配置）
+        qDebug() << "正在加载配置文件...";
+        AppConfig::instance()->loadFromFile("config.ini");
+        qDebug() << "配置文件加载完成";
 
-    // 安装简单日志处理器（写入应用目录下 realtime_data.log）
-    QString logPath = QApplication::applicationDirPath() + "/realtime_data.log";
-    g_logFile = new QFile(logPath, qApp);
-    if (g_logFile->open(QIODevice::Append | QIODevice::Text)) {
-        qInstallMessageHandler(realtimeMessageHandler);
-        qInfo() << "日志已打开:" << logPath;
-    } else {
-        qWarning() << "无法打开日志文件:" << logPath;
-        delete g_logFile; g_logFile = nullptr;
-    }
+        // 安装简单日志处理器（写入应用目录下 realtime_data.log）
+        QString logPath = QApplication::applicationDirPath() + "/realtime_data.log";
+        g_logFile = new QFile(logPath, qApp);
+        if (g_logFile->open(QIODevice::Append | QIODevice::Text)) {
+            qInstallMessageHandler(realtimeMessageHandler);
+            qInfo() << "日志已打开:" << logPath;
+        } else {
+            qWarning() << "无法打开日志文件:" << logPath;
+            delete g_logFile; g_logFile = nullptr;
+        }
 
-    // 创建应用控制器
-    ApplicationController controller;
-    
-    // 初始化所有模块
-    if (!controller.initialize()) {
-        qCritical() << "应用初始化失败，程序退出";
+        // 创建应用控制器
+        qDebug() << "正在创建应用控制器...";
+        ApplicationController controller;
+        qDebug() << "应用控制器创建完成";
+        
+        // 初始化所有模块
+        qDebug() << "开始初始化应用模块...";
+        if (!controller.initialize()) {
+            qCritical() << "应用初始化失败，程序退出";
+            return -1;
+        }
+        qDebug() << "应用模块初始化完成";
+        
+        // 启动应用（显示窗口，开始数据接收）
+        qDebug() << "启动应用...";
+        controller.start();
+        qDebug() << "应用启动完成";
+        
+        // 程序退出清理
+        QObject::connect(&app, &QApplication::aboutToQuit, [&controller]() {
+            controller.stop();
+            qInfo() << "程序正常退出";
+        });
+
+        qDebug() << "进入事件循环...";
+        return app.exec();
+    } catch (const std::exception& e) {
+        std::cerr << "异常：" << e.what() << std::endl;
+        if (g_logFile) {
+            QTextStream out(g_logFile);
+            out << "异常：" << QString::fromStdString(std::string(e.what())) << Qt::endl;
+            g_logFile->close();
+        }
+        return -1;
+    } catch (...) {
+        std::cerr << "未知异常" << std::endl;
+        if (g_logFile) {
+            QTextStream out(g_logFile);
+            out << "未知异常" << Qt::endl;
+            g_logFile->close();
+        }
         return -1;
     }
-    
-    // 启动应用（显示窗口，开始数据接收）
-    controller.start();
-    
-    // 程序退出清理
-    QObject::connect(&app, &QApplication::aboutToQuit, [&controller]() {
-        controller.stop();
-        qInfo() << "程序正常退出";
-    });
-
-    return app.exec();
 }

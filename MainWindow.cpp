@@ -42,10 +42,22 @@ MainWindow::MainWindow(ApplicationController* controller, QWidget* parent)
     , m_alarmCount(0)
     , m_lastUpdateTime(0)
 {
-    // 初始化定时器
-    m_updateTimer = new QTimer(this);
-    m_updateTimer->setInterval(1000); // 1秒更新一次
-    connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::onUpdateTimer);
+    try {
+        qDebug() << "[MainWindow] 构造函数开始";
+        
+        // 初始化定时器
+        m_updateTimer = new QTimer(this);
+        m_updateTimer->setInterval(1000); // 1秒更新一次
+        connect(m_updateTimer, &QTimer::timeout, this, &MainWindow::onUpdateTimer);
+        
+        qDebug() << "[MainWindow] 构造函数结束";
+    } catch (const std::exception& e) {
+        qCritical() << "[MainWindow] 构造函数异常:" << e.what();
+        throw;
+    } catch (...) {
+        qCritical() << "[MainWindow] 构造函数未知异常";
+        throw;
+    }
 }
 
 MainWindow::~MainWindow()
@@ -57,39 +69,69 @@ MainWindow::~MainWindow()
 
 void MainWindow::initialize()
 {
-    // 获取PlotWindowManager
-    if (m_appController) {
-        m_plotWindowManager = m_appController->plotWindowManager();
-    }
-    
-    // 初始化界面组件
-    initUI();
-    
-    // 初始化信号槽连接
-    initConnections();
-    
-    // 加载配置到界面
-    loadConfigToUI();
-    
-    // 加载指令历史
-    loadCommandHistory();
-    
-    // 更新串口列表
-    updateSerialPortList();
-    
-    // 更新窗口列表
-    updateWindowList();
-    
-    // 启动更新定时器
-    m_updateTimer->start();
-    
-    // 设置窗口标题
-    AppConfig* config = AppConfig::instance();
-    if (config) {
-        setWindowTitle(config->appTitle());
+    try {
+        qDebug() << "[MainWindow::initialize] 开始";
         
-        // 应用保存的样式
-        setStyle(config->currentStyle());
+        // 获取PlotWindowManager
+        qDebug() << "[MainWindow::initialize] 获取PlotWindowManager...";
+        if (m_appController) {
+            m_plotWindowManager = m_appController->plotWindowManager();
+        }
+        qDebug() << "[MainWindow::initialize] PlotWindowManager获取完成";
+        
+        // 初始化界面组件
+        qDebug() << "[MainWindow::initialize] 调用initUI...";
+        initUI();
+        qDebug() << "[MainWindow::initialize] initUI完成";
+        
+        // 初始化信号槽连接
+        qDebug() << "[MainWindow::initialize] 初始化信号槽连接...";
+        initConnections();
+        qDebug() << "[MainWindow::initialize] 信号槽连接完成";
+        
+        // 加载配置到界面
+        qDebug() << "[MainWindow::initialize] 加载配置到界面...";
+        loadConfigToUI();
+        qDebug() << "[MainWindow::initialize] 配置加载完成";
+        
+        // 加载指令历史
+        qDebug() << "[MainWindow::initialize] 加载指令历史...";
+        loadCommandHistory();
+        qDebug() << "[MainWindow::initialize] 指令历史加载完成";
+        
+        // 更新串口列表
+        qDebug() << "[MainWindow::initialize] 更新串口列表...";
+        updateSerialPortList();
+        qDebug() << "[MainWindow::initialize] 串口列表更新完成";
+        
+        // 更新窗口列表
+        qDebug() << "[MainWindow::initialize] 更新窗口列表...";
+        updateWindowList();
+        qDebug() << "[MainWindow::initialize] 窗口列表更新完成";
+        
+        // 启动更新定时器
+        qDebug() << "[MainWindow::initialize] 启动更新定时器...";
+        m_updateTimer->start();
+        qDebug() << "[MainWindow::initialize] 更新定时器已启动";
+        
+        // 设置窗口标题
+        qDebug() << "[MainWindow::initialize] 设置窗口属性...";
+        AppConfig* config = AppConfig::instance();
+        if (config) {
+            setWindowTitle(config->appTitle());
+            
+            // 应用保存的样式
+            setStyle(config->currentStyle());
+        }
+        qDebug() << "[MainWindow::initialize] 窗口属性设置完成";
+        
+        qDebug() << "[MainWindow::initialize] 完成";
+    } catch (const std::exception& e) {
+        qCritical() << "[MainWindow::initialize] 异常:" << e.what();
+        throw;
+    } catch (...) {
+        qCritical() << "[MainWindow::initialize] 未知异常";
+        throw;
     }
 }
 
@@ -125,292 +167,310 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::initUI()
 {
-    // 创建菜单栏
-    QMenuBar* menuBar = new QMenuBar(this);
-    setMenuBar(menuBar);
+    qDebug() << "[MainWindow::initUI] 开始";
     
-    // 文件菜单
-    QMenu* fileMenu = menuBar->addMenu("文件(&F)");
-    QAction* exitAction = fileMenu->addAction("退出(&X)");
-    connect(exitAction, &QAction::triggered, this, &MainWindow::close);
+    try {
+        // 创建菜单栏
+        qDebug() << "[MainWindow::initUI] 创建菜单栏...";
+        QMenuBar* menuBar = new QMenuBar(this);
+        setMenuBar(menuBar);
+        qDebug() << "[MainWindow::initUI] 菜单栏创建完成";
     
-    // 视图菜单
-    QMenu* viewMenu = menuBar->addMenu("视图(&V)");
-    QAction* showDeviceAction = viewMenu->addAction("设备面板(&D)");
-    QAction* showCommandAction = viewMenu->addAction("指令面板(&C)");
-    QAction* showPlotAction = viewMenu->addAction("绘图面板(&P)");
-    QAction* showMonitorAction = viewMenu->addAction("监控面板(&M)");
-    
-    showDeviceAction->setCheckable(true);
-    showCommandAction->setCheckable(true);
-    showPlotAction->setCheckable(true);
-    showMonitorAction->setCheckable(true);
-    
-    connect(showDeviceAction, &QAction::toggled, this, &MainWindow::onShowDevicePanelChanged);
-    connect(showCommandAction, &QAction::toggled, this, &MainWindow::onShowCommandPanelChanged);
-    connect(showPlotAction, &QAction::toggled, this, &MainWindow::onShowPlotPanelChanged);
-    connect(showMonitorAction, &QAction::toggled, this, &MainWindow::onShowMonitorPanelChanged);
-    
-    // 窗口菜单
-    QMenu* windowMenu = menuBar->addMenu("窗口(&W)");
-    QAction* createWindowAction = windowMenu->addAction("新建窗口(&N)");
-    QAction* tileAction = windowMenu->addAction("平铺窗口(&T)");
-    QAction* cascadeAction = windowMenu->addAction("层叠窗口(&C)");
-    
-    connect(createWindowAction, &QAction::triggered, this, &MainWindow::onCreateWindowClicked);
-    connect(tileAction, &QAction::triggered, this, &MainWindow::onTileWindowsClicked);
-    connect(cascadeAction, &QAction::triggered, this, &MainWindow::onCascadeWindowsClicked);
-    
-    // 样式菜单
-    QMenu* styleMenu = menuBar->addMenu("样式(&S)");
-    QAction* darkStyleAction = styleMenu->addAction("深色主题(&D)");
-    QAction* lightStyleAction = styleMenu->addAction("浅色主题(&L)");
-    QAction* switchStyleAction = styleMenu->addAction("切换主题(&T)");
-    
-    darkStyleAction->setCheckable(true);
-    lightStyleAction->setCheckable(true);
-    
-    // 样式菜单连接
-    connect(darkStyleAction, &QAction::triggered, [this]() {
-        setStyle(AppConfig::DarkStyle);
-    });
-    connect(lightStyleAction, &QAction::triggered, [this]() {
-        setStyle(AppConfig::LightStyle);
-    });
-    connect(switchStyleAction, &QAction::triggered, this, &MainWindow::switchStyle);
-    
-    // 工具栏
-    QToolBar* toolBar = addToolBar("工具");
-    toolBar->addAction(exitAction);
-    toolBar->addSeparator();
-    
-    // 创建MDI区域作为中心部件
-    m_mdiArea = new QMdiArea(this);
-    m_mdiArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_mdiArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_mdiArea->setViewMode(QMdiArea::TabbedView); // 可以改为子窗口模式
-    m_mdiArea->setTabsClosable(true);
-    m_mdiArea->setTabsMovable(true);
-    setCentralWidget(m_mdiArea);
-    
-    // 创建浮动面板
-    
-    // 1. 设备配置面板
-    m_devicePanel = new QDockWidget("设备配置", this);
-    m_devicePanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    
-    QWidget* deviceWidget = new QWidget();
-    QVBoxLayout* deviceLayout = new QVBoxLayout(deviceWidget);
-    
-    // 串口配置组
-    QGroupBox* serialGroup = new QGroupBox("串口配置");
-    QFormLayout* serialLayout = new QFormLayout(serialGroup);
-    
-    m_serialPortCombo = new QComboBox();
-    m_baudRateCombo = new QComboBox();
-    m_dataBitsCombo = new QComboBox();
-    m_stopBitsCombo = new QComboBox();
-    m_parityCombo = new QComboBox();
-    m_flowControlCombo = new QComboBox();
-    
-    m_baudRateCombo->addItems({"9600", "19200", "38400", "57600", "115200", "230400", "460800"});
-    m_dataBitsCombo->addItems({"5", "6", "7", "8"});
-    m_stopBitsCombo->addItems({"1", "1.5", "2"});
-    m_parityCombo->addItems({"无", "偶校验", "奇校验", "标记", "空格"});
-    m_flowControlCombo->addItems({"无", "硬件", "软件"});
-    
-    serialLayout->addRow("端口:", m_serialPortCombo);
-    serialLayout->addRow("波特率:", m_baudRateCombo);
-    serialLayout->addRow("数据位:", m_dataBitsCombo);
-    serialLayout->addRow("停止位:", m_stopBitsCombo);
-    serialLayout->addRow("校验位:", m_parityCombo);
-    serialLayout->addRow("流控制:", m_flowControlCombo);
-    
-    // 模拟数据组
-    QGroupBox* mockGroup = new QGroupBox("模拟数据");
-    QVBoxLayout* mockLayout = new QVBoxLayout(mockGroup);
-    
-    m_useMockDataCheck = new QCheckBox("启用模拟数据");
-    QHBoxLayout* intervalLayout = new QHBoxLayout();
-    intervalLayout->addWidget(new QLabel("间隔(ms):"));
-    m_mockIntervalSpin = new QSpinBox();
-    m_mockIntervalSpin->setRange(10, 5000);
-    m_mockIntervalSpin->setValue(100);
-    intervalLayout->addWidget(m_mockIntervalSpin);
-    intervalLayout->addStretch();
-    
-    mockLayout->addWidget(m_useMockDataCheck);
-    mockLayout->addLayout(intervalLayout);
-    
-    // 控制按钮组
-    QGroupBox* controlGroup = new QGroupBox("设备控制");
-    QHBoxLayout* controlLayout = new QHBoxLayout(controlGroup);
-    
-    m_connectButton = new QPushButton("连接");
-    m_disconnectButton = new QPushButton("断开");
-    m_disconnectButton->setEnabled(false);
-    m_connectionStatusLabel = new QLabel("未连接");
-    m_connectionStatusLabel->setStyleSheet("color: red;");
-    
-    controlLayout->addWidget(m_connectButton);
-    controlLayout->addWidget(m_disconnectButton);
-    controlLayout->addStretch();
-    controlLayout->addWidget(m_connectionStatusLabel);
-    
-    deviceLayout->addWidget(serialGroup);
-    deviceLayout->addWidget(mockGroup);
-    deviceLayout->addWidget(controlGroup);
-    deviceLayout->addStretch();
-    
-    m_devicePanel->setWidget(deviceWidget);
-    addDockWidget(Qt::LeftDockWidgetArea, m_devicePanel);
-    
-    // 2. 指令发送面板
-    m_commandPanel = new QDockWidget("指令发送", this);
-    m_commandPanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    
-    QWidget* commandWidget = new QWidget();
-    QVBoxLayout* commandLayout = new QVBoxLayout(commandWidget);
-    
-    // 指令输入
-    QGroupBox* inputGroup = new QGroupBox("指令输入");
-    QVBoxLayout* inputLayout = new QVBoxLayout(inputGroup);
-    
-    m_commandInput = new QTextEdit();
-    m_commandInput->setMaximumHeight(100);
-    inputLayout->addWidget(m_commandInput);
-    
-    // 发送选项
-    QHBoxLayout* optionLayout = new QHBoxLayout();
-    m_hexFormatCheck = new QCheckBox("十六进制");
-    m_autoNewlineCheck = new QCheckBox("自动换行");
-    m_newlineCombo = new QComboBox();
-    m_newlineCombo->addItems({"\r\n (CR+LF)", "\r (CR)", "\n (LF)", "无"});
-    optionLayout->addWidget(m_hexFormatCheck);
-    optionLayout->addWidget(m_autoNewlineCheck);
-    optionLayout->addWidget(new QLabel("换行符:"));
-    optionLayout->addWidget(m_newlineCombo);
-    optionLayout->addStretch();
-    inputLayout->addLayout(optionLayout);
-    
-    // 发送按钮
-    QHBoxLayout* buttonLayout = new QHBoxLayout();
-    m_sendButton = new QPushButton("发送");
-    m_clearButton = new QPushButton("清空");
-    buttonLayout->addWidget(m_sendButton);
-    buttonLayout->addWidget(m_clearButton);
-    buttonLayout->addStretch();
-    inputLayout->addLayout(buttonLayout);
-    
-    // 指令历史
-    QGroupBox* historyGroup = new QGroupBox("指令历史");
-    QVBoxLayout* historyLayout = new QVBoxLayout(historyGroup);
-    
-    m_commandHistoryList = new QListWidget();
-    historyLayout->addWidget(m_commandHistoryList);
-    
-    commandLayout->addWidget(inputGroup);
-    commandLayout->addWidget(historyGroup);
-    
-    m_commandPanel->setWidget(commandWidget);
-    addDockWidget(Qt::RightDockWidgetArea, m_commandPanel);
-    
-    // 3. 绘图管理面板
-    m_plotPanel = new QDockWidget("绘图管理", this);
-    m_plotPanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
-    
-    QWidget* plotWidget = new QWidget();
-    QVBoxLayout* plotLayout = new QVBoxLayout(plotWidget);
-    
-    // 窗口创建
-    QGroupBox* createGroup = new QGroupBox("创建窗口");
-    QFormLayout* createLayout = new QFormLayout(createGroup);
-    
-    m_windowTypeCombo = new QComboBox();
-    m_windowTypeCombo->addItems({"组合图", "温度图", "湿度图", "电压图", "历史图", "热力图", "阵列图"});
-    m_createWindowButton = new QPushButton("新建窗口");
-    
-    createLayout->addRow("窗口类型:", m_windowTypeCombo);
-    createLayout->addRow(m_createWindowButton);
-    
-    // 窗口控制
-    QGroupBox* controlGroup2 = new QGroupBox("窗口控制");
-    QHBoxLayout* controlLayout2 = new QHBoxLayout(controlGroup2);
-    
-    m_tileWindowsButton = new QPushButton("平铺");
-    m_cascadeWindowsButton = new QPushButton("层叠");
-    m_closeWindowButton = new QPushButton("关闭选中");
-    
-    controlLayout2->addWidget(m_tileWindowsButton);
-    controlLayout2->addWidget(m_cascadeWindowsButton);
-    controlLayout2->addWidget(m_closeWindowButton);
-    controlLayout2->addStretch();
-    
-    // 窗口列表
-    QGroupBox* listGroup = new QGroupBox("窗口列表");
-    QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
-    
-    m_windowList = new QListWidget();
-    listLayout->addWidget(m_windowList);
-    
-    plotLayout->addWidget(createGroup);
-    plotLayout->addWidget(controlGroup2);
-    plotLayout->addWidget(listGroup);
-    
-    m_plotPanel->setWidget(plotWidget);
-    addDockWidget(Qt::LeftDockWidgetArea, m_plotPanel);
-    
-    // 4. 数据监控面板
-    m_monitorPanel = new QDockWidget("数据监控", this);
-    m_monitorPanel->setAllowedAreas(Qt::BottomDockWidgetArea);
-    
-    QWidget* monitorWidget = new QWidget();
-    QVBoxLayout* monitorLayout = new QVBoxLayout(monitorWidget);
-    
-    m_dataMonitor = new QTextEdit();
-    m_dataMonitor->setReadOnly(true);
-    
-    // 状态栏
-    QHBoxLayout* statusLayout = new QHBoxLayout();
-    m_frameRateLabel = new QLabel("帧率: 0 fps");
-    m_dataCountLabel = new QLabel("数据: 0 帧");
-    m_alarmCountLabel = new QLabel("报警: 0 次");
-    
-    statusLayout->addWidget(m_frameRateLabel);
-    statusLayout->addWidget(m_dataCountLabel);
-    statusLayout->addWidget(m_alarmCountLabel);
-    statusLayout->addStretch();
-    
-    monitorLayout->addWidget(m_dataMonitor);
-    monitorLayout->addLayout(statusLayout);
-    
-    m_monitorPanel->setWidget(monitorWidget);
-    addDockWidget(Qt::BottomDockWidgetArea, m_monitorPanel);
-    
-    // 创建状态栏
-    QStatusBar* statusBar = new QStatusBar(this);
-    setStatusBar(statusBar);
-    
-    // 加载保存的窗口状态
-    AppConfig* config = AppConfig::instance();
-    if (config) {
-        if (!config->mainWindowState().isEmpty()) {
-            restoreState(config->mainWindowState());
-        }
-        if (!config->mainWindowGeometry().isEmpty()) {
-            restoreGeometry(config->mainWindowGeometry());
-        }
+        // 文件菜单
+        QMenu* fileMenu = menuBar->addMenu("文件(&F)");
+        QAction* exitAction = fileMenu->addAction("退出(&X)");
+        connect(exitAction, &QAction::triggered, this, &MainWindow::close);
         
-        // 更新面板显示状态
-        showDeviceAction->setChecked(config->showDevicePanel());
-        showCommandAction->setChecked(config->showCommandPanel());
-        showPlotAction->setChecked(config->showPlotPanel());
-        showMonitorAction->setChecked(config->showMonitorPanel());
+        // 视图菜单
+        QMenu* viewMenu = menuBar->addMenu("视图(&V)");
+        QAction* showDeviceAction = viewMenu->addAction("设备面板(&D)");
+        QAction* showCommandAction = viewMenu->addAction("指令面板(&C)");
+        QAction* showPlotAction = viewMenu->addAction("绘图面板(&P)");
+        QAction* showMonitorAction = viewMenu->addAction("监控面板(&M)");
         
-        m_devicePanel->setVisible(config->showDevicePanel());
-        m_commandPanel->setVisible(config->showCommandPanel());
-        m_plotPanel->setVisible(config->showPlotPanel());
-        m_monitorPanel->setVisible(config->showMonitorPanel());
+        showDeviceAction->setCheckable(true);
+        showCommandAction->setCheckable(true);
+        showPlotAction->setCheckable(true);
+        showMonitorAction->setCheckable(true);
+        
+        connect(showDeviceAction, &QAction::toggled, this, &MainWindow::onShowDevicePanelChanged);
+        connect(showCommandAction, &QAction::toggled, this, &MainWindow::onShowCommandPanelChanged);
+        connect(showPlotAction, &QAction::toggled, this, &MainWindow::onShowPlotPanelChanged);
+        connect(showMonitorAction, &QAction::toggled, this, &MainWindow::onShowMonitorPanelChanged);
+        
+        // 窗口菜单
+        QMenu* windowMenu = menuBar->addMenu("窗口(&W)");
+        QAction* createWindowAction = windowMenu->addAction("新建窗口(&N)");
+        QAction* tileAction = windowMenu->addAction("平铺窗口(&T)");
+        QAction* cascadeAction = windowMenu->addAction("层叠窗口(&C)");
+        
+        connect(createWindowAction, &QAction::triggered, this, &MainWindow::onCreateWindowClicked);
+        connect(tileAction, &QAction::triggered, this, &MainWindow::onTileWindowsClicked);
+        connect(cascadeAction, &QAction::triggered, this, &MainWindow::onCascadeWindowsClicked);
+        
+        // 样式菜单
+        QMenu* styleMenu = menuBar->addMenu("样式(&S)");
+        QAction* darkStyleAction = styleMenu->addAction("深色主题(&D)");
+        QAction* lightStyleAction = styleMenu->addAction("浅色主题(&L)");
+        QAction* switchStyleAction = styleMenu->addAction("切换主题(&T)");
+        
+        darkStyleAction->setCheckable(true);
+        lightStyleAction->setCheckable(true);
+        
+        // 样式菜单连接
+        connect(darkStyleAction, &QAction::triggered, [this]() {
+            setStyle(AppConfig::DarkStyle);
+        });
+        connect(lightStyleAction, &QAction::triggered, [this]() {
+            setStyle(AppConfig::LightStyle);
+        });
+        connect(switchStyleAction, &QAction::triggered, this, &MainWindow::switchStyle);
+        
+        // 工具栏
+        QToolBar* toolBar = addToolBar("工具");
+        toolBar->addAction(exitAction);
+        toolBar->addSeparator();
+        
+        // 创建MDI区域作为中心部件
+        m_mdiArea = new QMdiArea(this);
+        m_mdiArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        m_mdiArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        m_mdiArea->setViewMode(QMdiArea::TabbedView); // 可以改为子窗口模式
+        m_mdiArea->setTabsClosable(true);
+        m_mdiArea->setTabsMovable(true);
+        setCentralWidget(m_mdiArea);
+        
+        // 创建浮动面板
+        
+        // 1. 设备配置面板
+        m_devicePanel = new QDockWidget("设备配置", this);
+        m_devicePanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        
+        QWidget* deviceWidget = new QWidget();
+        QVBoxLayout* deviceLayout = new QVBoxLayout(deviceWidget);
+        
+        // 串口配置组
+        QGroupBox* serialGroup = new QGroupBox("串口配置");
+        QFormLayout* serialLayout = new QFormLayout(serialGroup);
+        
+        m_serialPortCombo = new QComboBox();
+        m_baudRateCombo = new QComboBox();
+        m_dataBitsCombo = new QComboBox();
+        m_stopBitsCombo = new QComboBox();
+        m_parityCombo = new QComboBox();
+        m_flowControlCombo = new QComboBox();
+        
+        m_baudRateCombo->addItems({"9600", "19200", "38400", "57600", "115200", "230400", "460800"});
+        m_dataBitsCombo->addItems({"5", "6", "7", "8"});
+        m_stopBitsCombo->addItems({"1", "1.5", "2"});
+        m_parityCombo->addItems({"无", "偶校验", "奇校验", "标记", "空格"});
+        m_flowControlCombo->addItems({"无", "硬件", "软件"});
+        
+        serialLayout->addRow("端口:", m_serialPortCombo);
+        serialLayout->addRow("波特率:", m_baudRateCombo);
+        serialLayout->addRow("数据位:", m_dataBitsCombo);
+        serialLayout->addRow("停止位:", m_stopBitsCombo);
+        serialLayout->addRow("校验位:", m_parityCombo);
+        serialLayout->addRow("流控制:", m_flowControlCombo);
+        
+        // 模拟数据组
+        QGroupBox* mockGroup = new QGroupBox("模拟数据");
+        QVBoxLayout* mockLayout = new QVBoxLayout(mockGroup);
+        
+        m_useMockDataCheck = new QCheckBox("启用模拟数据");
+        QHBoxLayout* intervalLayout = new QHBoxLayout();
+        intervalLayout->addWidget(new QLabel("间隔(ms):"));
+        m_mockIntervalSpin = new QSpinBox();
+        m_mockIntervalSpin->setRange(10, 5000);
+        m_mockIntervalSpin->setValue(100);
+        intervalLayout->addWidget(m_mockIntervalSpin);
+        intervalLayout->addStretch();
+        
+        mockLayout->addWidget(m_useMockDataCheck);
+        mockLayout->addLayout(intervalLayout);
+        
+        // 控制按钮组
+        QGroupBox* controlGroup = new QGroupBox("设备控制");
+        QHBoxLayout* controlLayout = new QHBoxLayout(controlGroup);
+        
+        m_connectButton = new QPushButton("连接");
+        m_disconnectButton = new QPushButton("断开");
+        m_disconnectButton->setEnabled(false);
+        m_connectionStatusLabel = new QLabel("未连接");
+        m_connectionStatusLabel->setStyleSheet("color: red;");
+        
+        controlLayout->addWidget(m_connectButton);
+        controlLayout->addWidget(m_disconnectButton);
+        controlLayout->addStretch();
+        controlLayout->addWidget(m_connectionStatusLabel);
+        
+        deviceLayout->addWidget(serialGroup);
+        deviceLayout->addWidget(mockGroup);
+        deviceLayout->addWidget(controlGroup);
+        deviceLayout->addStretch();
+        
+        m_devicePanel->setWidget(deviceWidget);
+        addDockWidget(Qt::LeftDockWidgetArea, m_devicePanel);
+        
+        // 2. 指令发送面板
+        m_commandPanel = new QDockWidget("指令发送", this);
+        m_commandPanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        
+        QWidget* commandWidget = new QWidget();
+        QVBoxLayout* commandLayout = new QVBoxLayout(commandWidget);
+        
+        // 指令输入
+        QGroupBox* inputGroup = new QGroupBox("指令输入");
+        QVBoxLayout* inputLayout = new QVBoxLayout(inputGroup);
+        
+        m_commandInput = new QTextEdit();
+        m_commandInput->setMaximumHeight(100);
+        inputLayout->addWidget(m_commandInput);
+        
+        // 发送选项
+        QHBoxLayout* optionLayout = new QHBoxLayout();
+        m_hexFormatCheck = new QCheckBox("十六进制");
+        m_autoNewlineCheck = new QCheckBox("自动换行");
+        m_newlineCombo = new QComboBox();
+        m_newlineCombo->addItems({"\r\n (CR+LF)", "\r (CR)", "\n (LF)", "无"});
+        optionLayout->addWidget(m_hexFormatCheck);
+        optionLayout->addWidget(m_autoNewlineCheck);
+        optionLayout->addWidget(new QLabel("换行符:"));
+        optionLayout->addWidget(m_newlineCombo);
+        optionLayout->addStretch();
+        inputLayout->addLayout(optionLayout);
+        
+        // 发送按钮
+        QHBoxLayout* buttonLayout = new QHBoxLayout();
+        m_sendButton = new QPushButton("发送");
+        m_clearButton = new QPushButton("清空");
+        buttonLayout->addWidget(m_sendButton);
+        buttonLayout->addWidget(m_clearButton);
+        buttonLayout->addStretch();
+        inputLayout->addLayout(buttonLayout);
+        
+        // 指令历史
+        QGroupBox* historyGroup = new QGroupBox("指令历史");
+        QVBoxLayout* historyLayout = new QVBoxLayout(historyGroup);
+        
+        m_commandHistoryList = new QListWidget();
+        historyLayout->addWidget(m_commandHistoryList);
+        
+        commandLayout->addWidget(inputGroup);
+        commandLayout->addWidget(historyGroup);
+        
+        m_commandPanel->setWidget(commandWidget);
+        addDockWidget(Qt::RightDockWidgetArea, m_commandPanel);
+        
+        // 3. 绘图管理面板
+        m_plotPanel = new QDockWidget("绘图管理", this);
+        m_plotPanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+        
+        QWidget* plotWidget = new QWidget();
+        QVBoxLayout* plotLayout = new QVBoxLayout(plotWidget);
+        
+        // 窗口创建
+        QGroupBox* createGroup = new QGroupBox("创建窗口");
+        QFormLayout* createLayout = new QFormLayout(createGroup);
+        
+        m_windowTypeCombo = new QComboBox();
+        m_windowTypeCombo->addItems({"组合图", "温度图", "湿度图", "电压图", "历史图", "热力图", "阵列图"});
+        m_createWindowButton = new QPushButton("新建窗口");
+        
+        createLayout->addRow("窗口类型:", m_windowTypeCombo);
+        createLayout->addRow(m_createWindowButton);
+        
+        // 窗口控制
+        QGroupBox* controlGroup2 = new QGroupBox("窗口控制");
+        QHBoxLayout* controlLayout2 = new QHBoxLayout(controlGroup2);
+        
+        m_tileWindowsButton = new QPushButton("平铺");
+        m_cascadeWindowsButton = new QPushButton("层叠");
+        m_closeWindowButton = new QPushButton("关闭选中");
+        
+        controlLayout2->addWidget(m_tileWindowsButton);
+        controlLayout2->addWidget(m_cascadeWindowsButton);
+        controlLayout2->addWidget(m_closeWindowButton);
+        controlLayout2->addStretch();
+        
+        // 窗口列表
+        QGroupBox* listGroup = new QGroupBox("窗口列表");
+        QVBoxLayout* listLayout = new QVBoxLayout(listGroup);
+        
+        m_windowList = new QListWidget();
+        listLayout->addWidget(m_windowList);
+        
+        plotLayout->addWidget(createGroup);
+        plotLayout->addWidget(controlGroup2);
+        plotLayout->addWidget(listGroup);
+        
+        m_plotPanel->setWidget(plotWidget);
+        addDockWidget(Qt::LeftDockWidgetArea, m_plotPanel);
+        
+        // 4. 数据监控面板
+        m_monitorPanel = new QDockWidget("数据监控", this);
+        m_monitorPanel->setAllowedAreas(Qt::BottomDockWidgetArea);
+        
+        QWidget* monitorWidget = new QWidget();
+        QVBoxLayout* monitorLayout = new QVBoxLayout(monitorWidget);
+        
+        m_dataMonitor = new QTextEdit();
+        m_dataMonitor->setReadOnly(true);
+        
+        // 状态栏
+        QHBoxLayout* statusLayout = new QHBoxLayout();
+        m_frameRateLabel = new QLabel("帧率: 0 fps");
+        m_dataCountLabel = new QLabel("数据: 0 帧");
+        m_alarmCountLabel = new QLabel("报警: 0 次");
+        
+        statusLayout->addWidget(m_frameRateLabel);
+        statusLayout->addWidget(m_dataCountLabel);
+        statusLayout->addWidget(m_alarmCountLabel);
+        statusLayout->addStretch();
+        
+        monitorLayout->addWidget(m_dataMonitor);
+        monitorLayout->addLayout(statusLayout);
+        
+        qDebug() << "[MainWindow::initUI] 添加monitorPanel到DockWidget";
+        m_monitorPanel->setWidget(monitorWidget);
+        addDockWidget(Qt::BottomDockWidgetArea, m_monitorPanel);
+        qDebug() << "[MainWindow::initUI] monitorPanel添加完成";
+        
+        // 创建状态栏
+        qDebug() << "[MainWindow::initUI] 创建状态栏...";
+        QStatusBar* statusBar = new QStatusBar(this);
+        setStatusBar(statusBar);
+        qDebug() << "[MainWindow::initUI] 状态栏创建完成";
+        
+        qDebug() << "[MainWindow::initUI] 加载保存的窗口状态...";
+        // 加载保存的窗口状态
+        AppConfig* config = AppConfig::instance();
+        if (config) {
+            if (!config->mainWindowState().isEmpty()) {
+                restoreState(config->mainWindowState());
+            }
+            if (!config->mainWindowGeometry().isEmpty()) {
+                restoreGeometry(config->mainWindowGeometry());
+            }
+            
+            // 更新面板显示状态
+            showDeviceAction->setChecked(config->showDevicePanel());
+            showCommandAction->setChecked(config->showCommandPanel());
+            showPlotAction->setChecked(config->showPlotPanel());
+            showMonitorAction->setChecked(config->showMonitorPanel());
+            
+            m_devicePanel->setVisible(config->showDevicePanel());
+            m_commandPanel->setVisible(config->showCommandPanel());
+            m_plotPanel->setVisible(config->showPlotPanel());
+            m_monitorPanel->setVisible(config->showMonitorPanel());
+        }
+        qDebug() << "[MainWindow::initUI] 完成";
+    } catch (const std::exception& e) {
+        qCritical() << "[MainWindow::initUI] 异常:" << e.what();
+        throw;
+    } catch (...) {
+        qCritical() << "[MainWindow::initUI] 未知异常";
+        throw;
     }
 }
 
@@ -707,7 +767,9 @@ void MainWindow::onSendFormatChanged(bool isHex)
 
 void MainWindow::onCreateWindowClicked()
 {
+    qDebug() << "[MainWindow] onCreateWindowClicked called";
     if (!m_plotWindowManager || !m_mdiArea) {
+        qWarning() << "[MainWindow] cannot create window, manager or mdiArea null";
         return;
     }
     
@@ -724,11 +786,15 @@ void MainWindow::onCreateWindowClicked()
     case 6: type = PlotWindowManager::ArrayPlot; break;
     }
     
+    qDebug() << "[MainWindow] creating window type" << type;
     PlotWindow* window = m_plotWindowManager->createWindowInMdiArea(m_mdiArea, type);
+    qDebug() << "[MainWindow] createWindowInMdiArea returned" << window;
     if (window) {
         updateWindowList();
+        qDebug() << "[MainWindow] window list updated";
     }
 }
+
 
 void MainWindow::onCloseWindowClicked()
 {

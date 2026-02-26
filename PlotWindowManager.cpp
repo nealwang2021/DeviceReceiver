@@ -129,6 +129,7 @@ PlotWindow* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
 
 PlotWindow* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType type)
 {
+    qDebug() << "[PlotWindowManager] createWindowInMdiArea enter, type" << type << "mdiArea" << mdiArea;
     if (!mdiArea) {
         qCritical() << "MDI区域无效";
         return nullptr;
@@ -136,12 +137,15 @@ PlotWindow* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType
     
     // 创建PlotWindow实例（父对象为null，将由QMdiSubWindow管理）
     PlotWindow* plotWindow = createWindow(type);
+    qDebug() << "[PlotWindowManager] createWindow returned" << plotWindow;
     if (!plotWindow) {
         return nullptr;
     }
     
     // 创建MDI子窗口
+    qDebug() << "[PlotWindowManager] adding subwindow for" << plotWindow;
     QMdiSubWindow* subWindow = mdiArea->addSubWindow(plotWindow);
+    qDebug() << "[PlotWindowManager] subwindow result" << subWindow;
     if (!subWindow) {
         qCritical() << "创建MDI子窗口失败";
         delete plotWindow;
@@ -158,12 +162,14 @@ PlotWindow* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType
     // 使用QPointer安全地跟踪PlotWindow
     QPointer<PlotWindow> plotWindowPtr(plotWindow);
     connect(subWindow, &QMdiSubWindow::destroyed, this, [this, plotWindowPtr]() {
+        qDebug() << "[PlotWindowManager] subWindow destroyed, unregistering" << plotWindowPtr;
         if (plotWindowPtr) {
             unregisterWindow(plotWindowPtr);
         }
     });
     
     qInfo() << "在MDI区域创建窗口:" << plotWindow->windowTitle();
+    qDebug() << "[PlotWindowManager] createWindowInMdiArea exit";
     
     return plotWindow;
 }
@@ -171,9 +177,11 @@ PlotWindow* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType
 void PlotWindowManager::registerWindow(PlotWindow* window)
 {
     if (!window || m_windows.contains(window)) {
+        qDebug() << "registerWindow skipped for" << window;
         return;
     }
 
+    qDebug() << "registering window" << window << "title" << window->windowTitle();
     m_windows.append(window);
     
     // 连接数据更新信号
