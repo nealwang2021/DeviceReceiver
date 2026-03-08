@@ -23,7 +23,8 @@ struct FrameData
     uint8_t channelCount;
 
     // 通道数据：两个分量 comp0/comp1
-    // Real 模式只使用 comp0；Complex 模式 comp0=实部, comp1=虚部
+    // Real 模式：comp0=幅值, comp1=相位
+    // Complex 模式：comp0=实部, comp1=虚部
     QVector<double> channels_comp0;
     QVector<double> channels_comp1;
 

@@ -27,6 +27,8 @@ class QListWidget;
 class QCheckBox;
 class QSpinBox;
 class QLineEdit;
+class QProcess;
+class QJsonObject;
 
 /**
  * @brief 主界面窗口类，提供设备配置、控制、指令发送和窗口管理功能
@@ -118,6 +120,10 @@ private slots:
     
     // 定时器槽函数
     void onUpdateTimer();
+    void onStartGrpcTestServerClicked();
+    void onStopGrpcTestServerClicked();
+    void onRunGrpcSelfTestClicked();
+    void onGrpcSelfTestTimeout();
 
 private:
     /**
@@ -185,6 +191,14 @@ private:
      */
     void setStyle(AppConfig::Style style);
 
+    void updateGrpcTestUiState();
+    void startGrpcSelfTest(bool autoTriggered);
+    void handleGrpcBackendPacket(const QJsonObject& packet);
+    void finalizeGrpcSelfTest();
+    QString resolveGrpcTestServerScriptPath() const;
+    int grpcEndpointPort() const;
+    void logGrpcInteraction(const QString& category, const QString& detail) const;
+
     /**
      * @brief 获取默认样式
      * @param style 样式类型
@@ -210,6 +224,8 @@ private:
     QMdiArea* m_mdiArea;
     
     // 设备控制组件
+    QList<QWidget*> m_serialOnlyFields;
+    QList<QWidget*> m_serialOnlyLabels;
     QComboBox* m_serialPortCombo;
     QComboBox* m_backendTypeCombo;
     QLineEdit* m_grpcEndpointEdit;
@@ -225,7 +241,17 @@ private:
     QPushButton* m_pauseButton;
     QPushButton* m_resumeButton;
     QPushButton* m_exportButton;
+    QPushButton* m_startGrpcTestServerButton;
+    QPushButton* m_stopGrpcTestServerButton;
+    QPushButton* m_runGrpcSelfTestButton;
+    QComboBox* m_grpcModeCombo;
     QLabel* m_connectionStatusLabel;
+    QLabel* m_grpcTestServiceStatusLabel;
+    QLabel* m_grpcSelfTestStatusLabel;
+    QLabel* m_grpcSelfTestTxStatusLabel;
+    QLabel* m_grpcSelfTestRxStatusLabel;
+    QLabel* m_grpcModeSwitchStatusLabel;
+    QLabel* m_grpcPeriodicDataStatusLabel;
     
     // 指令发送组件
     QTextEdit* m_commandInput;
@@ -258,6 +284,7 @@ private:
     
     // 定时器
     QTimer* m_updateTimer;
+    QTimer* m_grpcSelfTestTimeoutTimer;
     
     // 状态变量
     bool m_isConnected;
@@ -266,6 +293,21 @@ private:
     qint64 m_lastUpdateTime;
     qint64 m_lastMonitorAppendTime;
     int m_monitorAppendIntervalMs;
+    qint64 m_lastGrpcStreamTimestampMs;
+    bool m_grpcSelfTestPending;
+    bool m_grpcSelfTestCommandAcked;
+    bool m_grpcSelfTestModeSwitchAcked;
+    bool m_grpcSelfTestStreamReceived;
+    bool m_autoSelfTestTriggeredForConnection;
+    qint64 m_grpcPeriodicPacketCount;
+    qint64 m_grpcPeriodicIntervalSumMs;
+    qint64 m_lastGrpcStreamPayloadTimestampMs;
+    QStringList m_grpcSelfTestPendingAcks;
+    QString m_grpcSelfTestTargetMode;
+
+#ifndef QT_COMPILE_FOR_WASM
+    QProcess* m_grpcTestServerProcess;
+#endif
 };
 
 #endif // MAINWINDOW_H

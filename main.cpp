@@ -4,7 +4,6 @@
 #include "ApplicationController.h"
 #include "AppConfig.h"
 #include <QFile>
-#include <QTextStream>
 #include <QDateTime>
 #include <QFontDatabase>
 #include <QFont>
@@ -12,11 +11,23 @@
 
 static QFile* g_logFile = nullptr;
 
+static void writeUtf8LogLine(const QString& line)
+{
+    if (!g_logFile) {
+        return;
+    }
+
+    const QByteArray utf8 = line.toUtf8();
+    g_logFile->write(utf8);
+    g_logFile->write("\n", 1);
+    g_logFile->flush();
+}
+
 static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
     Q_UNUSED(context)
     if (!g_logFile) return;
-    QTextStream out(g_logFile);
+
     QString level;
     switch (type) {
     case QtDebugMsg: level = "DEBUG"; break;
@@ -27,8 +38,8 @@ static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &con
     }
     QString time = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
     QString full = time + " [" + level + "] " + msg;
-    out << full << Qt::endl;
-    out.flush();
+    writeUtf8LogLine(full);
+
     // also print to standard error so output appears in console
     fprintf(stderr, "%s\n", full.toLocal8Bit().constData());
 }
@@ -103,16 +114,14 @@ int main(int argc, char *argv[])
     } catch (const std::exception& e) {
         std::cerr << "异常：" << e.what() << std::endl;
         if (g_logFile) {
-            QTextStream out(g_logFile);
-            out << "异常：" << QString::fromStdString(std::string(e.what())) << Qt::endl;
+            writeUtf8LogLine("异常：" + QString::fromStdString(std::string(e.what())));
             g_logFile->close();
         }
         return -1;
     } catch (...) {
         std::cerr << "未知异常" << std::endl;
         if (g_logFile) {
-            QTextStream out(g_logFile);
-            out << "未知异常" << Qt::endl;
+            writeUtf8LogLine("未知异常");
             g_logFile->close();
         }
         return -1;

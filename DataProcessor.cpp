@@ -32,24 +32,31 @@ void DataProcessor::calcStats()
     for (const auto& frame : frames) {
         // 根据模式决定统计数值
         double channelVal = 0.0;
+        bool hasValidValue = false;
         if (frame.detectMode == FrameData::Legacy) {
             // Legacy模式不再支持，跳过统计
             continue;
         } else if (frame.detectMode == FrameData::MultiChannelReal) {
-            // 使用第一个通道值统计
+            // Real 模式：comp0=幅值，统计幅值首通道
             if (!frame.channels_comp0.isEmpty()) {
                 channelVal = frame.channels_comp0.first();
-                validChannelCount++;
+                hasValidValue = std::isfinite(channelVal);
             }
         } else if (frame.detectMode == FrameData::MultiChannelComplex) {
-            // 复数模式用第一个通道幅值
+            // Complex 模式：comp0=实部、comp1=虚部，统计首通道幅值
             if (!frame.channels_comp0.isEmpty()) {
                 double re = frame.channels_comp0.first();
                 double im = frame.channels_comp1.isEmpty() ? 0.0 : frame.channels_comp1.first();
                 channelVal = std::hypot(re, im);
-                validChannelCount++;
+                hasValidValue = std::isfinite(channelVal);
             }
         }
+
+        if (!hasValidValue) {
+            continue;
+        }
+
+        validChannelCount++;
 
         channelSum += channelVal;
         channelMax = std::max(channelMax, channelVal);

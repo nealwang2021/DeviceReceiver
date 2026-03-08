@@ -234,7 +234,7 @@ void ArrayPlotWindow::onDataUpdated(const QVector<FrameData>& frames)
         
         // 根据模式处理数据
         if (frame.detectMode == FrameData::MultiChannelReal) {
-            // 实数模式
+            // 幅值/相位模式（阵列图当前展示 comp0 幅值分量）
             for (int ch = 0; ch < m_currentChannelCount; ch++) {
                 double val = (ch < frame.channels_comp0.size()) ? frame.channels_comp0.at(ch) : qQNaN();
                 if (ch < m_plot->graphCount()) {
@@ -279,7 +279,7 @@ void ArrayPlotWindow::onCriticalFrame(const FrameData& frame)
 {
     QString alarmMsg;
     if (frame.detectMode == FrameData::MultiChannelReal) {
-        alarmMsg = QStringLiteral("警报！帧ID:%1 实数模式 通道数:%2")
+        alarmMsg = QStringLiteral("警报！帧ID:%1 幅值/相位模式 通道数:%2")
             .arg(frame.frameId)
             .arg(frame.channelCount);
     } else if (frame.detectMode == FrameData::MultiChannelComplex) {

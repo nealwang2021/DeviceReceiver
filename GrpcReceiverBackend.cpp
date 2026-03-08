@@ -382,15 +382,30 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         FrameData frame;
         frame.timestamp    = static_cast<int64_t>(pbFrame.timestamp());
         frame.frameId      = static_cast<uint16_t>(pbFrame.frame_id() & 0xFFFF);
-        frame.detectMode   = static_cast<FrameData::DetectionMode>(pbFrame.detect_mode());
+        const uint32_t detectModeRaw = pbFrame.detect_mode();
+        frame.detectMode   = (detectModeRaw <= static_cast<uint32_t>(FrameData::MultiChannelComplex))
+            ? static_cast<FrameData::DetectionMode>(detectModeRaw)
+            : FrameData::Legacy;
         frame.channelCount = static_cast<uint8_t>(pbFrame.channel_count());
 
-        const int n = pbFrame.channels_comp0_size();
-        frame.channels_comp0.resize(n);
-        frame.channels_comp1.resize(n);
-        for (int i = 0; i < n; ++i) {
+        const int comp0Size = pbFrame.channels_comp0_size();
+        const int comp1Size = pbFrame.channels_comp1_size();
+
+        frame.channels_comp0.resize(comp0Size);
+        for (int i = 0; i < comp0Size; ++i) {
             frame.channels_comp0[i] = pbFrame.channels_comp0(i);
+        }
+
+        frame.channels_comp1.resize(comp1Size);
+        for (int i = 0; i < comp1Size; ++i) {
             frame.channels_comp1[i] = pbFrame.channels_comp1(i);
+        }
+
+        const int inferredChannels = qMax(comp0Size, comp1Size);
+        if (frame.channelCount == 0 && inferredChannels > 0) {
+            frame.channelCount = static_cast<uint8_t>(qBound(0, inferredChannels, 255));
+        } else if (inferredChannels > static_cast<int>(frame.channelCount)) {
+            frame.channelCount = static_cast<uint8_t>(qBound(0, inferredChannels, 255));
         }
 
         // 跨线程发射信号（Qt::QueuedConnection 自动处理）
@@ -407,6 +422,7 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         pkt.insert("frameId",      static_cast<int>(frame.frameId));
         pkt.insert("timestamp",    static_cast<qint64>(frame.timestamp));
         pkt.insert("channelCount", static_cast<int>(frame.channelCount));
+        pkt.insert("detectMode",   static_cast<int>(frame.detectMode));
         emit dataReceived(QJsonDocument(pkt).toJson(QJsonDocument::Compact), false);
     }
 

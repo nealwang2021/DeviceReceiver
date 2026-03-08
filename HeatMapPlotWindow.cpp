@@ -439,7 +439,7 @@ void HeatMapPlotWindow::onCriticalFrame(const FrameData& frame)
 {
     QString alarmMsg;
     if (frame.detectMode == FrameData::MultiChannelReal) {
-        alarmMsg = QString("报警！帧ID:%1 实数模式 通道数:%2")
+        alarmMsg = QString("报警！帧ID:%1 幅值/相位模式 通道数:%2")
             .arg(frame.frameId)
             .arg(frame.channelCount);
     } else if (frame.detectMode == FrameData::MultiChannelComplex) {

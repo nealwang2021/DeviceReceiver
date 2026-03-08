@@ -158,6 +158,10 @@ void PlotWindow::updatePlotData(const QVector<FrameData>& frames)
                 if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
             }
 
+            if (m_plot && m_plot->yAxis) {
+                m_plot->yAxis->setLabel("幅值");
+            }
+
             int ch = qBound(0, static_cast<int>(frame.channelCount), 200);
 
             // 通道数变化时重建 graph
@@ -176,7 +180,7 @@ void PlotWindow::updatePlotData(const QVector<FrameData>& frames)
                     QColor color = QColor::fromHsv((i * 36) % 360, 200, 200);
                     g->setPen(QPen(color, 1));
                     g->setSmooth(0);
-                    g->setName(QString("Ch%1").arg(i + 1));
+                    g->setName(QString("Ch%1(Amp)").arg(i + 1));
                 }
             }
 
@@ -475,7 +479,7 @@ void PlotWindow::onCriticalFrame(const FrameData& frame)
     // 打印报警日志
     QString alarmMsg;
     if (frame.detectMode == FrameData::MultiChannelReal) {
-        alarmMsg = QString("【报警】帧%1：实数模式 通道数%2").arg(frame.frameId).arg(frame.channelCount);
+        alarmMsg = QString("【报警】帧%1：幅值/相位模式 通道数%2").arg(frame.frameId).arg(frame.channelCount);
     } else if (frame.detectMode == FrameData::MultiChannelComplex) {
         alarmMsg = QString("【报警】帧%1：复数模式 通道数%2").arg(frame.frameId).arg(frame.channelCount);
     } else {

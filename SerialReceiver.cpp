@@ -207,7 +207,7 @@ void SerialReceiver::onMockDataTimer()
         lastMockLogMs = nowMs;
         qDebug() << QString("模拟帧[%1]：模式=%2 通道数=%3")
                     .arg(frame.frameId)
-                    .arg(frame.detectMode == FrameData::MultiChannelReal ? "实部" : "复数")
+                    .arg(frame.detectMode == FrameData::MultiChannelReal ? "幅值/相位" : "复数")
                     .arg(frame.channelCount);
     }
 }

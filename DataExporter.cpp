@@ -48,6 +48,7 @@ bool exportCsv(const QVector<FrameData>& frames,
     stream << "# source=" << options.sourceTag << "\n";
     stream << "# range_start_ms=" << options.startTimeMs << "\n";
     stream << "# range_end_ms=" << options.endTimeMs << "\n";
+    stream << "# detect_mode_semantics=1:comp0=amplitude,comp1=phase;2:comp0=real,comp1=imag\n";
 
     stream << "timestamp_ms_utc,frame_id,detect_mode,channel_count";
     for (int index = 0; index < channels; ++index) {

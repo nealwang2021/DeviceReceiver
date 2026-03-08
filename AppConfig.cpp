@@ -147,7 +147,7 @@ void AppConfig::loadDefaults()
     m_baudRate = 115200;
     m_receiverBackendType = "grpc";
     m_grpcEndpoint = "127.0.0.1:50051";
-    m_useMockData = true;
+    m_useMockData = false;
     m_mockDataIntervalMs = 100;
     m_maxPlotPoints = 200;
     m_plotRefreshIntervalMs = 50;

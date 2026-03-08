@@ -17,6 +17,7 @@
 #### 📊 **数据采集与处理**
 - **双模式数据源**: 支持真实串口设备和模拟数据模式
 - **协议解析**: 自动解析固定帧格式数据（16字节帧，AA55帧头）
+- **DataFrame语义约定**: `detect_mode=1` 时 `comp0=幅值, comp1=相位`；`detect_mode=2` 时 `comp0=实部, comp1=虚部`
 - **数据缓存管理**: LRU缓存策略，支持过期清理和最大帧数限制
 - **实时数据流**: 毫秒级数据更新，支持高频率数据采集
 
@@ -28,13 +29,16 @@
 
 #### 🔧 **设备控制与配置**
 - **串口配置**: 端口、波特率、数据位、停止位、校验位、流控制
+- **后端联动显示**: 选择 gRPC 后端时自动隐藏串口专属配置项，避免误配置
 - **设备控制**: 连接/断开控制，连接状态实时反馈
 - **指令发送**: ASCII/十六进制指令发送，支持自动换行
 - **指令历史**: 指令历史记录和快速重发
+- **gRPC 测试验证**: 内置测试面板可验证固化协议命令 `selftest_ping`、`selftest_set_mode` 与周期流数据接收
 
 #### 📝 **数据监控与记录**
 - **实时数据监控**: 发送/接收数据显示，带时间戳和格式标记
 - **日志记录**: 完整的运行日志记录，支持不同级别日志
+- **交互追踪日志**: 客户端日志记录 gRPC 连接状态、命令回包、模式切换与周期数据包
 - **配置文件**: INI格式配置文件，保存所有用户设置
 - **历史记录**: 指令历史、窗口状态、面板布局的持久化存储
 
@@ -306,10 +310,14 @@ docs/                       # GitHub Pages 部署目录
 #### **配置文件格式**
 ```ini
 [Serial]
-port=COM3
-baudRate=115200
-useMockData=true
-mockInterval=100
+Port=COM3
+BaudRate=115200
+
+[Receiver]
+BackendType=grpc
+GrpcEndpoint=127.0.0.1:50051
+UseMockData=false
+MockDataIntervalMs=100
 
 [UI]
 showDevicePanel=true
@@ -326,10 +334,12 @@ maxHistory=20
 #### **配置项说明**
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| **Serial/port** | COM3 | 串口端口名称 |
-| **Serial/baudRate** | 115200 | 波特率 |
-| **Serial/useMockData** | true | 是否使用模拟数据 |
-| **Serial/mockInterval** | 100 | 模拟数据间隔(ms) |
+| **Serial/Port** | COM3 | 串口端口名称 |
+| **Serial/BaudRate** | 115200 | 波特率 |
+| **Receiver/BackendType** | grpc | 接收后端（serial/grpc） |
+| **Receiver/GrpcEndpoint** | 127.0.0.1:50051 | gRPC 服务端地址 |
+| **Receiver/UseMockData** | false | 是否启用本地模拟（true=mock, false=真实服务） |
+| **Receiver/MockDataIntervalMs** | 100 | 模拟数据间隔(ms) |
 | **UI/showDevicePanel** | true | 显示设备面板 |
 | **UI/showCommandPanel** | true | 显示指令面板 |
 | **Commands/maxHistory** | 20 | 最大指令历史数量 |

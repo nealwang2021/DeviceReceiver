@@ -169,7 +169,7 @@ private:
     int m_baudRate = 115200;           // 波特率
     QString m_receiverBackendType = "grpc";
     QString m_grpcEndpoint = "127.0.0.1:50051";
-    bool m_useMockData = true;         // 是否使用模拟数据
+    bool m_useMockData = false;        // 是否使用模拟数据
     int m_mockDataIntervalMs = 100;    // 模拟数据间隔（毫秒）
     
 #ifndef QT_COMPILE_FOR_WASM
