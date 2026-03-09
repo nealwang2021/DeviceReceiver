@@ -50,3 +50,12 @@ proto/generated_py/__pycache__/
 
 # ===== Editor =====
 .vscode/
+.qtc_clangd/
+
+# ===== qmake local generated =====
+Makefile
+Makefile.Debug
+Makefile.Release
+
+# ===== Local-only files =====
+realtime_data_resource.rc
