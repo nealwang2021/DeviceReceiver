@@ -442,7 +442,7 @@ void MainWindow::initUI()
         m_backendTypeCombo = new QComboBox();
         m_backendTypeCombo->addItem(QStringLiteral("串口（被测设备）"), "serial");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（被测设备数据）"), "grpc");
-        // 三轴台测试装置（Stage gRPC）由右侧面板切换采集源，不在此列出
+        // 三轴台测试装置为独立 gRPC，不在此列出（见右侧「三轴台测试装置」面板）
         m_grpcEndpointEdit = new QLineEdit();
         m_grpcEndpointEdit->setPlaceholderText(QStringLiteral("被测设备 gRPC，如 127.0.0.1:50051"));
         m_baudRateCombo = new QComboBox();
@@ -495,7 +495,7 @@ void MainWindow::initUI()
         
         // 控制按钮组
         QGroupBox* controlGroup = new QGroupBox(QStringLiteral("被测设备采集"));
-        controlGroup->setToolTip(QStringLiteral("启动/停止的是主数据通道（被测设备或已切换为三轴台时的采集）"));
+        controlGroup->setToolTip(QStringLiteral("启动/停止的是被测设备主数据通道（串口或 gRPC）；三轴台为独立连接"));
         QVBoxLayout* controlLayout = new QVBoxLayout(controlGroup);
         QHBoxLayout* controlRow1Layout = new QHBoxLayout();
         QHBoxLayout* controlRow2Layout = new QHBoxLayout();
@@ -654,13 +654,6 @@ void MainWindow::initUI()
 
         addStageHeading(QStringLiteral("gRPC 连接"),
                         QStringLiteral("三轴台工装 gRPC 地址 host:port；若与台下位机 TCP 不同，使用 host:port|stageIp:stagePort"));
-        m_stageUseStageBackendButton = new QPushButton(QStringLiteral("数据采集改为三轴台（测试装置）"));
-        m_stageUseStageBackendButton->setMinimumWidth(0);
-        m_stageUseStageBackendButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
-        m_stageUseStageBackendButton->setToolTip(
-            QStringLiteral("应用主采集源切换为三轴台工装的 gRPC 数据流。\n"
-                          "左侧仅配置被测设备（DUT），与三轴台不是同一对象。"));
-        stageLayout->addWidget(m_stageUseStageBackendButton);
         QHBoxLayout* stageEndpointLayout = new QHBoxLayout();
         stageEndpointLayout->setSpacing(4);
         stageEndpointLayout->addWidget(new QLabel(QStringLiteral("地址:")));
@@ -1117,20 +1110,6 @@ void MainWindow::initConnections()
         }
     });
 
-    if (m_stageUseStageBackendButton) {
-        connect(m_stageUseStageBackendButton, &QPushButton::clicked, this, [this]() {
-            ensureStageBackendComboEntry();
-            const int ix = m_backendTypeCombo ? m_backendTypeCombo->findData(QStringLiteral("stage")) : -1;
-            if (ix >= 0 && m_backendTypeCombo) {
-                m_backendTypeCombo->setCurrentIndex(ix);
-            }
-            saveConfigFromUI();
-            if (m_appController) {
-                m_appController->applyReceiverBackendFromConfig();
-            }
-        });
-    }
-
     connect(m_stageApplyEndpointButton, &QPushButton::clicked, this, [this]() {
         const QString endpoint = m_stageEndpointEdit ? m_stageEndpointEdit->text().trimmed() : QString();
         if (endpoint.isEmpty()) {
@@ -1154,25 +1133,31 @@ void MainWindow::initConnections()
     });
 
     connect(m_stageConnectButton, &QPushButton::clicked, this, [this]() {
-        if (!isStageBackendSelected()) {
-            ensureStageBackendComboEntry();
-            const int stageIndex = m_backendTypeCombo ? m_backendTypeCombo->findData(QStringLiteral("stage")) : -1;
-            if (stageIndex >= 0) {
-                m_backendTypeCombo->setCurrentIndex(stageIndex);
-            }
+        const QString endpoint = m_stageEndpointEdit ? m_stageEndpointEdit->text().trimmed() : QString();
+        if (endpoint.isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("三轴台 gRPC 服务地址不能为空"));
+            return;
         }
-
-        if (m_stageEndpointEdit && m_grpcEndpointEdit) {
-            const QString endpoint = m_stageEndpointEdit->text().trimmed();
-            if (!endpoint.isEmpty()) {
-                m_grpcEndpointEdit->setText(endpoint);
-            }
+        if (m_grpcEndpointEdit) {
+            m_grpcEndpointEdit->setText(endpoint);
         }
-
-        onConnectClicked();
+        saveConfigFromUI();
+        if (!m_appController) {
+            return;
+        }
+        if (!m_appController->connectStageBackend(endpoint)) {
+            QMessageBox::warning(this, QStringLiteral("提示"), QStringLiteral("三轴台 gRPC 连接失败"));
+            return;
+        }
+        updateStagePanelUiState();
     });
 
-    connect(m_stageDisconnectButton, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
+    connect(m_stageDisconnectButton, &QPushButton::clicked, this, [this]() {
+        if (m_appController) {
+            m_appController->disconnectStageBackend();
+            updateStagePanelUiState();
+        }
+    });
 
     connect(m_stageGetPositionButton, &QPushButton::clicked, this, [this]() {
         sendStageCommandText(QStringLiteral("get_positions"));
@@ -1448,9 +1433,10 @@ void MainWindow::loadConfigToUI()
     
     // 加载串口配置
     const QString backendType = config->receiverBackendType().trimmed().toLower();
-    const QString effectiveBackend = backendType.isEmpty() ? QStringLiteral("grpc") : backendType;
+    QString effectiveBackend = backendType.isEmpty() ? QStringLiteral("grpc") : backendType;
     if (effectiveBackend.compare(QStringLiteral("stage"), Qt::CaseInsensitive) == 0) {
-        ensureStageBackendComboEntry();
+        effectiveBackend = QStringLiteral("grpc");
+        config->setReceiverBackendType(QStringLiteral("grpc"));
     }
     const int backendIndex = m_backendTypeCombo->findData(effectiveBackend);
     m_backendTypeCombo->setCurrentIndex(backendIndex >= 0 ? backendIndex : 0);
@@ -1974,39 +1960,14 @@ void MainWindow::handleGrpcBackendPacket(const QJsonObject& packet)
     }
 }
 
-void MainWindow::ensureStageBackendComboEntry()
-{
-    if (!m_backendTypeCombo) {
-        return;
-    }
-    if (m_backendTypeCombo->findData(QStringLiteral("stage")) >= 0) {
-        return;
-    }
-    m_backendTypeCombo->addItem(QStringLiteral("三轴台测试装置（gRPC Stage）"), QStringLiteral("stage"));
-}
-
-bool MainWindow::isStageBackendSelected() const
-{
-    return (m_backendTypeCombo &&
-            m_backendTypeCombo->currentData().toString().compare("stage", Qt::CaseInsensitive) == 0);
-}
-
 void MainWindow::updateStagePanelUiState()
 {
     if (!m_stagePanel) {
         return;
     }
 
-    const bool isStageBackend = isStageBackendSelected();
-    const bool isStageConnected = (isStageBackend && m_isConnected);
+    const bool stageConnected = m_appController && m_appController->isStageConnected();
 
-    if (m_stageUseStageBackendButton) {
-        const bool alreadyStage = isStageBackendSelected();
-        m_stageUseStageBackendButton->setEnabled(!alreadyStage);
-        m_stageUseStageBackendButton->setText(
-            alreadyStage ? QStringLiteral("当前采集源：三轴台测试装置")
-                         : QStringLiteral("数据采集改为三轴台（测试装置）"));
-    }
     if (m_stageEndpointEdit) {
         m_stageEndpointEdit->setEnabled(true);
     }
@@ -2014,10 +1975,10 @@ void MainWindow::updateStagePanelUiState()
         m_stageApplyEndpointButton->setEnabled(true);
     }
     if (m_stageConnectButton) {
-        m_stageConnectButton->setEnabled(isStageBackend && !m_isConnected);
+        m_stageConnectButton->setEnabled(!stageConnected);
     }
     if (m_stageDisconnectButton) {
-        m_stageDisconnectButton->setEnabled(isStageBackend && m_isConnected);
+        m_stageDisconnectButton->setEnabled(stageConnected);
     }
 
     for (QWidget* widget : {
@@ -2054,21 +2015,12 @@ void MainWindow::updateStagePanelUiState()
              static_cast<QWidget*>(m_stageCommandHelpButton),
          }) {
         if (widget) {
-            widget->setEnabled(isStageConnected);
+            widget->setEnabled(stageConnected);
         }
-    }
-
-    if (!isStageBackend) {
-        if (m_stageBackendStatusLabel) {
-            m_stageBackendStatusLabel->setText(
-                QStringLiteral("状态: 主采集源为被测设备（未切到三轴台测试装置）"));
-            m_stageBackendStatusLabel->setStyleSheet("color: gray;");
-        }
-        return;
     }
 
     if (m_stageBackendStatusLabel) {
-        if (!m_isConnected) {
+        if (!stageConnected) {
             m_stageBackendStatusLabel->setText(QStringLiteral("状态: 三轴台测试装置未连接"));
             m_stageBackendStatusLabel->setStyleSheet("color: gray;");
         } else {
@@ -2096,24 +2048,16 @@ void MainWindow::sendStageCommandText(const QString& command)
         return;
     }
 
-    if (!isStageBackendSelected()) {
+    if (!m_appController->isStageConnected()) {
         QMessageBox::information(
             this,
             QStringLiteral("提示"),
-            QStringLiteral("请先在右侧点击「数据采集改为三轴台（测试装置）」，将主采集源切到三轴台 gRPC。"));
-        return;
-    }
-
-    if (!m_isConnected) {
-        QMessageBox::information(
-            this,
-            QStringLiteral("提示"),
-            QStringLiteral("三轴台测试装置尚未连接，请先点击「连接三轴台」或左侧「连接」。"));
+            QStringLiteral("请先在右侧点击「连接」三轴台 gRPC。"));
         return;
     }
 
     addCommandToHistory(normalizedCommand);
-    m_appController->sendCommand(normalizedCommand, false);
+    m_appController->sendStageCommand(normalizedCommand, false);
 
     if (m_stageCommandResultLabel) {
         m_stageCommandResultLabel->setText(QString("最近结果: 指令已发送 [%1]").arg(normalizedCommand));
@@ -2660,62 +2604,34 @@ void MainWindow::onBackendTypeChanged(int index)
     Q_UNUSED(index)
     const QString backendType = m_backendTypeCombo->currentData().toString();
     const bool isGrpc = (backendType.compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isStage = (backendType.compare("stage", Qt::CaseInsensitive) == 0);
-    const bool isGrpcLike = (isGrpc || isStage);
-
-    if (isStage) {
-        if (m_hexFormatCheck && m_hexFormatCheck->isEnabled()) {
-            m_hexFormatCheckedBeforeStage = m_hexFormatCheck->isChecked();
-            m_hexFormatSuspendedForStage = true;
-            m_hexFormatCheck->setChecked(false);
-            m_hexFormatCheck->setEnabled(false);
-        }
-    } else if (m_hexFormatSuspendedForStage && m_hexFormatCheck) {
-        m_hexFormatCheck->setEnabled(true);
-        m_hexFormatCheck->setChecked(m_hexFormatCheckedBeforeStage);
-        m_hexFormatSuspendedForStage = false;
-    }
 
     if (isGrpc) {
         m_useMockDataCheck->setText(QStringLiteral("被测设备 gRPC 本地模拟"));
-    } else if (isStage) {
-        m_useMockDataCheck->setText(QStringLiteral("三轴台测试装置本地模拟"));
     } else {
         m_useMockDataCheck->setText(QStringLiteral("启用模拟数据"));
     }
 
-    m_grpcEndpointEdit->setEnabled(isGrpcLike);
+    m_grpcEndpointEdit->setEnabled(isGrpc);
 
     for (QWidget* field : m_serialOnlyFields) {
         if (!field) {
             continue;
         }
-        field->setVisible(!isGrpcLike);
-        field->setEnabled(!isGrpcLike);
+        field->setVisible(!isGrpc);
+        field->setEnabled(!isGrpc);
     }
     for (QWidget* label : m_serialOnlyLabels) {
         if (!label) {
             continue;
         }
-        label->setVisible(!isGrpcLike);
-    }
-
-    if (isStage && m_stagePanel && m_stagePanel->isVisible()) {
-        m_stagePanel->raise();
+        label->setVisible(!isGrpc);
     }
 
     if (m_grpcTestGroup) {
-        m_grpcTestGroup->setVisible(!isStage);
+        m_grpcTestGroup->setVisible(true);
     }
 
-    if (isStage && m_stageEndpointEdit && m_grpcEndpointEdit) {
-        const QString endpoint = m_grpcEndpointEdit->text().trimmed();
-        if (!endpoint.isEmpty() && m_stageEndpointEdit->text() != endpoint) {
-            m_stageEndpointEdit->setText(endpoint);
-        }
-    }
-
-    if (!isGrpcLike) {
+    if (!isGrpc) {
         updateSerialPortList();
     }
 
@@ -2907,17 +2823,7 @@ void MainWindow::onSendClicked()
         return;
     }
 
-    const bool isStageBackend =
-        (m_backendTypeCombo &&
-         m_backendTypeCombo->currentData().toString().compare("stage", Qt::CaseInsensitive) == 0);
     const bool isHex = m_hexFormatCheck->isChecked();
-    if (isStageBackend && isHex) {
-        QMessageBox::warning(
-            this,
-            QStringLiteral("提示"),
-            QStringLiteral("三轴台测试装置仅支持文本指令。请关闭「HEX发送」，或使用右侧「自定义指令」。"));
-        return;
-    }
     
     // 添加到历史记录
     addCommandToHistory(command);
@@ -3094,20 +3000,12 @@ void MainWindow::onDataReceived(const QByteArray& data, bool isHex)
 {
     const bool isGrpcBackend = (m_backendTypeCombo &&
                                 m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isStageBackend = (m_backendTypeCombo &&
-                                 m_backendTypeCombo->currentData().toString().compare("stage", Qt::CaseInsensitive) == 0);
 
-    if (isGrpcBackend || isStageBackend) {
+    if (isGrpcBackend) {
         QJsonParseError parseError;
         const QJsonDocument jsonDoc = QJsonDocument::fromJson(data, &parseError);
         if (parseError.error == QJsonParseError::NoError && jsonDoc.isObject()) {
-            const QJsonObject packet = jsonDoc.object();
-            if (isGrpcBackend) {
-                handleGrpcBackendPacket(packet);
-            }
-            if (isStageBackend) {
-                handleStageBackendPacket(packet);
-            }
+            handleGrpcBackendPacket(jsonDoc.object());
         }
     }
 
@@ -3130,6 +3028,70 @@ void MainWindow::onDataReceived(const QByteArray& data, bool isHex)
     addDataToMonitor(displayData, isHex, true);
 }
 
+void MainWindow::onStageDataReceived(const QByteArray& data, bool isHex)
+{
+    QJsonParseError parseError;
+    const QJsonDocument jsonDoc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error == QJsonParseError::NoError && jsonDoc.isObject()) {
+        handleStageBackendPacket(jsonDoc.object());
+    }
+
+    if (m_monitorPanel && !m_monitorPanel->isVisible()) {
+        return;
+    }
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    if (nowMs - m_lastMonitorAppendTime < m_monitorAppendIntervalMs) {
+        return;
+    }
+
+    QString displayData;
+    if (isHex) {
+        displayData = data.toHex(' ').toUpper();
+    } else {
+        displayData = QString::fromUtf8(data);
+    }
+
+    addDataToMonitor(displayData, isHex, true);
+}
+
+void MainWindow::onStageCommandSent(const QByteArray& command)
+{
+    const QString text = QString::fromUtf8(command).trimmed();
+    addDataToMonitor(text, false, false);
+    if (m_stageCommandResultLabel) {
+        m_stageCommandResultLabel->setText(QStringLiteral("最近结果: 已发送 %1").arg(text));
+        m_stageCommandResultLabel->setStyleSheet(QStringLiteral("color: #1d4ed8;"));
+    }
+}
+
+void MainWindow::onStageCommandError(const QString& error)
+{
+    if (m_stageCommandResultLabel) {
+        m_stageCommandResultLabel->setText(QStringLiteral("最近结果: 命令失败 - %1").arg(error));
+        m_stageCommandResultLabel->setStyleSheet(QStringLiteral("color: red;"));
+    }
+    if (m_stageBackendStatusLabel) {
+        m_stageBackendStatusLabel->setText(QStringLiteral("状态: 异常 | %1").arg(error));
+        m_stageBackendStatusLabel->setStyleSheet(QStringLiteral("color: red;"));
+    }
+
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
+    const QString errorText = QStringLiteral("%1 [错误]: %2").arg(timestamp, error);
+    if (m_dataMonitor) {
+        m_dataMonitor->append(errorText);
+        if (QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar()) {
+            scrollBar->setValue(scrollBar->maximum());
+        }
+    }
+}
+
+void MainWindow::onStageConnectionStateChanged(bool connected)
+{
+    Q_UNUSED(connected)
+    updateStagePanelUiState();
+}
+
 void MainWindow::onCommandSent(const QByteArray& command)
 {
     // 指令发送成功处理
@@ -3140,14 +3102,9 @@ void MainWindow::onCommandSent(const QByteArray& command)
 
     const bool isGrpcBackend = (m_backendTypeCombo &&
                                 m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isStageBackend = (m_backendTypeCombo &&
-                                 m_backendTypeCombo->currentData().toString().compare("stage", Qt::CaseInsensitive) == 0);
     if (isGrpcBackend) {
         logGrpcInteraction("send", QString("命令已发送: %1")
                                      .arg(QString::fromUtf8(command).trimmed()));
-    } else if (isStageBackend && m_stageCommandResultLabel) {
-        m_stageCommandResultLabel->setText(QString("最近结果: 已发送 %1").arg(QString::fromUtf8(command).trimmed()));
-        m_stageCommandResultLabel->setStyleSheet("color: #1d4ed8;");
     }
 }
 
@@ -3177,19 +3134,8 @@ void MainWindow::onCommandError(const QString& error)
 
     const bool isGrpcBackend = (m_backendTypeCombo &&
                                 m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isStageBackend = (m_backendTypeCombo &&
-                                 m_backendTypeCombo->currentData().toString().compare("stage", Qt::CaseInsensitive) == 0);
     if (isGrpcBackend) {
         logGrpcInteraction("error", error);
-    } else if (isStageBackend) {
-        if (m_stageCommandResultLabel) {
-            m_stageCommandResultLabel->setText(QString("最近结果: 命令失败 - %1").arg(error));
-            m_stageCommandResultLabel->setStyleSheet("color: red;");
-        }
-        if (m_stageBackendStatusLabel) {
-            m_stageBackendStatusLabel->setText(QString("状态: 异常 | %1").arg(error));
-            m_stageBackendStatusLabel->setStyleSheet("color: red;");
-        }
     }
 
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");

@@ -168,6 +168,23 @@ package_grpc_test_server.bat
 
 > 主程序优先启动 `grpc_test_server.exe`；仅在找不到 EXE 时，才回退到 Python 脚本模式（用于开发调试）。
 
+#### 🎯 **`stage_grpc_test_server.py` / `run_stage_grpc_test_server.bat` — 三轴台 StageService 测试服务**
+
+与 **`grpc_test_server.py`（被测设备 DeviceDataService）名称区分**，本组脚本实现 **`proto/stage.proto`** 的 **StageService**，供「三轴台测试装置」面板联调。
+
+| 文件 | 说明 |
+|------|------|
+| `stage_grpc_test_server.py` | Python 模拟服务端（默认监听 **50052**，避免与 `grpc_test_server.py` 默认 **50051** 冲突） |
+| `run_stage_grpc_test_server.bat` | 快速启动上述脚本 |
+| `package_stage_grpc_test_server.bat` | 打包为 `build/release/stage_grpc_test_server.exe` |
+
+控制端 gRPC 地址需与监听端口一致，例如 `127.0.0.1:50052`。
+
+**重新生成 Python 桩**（修改 `stage.proto` 后）:
+```cmd
+python -m grpc_tools.protoc -Iproto --python_out=proto/generated_py --grpc_python_out=proto/generated_py proto/stage.proto
+```
+
 #### 🌐 **`wasm_build.bat` - WebAssembly 构建脚本**
 
 将项目编译为 WebAssembly，可在浏览器中直接运行。
@@ -207,12 +224,14 @@ git push
 build/
 ├── release/                # Release版本输出目录
 │   ├── realtime_data.exe   # 主程序
-│   ├── grpc_test_server.exe# gRPC测试服务（可选，推荐生产环境提供）
+│   ├── grpc_test_server.exe      # 被测设备数据 gRPC 测试服务（DeviceDataService）
+│   ├── stage_grpc_test_server.exe# 三轴台 StageService 测试服务（可选）
 │   ├── realtime_data.pdb   # 程序数据库文件
 │   └── realtime_data.log   # 运行日志文件
 └── debug/                  # Debug版本输出目录
     ├── realtime_data.exe
-   ├── grpc_test_server.exe
+    ├── grpc_test_server.exe
+    ├── stage_grpc_test_server.exe
     ├── realtime_data.pdb
     └── realtime_data.log
 

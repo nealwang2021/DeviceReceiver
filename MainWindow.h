@@ -82,6 +82,11 @@ public slots:
     void onDataReceived(const QByteArray& data, bool isHex = false);
     void onCommandSent(const QByteArray& command);
     void onCommandError(const QString& error);
+    /// 三轴台独立后端（与 onDataReceived 分离）
+    void onStageDataReceived(const QByteArray& data, bool isHex = false);
+    void onStageCommandSent(const QByteArray& command);
+    void onStageCommandError(const QString& error);
+    void onStageConnectionStateChanged(bool connected);
 
 protected:
     /**
@@ -220,11 +225,8 @@ private:
     void handleGrpcBackendPacket(const QJsonObject& packet);
     void handleStageBackendPacket(const QJsonObject& packet);
     void finalizeGrpcSelfTest();
-    bool isStageBackendSelected() const;
     void updateStagePanelUiState();
     void sendStageCommandText(const QString& command);
-    /// 配置或三轴台面板需要 Stage 后端时，向接收后端下拉框动态插入 Stage 项（设备面板默认不列出）
-    void ensureStageBackendComboEntry();
     /// 主窗口限制在当前屏幕工作区内（横向/竖向不超出可用区域），并在换屏时更新
     void applyScreenGeometryConstraints();
     void setGrpcTestServiceStatus(const QString& text, const QString& color);
@@ -301,7 +303,6 @@ private:
     // Stage 专用控制组件
     QLineEdit* m_stageEndpointEdit = nullptr;
     QPushButton* m_stageApplyEndpointButton = nullptr;
-    QPushButton* m_stageUseStageBackendButton = nullptr;
     QPushButton* m_stageConnectButton = nullptr;
     QPushButton* m_stageDisconnectButton = nullptr;
     QLabel* m_stageBackendStatusLabel = nullptr;
@@ -342,8 +343,6 @@ private:
     QPushButton* m_stageCommandHelpButton = nullptr;
 
     /// Stage 后端下曾挂起 HEX 勾选状态，切回其它后端时恢复
-    bool m_hexFormatSuspendedForStage = false;
-    bool m_hexFormatCheckedBeforeStage = false;
     
     // 指令发送组件
     QTextEdit* m_commandInput;

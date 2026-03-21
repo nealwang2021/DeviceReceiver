@@ -70,6 +70,10 @@ void ApplicationController::reloadRuntimeConfig()
     if (m_config.backendType.isEmpty()) {
         m_config.backendType = "grpc";
     }
+    // 三轴台不再作为「主采集源」；旧配置 stage 迁移为 grpc（被测设备）
+    if (m_config.backendType.compare(QStringLiteral("stage"), Qt::CaseInsensitive) == 0) {
+        m_config.backendType = QStringLiteral("grpc");
+    }
     m_config.grpcEndpoint = config->grpcEndpoint();
     m_config.useMockData = config->useMockData();
     m_config.mockDataIntervalMs = config->mockDataIntervalMs();
@@ -160,8 +164,7 @@ void ApplicationController::start()
     if (m_serialReceiver) {
         m_isPaused = false;
         const bool isGrpcBackend = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0);
-        const bool isStageBackend = (m_config.backendType.compare("stage", Qt::CaseInsensitive) == 0);
-        const bool isGrpcLikeBackend = (isGrpcBackend || isStageBackend);
+        const bool isGrpcLikeBackend = isGrpcBackend;
 
         if (isGrpcLikeBackend) {
             QMetaObject::invokeMethod(m_serialReceiver.get(), "setMockMode",
@@ -344,11 +347,12 @@ bool ApplicationController::initReceiverBackend()
         m_serialThread.reset();
     }
 
-    const QString backendType = m_config.backendType.trimmed().toLower();
-    if (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0) {
+    QString backendType = m_config.backendType.trimmed().toLower();
+    if (backendType.compare(QStringLiteral("stage"), Qt::CaseInsensitive) == 0) {
+        backendType = QStringLiteral("grpc");
+    }
+    if (backendType.compare("grpc", Qt::CaseInsensitive) == 0) {
         m_serialReceiver.reset(new GrpcReceiverBackend);
-    } else if (m_config.backendType.compare("stage", Qt::CaseInsensitive) == 0) {
-        m_serialReceiver.reset(new StageReceiverBackend);
     } else {
         m_serialReceiver.reset(new SerialReceiver);
     }
@@ -370,7 +374,7 @@ bool ApplicationController::initReceiverBackend()
                      }, Qt::DirectConnection);
 
     m_activeBackendType = backendType;
-    qInfo() << "接收后端已初始化，运行在独立线程，类型=" << m_activeBackendType;
+    qInfo() << "接收后端已初始化（被测设备），运行在独立线程，类型=" << m_activeBackendType;
     return true;
 }
 
@@ -499,6 +503,113 @@ void ApplicationController::connectReceiverToMainWindow()
                      m_mainWindow.get(), &MainWindow::updateConnectionStatus, Qt::QueuedConnection);
 }
 
+void ApplicationController::connectStageReceiverToMainWindow()
+{
+    if (!m_stageReceiver || !m_mainWindow) {
+        return;
+    }
+    QObject::disconnect(m_stageReceiver.get(), nullptr, m_mainWindow.get(), nullptr);
+    QObject::connect(m_stageReceiver.get(), &IReceiverBackend::dataReceived,
+                     m_mainWindow.get(), &MainWindow::onStageDataReceived, Qt::QueuedConnection);
+    QObject::connect(m_stageReceiver.get(), &IReceiverBackend::commandSent,
+                     m_mainWindow.get(), &MainWindow::onStageCommandSent, Qt::QueuedConnection);
+    QObject::connect(m_stageReceiver.get(), &IReceiverBackend::commandError,
+                     m_mainWindow.get(), &MainWindow::onStageCommandError, Qt::QueuedConnection);
+    QObject::connect(m_stageReceiver.get(), &IReceiverBackend::connectionStateChanged,
+                     m_mainWindow.get(), &MainWindow::onStageConnectionStateChanged, Qt::QueuedConnection);
+}
+
+void ApplicationController::disconnectStageReceiverFromMainWindow()
+{
+    if (!m_stageReceiver || !m_mainWindow) {
+        return;
+    }
+    QObject::disconnect(m_stageReceiver.get(), nullptr, m_mainWindow.get(), nullptr);
+}
+
+bool ApplicationController::connectStageBackend(const QString& endpoint)
+{
+    if (!m_mainWindow) {
+        return false;
+    }
+    const QString ep = endpoint.trimmed();
+    if (ep.isEmpty()) {
+        qWarning() << "connectStageBackend: endpoint 为空";
+        return false;
+    }
+
+    disconnectStageBackend();
+
+    m_stageReceiver.reset(new StageReceiverBackend);
+    m_stageThread.reset(new QThread);
+    m_stageReceiver->moveToThread(m_stageThread.get());
+    m_stageThread->start();
+
+    connectStageReceiverToMainWindow();
+
+    bool connected = false;
+    QMetaObject::invokeMethod(m_stageReceiver.get(), "connectBackend",
+                              Qt::BlockingQueuedConnection,
+                              Q_RETURN_ARG(bool, connected),
+                              Q_ARG(QString, ep));
+    if (!connected) {
+        qWarning() << "connectStageBackend: 连接失败" << ep;
+        disconnectStageBackend();
+        return false;
+    }
+    qInfo() << "三轴台 Stage 后端已连接:" << ep;
+    return true;
+}
+
+void ApplicationController::disconnectStageBackend()
+{
+    disconnectStageReceiverFromMainWindow();
+
+    if (m_stageReceiver && m_stageThread && m_stageThread->isRunning()) {
+        QMetaObject::invokeMethod(m_stageReceiver.get(), "stopAcquisition",
+                                  Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(m_stageReceiver.get(), "disconnectBackend",
+                                  Qt::BlockingQueuedConnection);
+    }
+
+    m_stageReceiver.reset();
+
+    if (m_stageThread) {
+        if (m_stageThread->isRunning()) {
+            m_stageThread->quit();
+            m_stageThread->wait(3000);
+        }
+        m_stageThread.reset();
+    }
+
+    emit stageConnectionStateChanged(false);
+    qInfo() << "三轴台 Stage 后端已断开";
+}
+
+void ApplicationController::sendStageCommand(const QString& command, bool isHex)
+{
+    if (!m_stageReceiver) {
+        qWarning() << "sendStageCommand: 三轴台后端未初始化";
+        return;
+    }
+    QMetaObject::invokeMethod(m_stageReceiver.get(), "sendCommand",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, command),
+                              Q_ARG(bool, isHex));
+}
+
+bool ApplicationController::isStageConnected()
+{
+    if (!m_stageReceiver) {
+        return false;
+    }
+    bool ok = false;
+    QMetaObject::invokeMethod(m_stageReceiver.get(), "isBackendConnected",
+                              Qt::BlockingQueuedConnection,
+                              Q_RETURN_ARG(bool, ok));
+    return ok;
+}
+
 void ApplicationController::sendCommand(const QString& command, bool isHex)
 {
     if (!m_serialReceiver) {
@@ -537,8 +648,7 @@ void ApplicationController::resumeAcquisition()
                               Q_ARG(bool, false));
     if (m_isRunning &&
         (m_config.useMockData ||
-         m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0 ||
-         m_config.backendType.compare("stage", Qt::CaseInsensitive) == 0)) {
+         m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0)) {
         QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
                                   Qt::QueuedConnection,
                                   Q_ARG(int, m_config.mockDataIntervalMs));
@@ -607,6 +717,9 @@ PlotWindow* ApplicationController::createPlotWindow(PlotType type)
 
 void ApplicationController::cleanup()
 {
+    // 先断开三轴台（信号指向 MainWindow，须在销毁主窗口前）
+    disconnectStageBackend();
+
     // 清理顺序：先停止数据处理，再销毁窗口，最后清理串口
     
     // 停止并销毁数据处理模块

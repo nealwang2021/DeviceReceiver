@@ -38,7 +38,7 @@ public slots:
     // -------- IReceiverBackend 接口实现 --------
     bool connectBackend(const QString& endpoint) override;
     void disconnectBackend() override;
-    bool isBackendConnected() const override;
+    Q_INVOKABLE bool isBackendConnected() const override;
     void startAcquisition(int intervalMs = 100) override;
     void stopAcquisition() override;
     void setPaused(bool paused) override;

@@ -102,6 +102,12 @@ public:
                            qint64 endTimeMs,
                            QString* errorMessage = nullptr);
 
+    /// 三轴台测试装置（StageService）独立后端，与主采集（被测设备）无关
+    bool connectStageBackend(const QString& endpoint);
+    void disconnectStageBackend();
+    void sendStageCommand(const QString& command, bool isHex = false);
+    bool isStageConnected();
+
 signals:
     /**
      * @brief 应用启动信号
@@ -114,6 +120,8 @@ signals:
      */
     void stopped();
     void paused(bool paused);
+    /// 三轴台 gRPC 连接状态（与主窗口 m_isConnected 无关）
+    void stageConnectionStateChanged(bool connected);
 
 private:
     /**
@@ -152,6 +160,8 @@ private:
      */
     bool initMainWindow();
     void connectReceiverToMainWindow();
+    void connectStageReceiverToMainWindow();
+    void disconnectStageReceiverFromMainWindow();
     
     /**
      * @brief 清理所有资源
@@ -166,6 +176,8 @@ private:
     DataCacheManager* m_cacheManager = nullptr;
     QScopedPointer<QThread> m_serialThread;
     QScopedPointer<IReceiverBackend> m_serialReceiver;
+    QScopedPointer<QThread> m_stageThread;
+    QScopedPointer<IReceiverBackend> m_stageReceiver;
     QScopedPointer<PlotWindow> m_plotWindow;  // 向后兼容的默认窗口
     QScopedPointer<DataProcessor> m_dataProcessor;
     PlotWindowManager* m_plotWindowManager = nullptr;  // 绘图窗口管理器
@@ -178,7 +190,7 @@ private:
         qint64 expireTimeMs = 60000;     // 数据过期时间（毫秒）
         QString serialPort = "COM3";     // 串口端口
         int baudRate = 115200;           // 波特率
-        QString backendType = "serial"; // serial/grpc/stage
+        QString backendType = "serial"; // serial/grpc（被测设备；不含 stage）
         QString grpcEndpoint = "127.0.0.1:50051";
         bool useMockData = true;         // 是否使用模拟数据
         int mockDataIntervalMs = 100;    // 模拟数据间隔（毫秒）

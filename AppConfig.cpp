@@ -46,6 +46,10 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_serialPort = settings.value("Serial/Port", m_serialPort).toString();
     m_baudRate = settings.value("Serial/BaudRate", m_baudRate).toInt();
     m_receiverBackendType = settings.value("Receiver/BackendType", m_receiverBackendType).toString();
+    // 三轴台不再作为被测设备采集源；旧配置迁移为 grpc
+    if (m_receiverBackendType.compare(QStringLiteral("stage"), Qt::CaseInsensitive) == 0) {
+        m_receiverBackendType = QStringLiteral("grpc");
+    }
     m_grpcEndpoint = settings.value("Receiver/GrpcEndpoint", m_grpcEndpoint).toString();
     // 优先读 [Receiver] 下的配置，兼容历史版本中存放在 [Serial] 下的写法
     if (settings.contains("Receiver/UseMockData")) {

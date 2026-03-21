@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-gRPC 测试服务器 — DeviceDataService
-====================================
+gRPC 测试服务器 — DeviceDataService（被测设备数据）
+==================================================
+**命名区分：** 三轴台工装 StageService 请使用同目录下的 `stage_grpc_test_server.py`
+（默认端口 50052），勿与本脚本混淆。
+
 功能：
   1. Subscribe (Server-Streaming): 按客户端请求的间隔定时推送 DataFrame
      - 支持 MultiChannelReal / MultiChannelComplex / Legacy 三种模式
