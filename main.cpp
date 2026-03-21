@@ -1,4 +1,4 @@
-﻿#include <QApplication>
+#include <QApplication>
 #include <QDebug>
 #include "FrameData.h"
 #include "ApplicationController.h"
@@ -69,10 +69,15 @@ int main(int argc, char *argv[])
         }
 #endif
 
-        // 加载配置文件（不存在或格式错误时回退到默认配置）
-        qDebug() << "正在加载配置文件...";
-        AppConfig::instance()->loadFromFile("config.ini");
-        qDebug() << "配置文件加载完成";
+        // 加载配置文件（与可执行文件同目录，避免 cwd 不同导致布局/状态未加载）
+        {
+            const QString cfgPath = AppConfig::defaultConfigFilePath();
+            qDebug() << "正在加载配置文件:" << cfgPath;
+            if (!AppConfig::instance()->loadFromFile(cfgPath)) {
+                qWarning() << "将使用内存默认配置（窗口布局可能未恢复，关闭程序正常退出后会写入 config.ini）";
+            }
+        }
+        qDebug() << "配置文件处理完成";
 
         // 安装简单日志处理器（写入应用目录下 realtime_data.log）
         QString logPath = QApplication::applicationDirPath() + "/realtime_data.log";

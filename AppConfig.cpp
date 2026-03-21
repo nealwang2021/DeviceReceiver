@@ -1,6 +1,9 @@
 #include "AppConfig.h"
 #include <QSettings>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QApplication>
 #ifndef QT_COMPILE_FOR_WASM
@@ -23,17 +26,42 @@ AppConfig* AppConfig::instance()
     return m_instance;
 }
 
+QString AppConfig::defaultConfigFilePath()
+{
+    if (QCoreApplication::instance()) {
+        return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("config.ini"));
+    }
+    return QStringLiteral("config.ini");
+}
+
 bool AppConfig::loadFromFile(const QString& filename)
 {
-    QSettings settings(filename, QSettings::IniFormat);
-    
-    if (!settings.contains("General/AppTitle")) {
-        qWarning() << "配置文件格式不正确或不存在，使用默认配置";
+    const QFileInfo fi(filename);
+    if (!fi.exists() || !fi.isFile()) {
+        qWarning() << "配置文件不存在：" << filename;
         return false;
     }
-    
-    // 加载应用配置
-    m_appTitle = settings.value("General/AppTitle", m_appTitle).toString();
+
+    QSettings settings(filename, QSettings::IniFormat);
+
+    // 兼容 [General] 与 Qt/环境下可能出现的 [%General]（键名分别为 General/* 与 %General/*）
+    auto valueGeneral = [&settings](const QString& key, const QVariant& defaultValue) -> QVariant {
+        const QString kStd = QStringLiteral("General/") + key;
+        const QString kPct = QStringLiteral("%General/") + key;
+        if (settings.contains(kStd)) {
+            return settings.value(kStd);
+        }
+        if (settings.contains(kPct)) {
+            return settings.value(kPct);
+        }
+        return defaultValue;
+    };
+
+    // 加载应用配置（不再因缺少 AppTitle 整文件失败，否则 UI/MainWindowState 等永远不会被读入）
+    m_appTitle = valueGeneral(QStringLiteral("AppTitle"), m_appTitle).toString();
+    if (m_appTitle.isEmpty()) {
+        m_appTitle = QStringLiteral("实时数据监控");
+    }
     
     // 加载窗口配置
     m_windowSize = settings.value("Window/Size", m_windowSize).toSize();

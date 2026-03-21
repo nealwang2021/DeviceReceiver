@@ -25,6 +25,9 @@ public:
     
     // 单例模式访问
     static AppConfig* instance();
+
+    /** 与可执行文件同目录的 config.ini（避免依赖当前工作目录导致配置/布局未加载） */
+    static QString defaultConfigFilePath();
     
     // 禁止拷贝和赋值
     AppConfig(const AppConfig&) = delete;

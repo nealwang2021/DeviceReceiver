@@ -123,8 +123,8 @@ MainWindow::MainWindow(ApplicationController* controller, QWidget* parent)
 
 MainWindow::~MainWindow()
 {
-    // 保存配置
-    saveConfigFromUI();
+    // 注意：不在析构时 saveConfigFromUI() — 此时子控件多已析构/隐藏，isVisible() 不可靠，
+    // 会误把各面板存成“隐藏”，覆盖 closeEvent 中已写入的正确布局。
     saveCommandHistory();
 }
 
@@ -279,9 +279,9 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
     AppConfig* config = AppConfig::instance();
     if (config) {
-        config->saveToFile("config.ini");
+        config->saveToFile(AppConfig::defaultConfigFilePath());
     }
-    
+
     QMainWindow::closeEvent(event);
 }
 
@@ -2596,7 +2596,7 @@ void MainWindow::onConnectClicked()
         saveConfigFromUI();
         AppConfig* config = AppConfig::instance();
         if (config) {
-            config->saveToFile("config.ini");
+            config->saveToFile(AppConfig::defaultConfigFilePath());
         }
         m_appController->reloadRuntimeConfig();
         m_appController->start();
@@ -3420,7 +3420,7 @@ void MainWindow::setStyle(AppConfig::Style style)
     AppConfig* config = AppConfig::instance();
     if (config) {
         config->setCurrentStyle(style);
-        config->saveToFile("config.ini");
+        config->saveToFile(AppConfig::defaultConfigFilePath());
         qDebug() << "Style saved to config:" << style;
     }
 }
