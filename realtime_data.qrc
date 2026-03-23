@@ -1,6 +1,8 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
-    <qresource prefix="/files">
+    <!-- 无前缀：资源 URL 为 :/files/css/...，与 MainWindow::setStyle 中路径一致。
+         若写 prefix="/files" + file="files/css/..."，会变成 :/files/files/css/...，导致 QFile 打不开、仅 cwd 下有散文件时才有样式。 -->
+    <qresource>
         <file>files/css/darkStyle.css</file>
         <file>files/css/lightStyle.css</file>
         <file>files/css/toolBar_dark.css</file>

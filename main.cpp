@@ -69,17 +69,7 @@ int main(int argc, char *argv[])
         }
 #endif
 
-        // 加载配置文件（与可执行文件同目录，避免 cwd 不同导致布局/状态未加载）
-        {
-            const QString cfgPath = AppConfig::defaultConfigFilePath();
-            qDebug() << "正在加载配置文件:" << cfgPath;
-            if (!AppConfig::instance()->loadFromFile(cfgPath)) {
-                qWarning() << "将使用内存默认配置（窗口布局可能未恢复，关闭程序正常退出后会写入 config.ini）";
-            }
-        }
-        qDebug() << "配置文件处理完成";
-
-        // 安装简单日志处理器（写入应用目录下 realtime_data.log）
+        // 先安装日志处理器，再加载 config.ini，否则 AppConfig::loadFromFile 内的 qInfo/qWarning 不会写入 realtime_data.log
         QString logPath = QApplication::applicationDirPath() + "/realtime_data.log";
         g_logFile = new QFile(logPath, qApp);
         if (g_logFile->open(QIODevice::Append | QIODevice::Text)) {
@@ -89,6 +79,16 @@ int main(int argc, char *argv[])
             qWarning() << "无法打开日志文件:" << logPath;
             delete g_logFile; g_logFile = nullptr;
         }
+
+        // 加载配置文件（与可执行文件同目录，避免 cwd 不同导致布局/状态未加载）
+        {
+            const QString cfgPath = AppConfig::defaultConfigFilePath();
+            qDebug() << "正在加载配置文件:" << cfgPath;
+            if (!AppConfig::instance()->loadFromFile(cfgPath)) {
+                qWarning() << "将使用内存默认配置（窗口布局可能未恢复，关闭程序正常退出后会写入 config.ini）";
+            }
+        }
+        qDebug() << "配置文件处理完成";
 
         // 创建应用控制器
         qDebug() << "正在创建应用控制器...";

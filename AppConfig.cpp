@@ -6,6 +6,9 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QApplication>
+#include <QTextCodec>
+#include <QTemporaryFile>
+#include <cstdio>
 #ifndef QT_COMPILE_FOR_WASM
 #include <QAbstractSocket>
 #include <QHostAddress>
@@ -56,6 +59,237 @@ QString defaultGrpcEndpoint(int port)
     return QStringLiteral("%1:%2").arg(bracketedPreferredLocalIpv6()).arg(port);
 }
 
+/** 每次加载 config 时输出 AppTitle 解析步骤，便于排查乱码（无需环境变量） */
+void logAppTitleStep(const char* step, const QString& detail)
+{
+    const QString line = QStringLiteral("[AppConfig/AppTitle] ") + QLatin1String(step) + QLatin1Char(' ') + detail;
+    qWarning().noquote() << line;
+    fprintf(stderr, "%s\n", line.toUtf8().constData());
+}
+
+QString hexPreviewBytes(const QByteArray& data, int maxBytes = 40)
+{
+    const QByteArray p = data.left(maxBytes);
+    QString s;
+    s.reserve(p.size() * 3);
+    for (int i = 0; i < p.size(); ++i) {
+        const auto c = static_cast<unsigned char>(p[i]);
+        s += QString::asprintf("%02X ", c);
+    }
+    return s.trimmed();
+}
+
+/** 将 config.ini 整文件按 UTF-8 解码：先去掉 UTF-8 BOM(EF BB BF)，避免首行节名无法匹配；仅当 UTF-8 非法时再尝试 GB18030（旧 ANSI 配置） */
+QString decodeIniFileBytes(const QByteArray& data)
+{
+    if (data.isEmpty()) {
+        return {};
+    }
+    QByteArray d = data;
+    bool strippedUtf8Bom = false;
+    if (d.startsWith("\xEF\xBB\xBF")) {
+        d = d.mid(3);
+        strippedUtf8Bom = true;
+    }
+    QString text = QString::fromUtf8(d);
+    if (text.contains(QChar(0xFFFD))) {
+        QTextCodec* gb = QTextCodec::codecForName("GB18030");
+        if (!gb) {
+            gb = QTextCodec::codecForName("GBK");
+        }
+        if (gb) {
+            const QString alt = gb->toUnicode(data);
+            if (!alt.contains(QChar(0xFFFD))) {
+                logAppTitleStep("decodeIniFileBytes", QStringLiteral("fallback GB18030 (UTF-8 had replacement chars)"));
+                text = alt;
+                if (text.startsWith(QChar(0xFEFF))) {
+                    text = text.mid(1);
+                }
+                return text;
+            }
+        }
+    }
+    if (strippedUtf8Bom) {
+        logAppTitleStep("decodeIniFileBytes", QStringLiteral("stripped UTF-8 BOM, QString length=%1").arg(text.size()));
+    }
+    // 若未走字节 BOM 剥离，仍可能有 U+FEFF（部分工具写入）
+    while (text.startsWith(QChar(0xFEFF))) {
+        text = text.mid(1);
+    }
+    return text;
+}
+
+/**
+ * 将 QSettings 写入 INI 时产生的转义还原为 QString。
+ * 常见两种：① 整段为 UTF-8 字节的 \\xHH 序列；② 整段为 BMP 字符的 \\xHHHH（每字符 6 个字符：\\x + 4 位十六进制）。
+ * 若无法完整匹配则返回原文（避免误伤已正常的中文）。
+ */
+QString decodeQtIniEscapedString(QString v)
+{
+    // INI / QSettings 写入时会把 \ 写成 \\；若不先折叠，值里会出现 \\xe6...，导致无法按 \\xHH 解析且标题里反斜杠变多
+    for (int pass = 0; pass < 8; ++pass) {
+        const QString before = v;
+        v.replace(QLatin1String("\\\\"), QLatin1String("\\"));
+        if (v == before) {
+            break;
+        }
+    }
+
+    if (!v.contains(QLatin1String("\\x"))) {
+        return v;
+    }
+
+    // ① 仅由 \\x + 2 位十六进制构成，整体为 UTF-8 字节流（标题显示为 \\xe6\\xb5\\x8b... 即此情况）
+    {
+        QByteArray bytes;
+        int i = 0;
+        while (i < v.size()) {
+            if (i + 3 >= v.size() || v.at(i) != QLatin1Char('\\') || v.at(i + 1) != QLatin1Char('x')) {
+                bytes.clear();
+                break;
+            }
+            bool ok = false;
+            const int b = v.mid(i + 2, 2).toInt(&ok, 16);
+            if (!ok || b < 0 || b > 255) {
+                bytes.clear();
+                break;
+            }
+            bytes.append(static_cast<char>(b & 0xff));
+            i += 4;
+        }
+        if (i == v.size() && !bytes.isEmpty()) {
+            const QString u = QString::fromUtf8(bytes);
+            if (!u.contains(QChar(0xFFFD))) {
+                return u;
+            }
+        }
+    }
+
+    // ② 仅由 \\x + 4 位十六进制构成（每个码位 6 个字符）
+    if (v.size() % 6 == 0 && v.size() >= 6) {
+        QString out;
+        int i = 0;
+        while (i < v.size()) {
+            if (i + 5 >= v.size() || v.at(i) != QLatin1Char('\\') || v.at(i + 1) != QLatin1Char('x')) {
+                out.clear();
+                break;
+            }
+            bool ok = false;
+            const uint cp = v.mid(i + 2, 4).toUInt(&ok, 16);
+            if (!ok || cp > 0xFFFF) {
+                out.clear();
+                break;
+            }
+            out += QChar(static_cast<ushort>(cp));
+            i += 6;
+        }
+        if (i == v.size() && !out.isEmpty()) {
+            return out;
+        }
+    }
+
+    return v;
+}
+
+/** INI 值常见为 "..." 或 '...'（与 QSettings 写入一致）；去掉成对引号，保留内部字符 */
+QString stripOptionalIniQuotes(const QString& vIn)
+{
+    QString v = vIn.trimmed();
+    if (v.size() >= 2) {
+        const QChar a = v.at(0);
+        const QChar b = v.at(v.size() - 1);
+        if ((a == QLatin1Char('"') && b == QLatin1Char('"')) || (a == QLatin1Char('\'') && b == QLatin1Char('\''))) {
+            return v.mid(1, v.size() - 2);
+        }
+    }
+    return v;
+}
+
+/** 不经过 QSettings，直接从 INI 文本解析 [General]/[%General] 下的 AppTitle，避免 Windows 上 IniFormat 编码误判导致标题乱码 */
+QString readAppTitleFromIniText(const QString& contentIn)
+{
+    QString content = contentIn;
+    content = content.trimmed();
+    while (content.startsWith(QChar(0xFEFF))) {
+        content.remove(0, 1);
+    }
+
+    const int nl0 = content.indexOf(QLatin1Char('\n'));
+    const QString firstLinePreview = nl0 < 0 ? content.left(120) : content.left(nl0).left(120);
+    logAppTitleStep("parse_content", QStringLiteral("firstLine=%1").arg(firstLinePreview));
+
+    bool inGeneral = false;
+    const QStringList sectionNames = { QStringLiteral("General"), QStringLiteral("%General") };
+
+    QStringList lines;
+    {
+        int pos = 0;
+        while (pos <= content.size()) {
+            const int nl = content.indexOf(QLatin1Char('\n'), pos);
+            const int end = nl < 0 ? content.size() : nl;
+            QString line = content.mid(pos, end - pos);
+            if (line.endsWith(QLatin1Char('\r'))) {
+                line.chop(1);
+            }
+            lines.append(line);
+            if (nl < 0) {
+                break;
+            }
+            pos = nl + 1;
+        }
+    }
+
+    for (QString line : lines) {
+        line = line.trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+        if (line.startsWith(QLatin1Char(';')) || line.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        if (line.startsWith(QLatin1Char('[')) && line.endsWith(QLatin1Char(']'))) {
+            const QString sec = line.mid(1, line.length() - 2).trimmed();
+            inGeneral = sectionNames.contains(sec);
+            continue;
+        }
+        if (!inGeneral) {
+            continue;
+        }
+        const int eq = line.indexOf(QLatin1Char('='));
+        if (eq <= 0) {
+            continue;
+        }
+        const QString k = line.left(eq).trimmed();
+        if (k.compare(QStringLiteral("AppTitle"), Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        QString v = line.mid(eq + 1).trimmed();
+        logAppTitleStep("app_title_raw_value", v);
+        v = stripOptionalIniQuotes(v);
+        logAppTitleStep("after_strip_quotes", v);
+        const QString unescaped = decodeQtIniEscapedString(v);
+        logAppTitleStep("after_unescape", unescaped);
+        return unescaped;
+    }
+    logAppTitleStep("parse_missing_apptitle", QStringLiteral("no AppTitle under [General]/[%General]"));
+    return {};
+}
+
+QString readAppTitleFromIniFileUtf8(const QString& filePath)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly)) {
+        logAppTitleStep("read_file", QStringLiteral("open failed: %1").arg(filePath));
+        return {};
+    }
+    const QByteArray raw = f.readAll();
+    f.close();
+    logAppTitleStep("raw_head", QStringLiteral("bytes=%1 hex=%2").arg(raw.size()).arg(hexPreviewBytes(raw)));
+    const QString decoded = decodeIniFileBytes(raw);
+    logAppTitleStep("decoded_chars", QStringLiteral("count=%1").arg(decoded.size()));
+    return readAppTitleFromIniText(decoded);
+}
+
 } // namespace
 
 AppConfig* AppConfig::m_instance = nullptr;
@@ -91,7 +325,32 @@ bool AppConfig::loadFromFile(const QString& filename)
         return false;
     }
 
-    QSettings settings(filename, QSettings::IniFormat);
+    // UTF-8 BOM 时，部分环境下 QSettings(IniFormat) 无法正确解析整文件，导致 UI/MainWindowState 等为空、布局丢失。
+    // 对 QSettings 使用去掉 BOM 后的临时副本；AppTitle 仍由 readAppTitleFromIniFileUtf8(原路径) 解析（内部已处理 BOM）。
+    QFile inFile(filename);
+    if (!inFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "无法打开配置文件读取：" << filename;
+        return false;
+    }
+    const QByteArray rawFileContent = inFile.readAll();
+    inFile.close();
+
+    QTemporaryFile tmpIni;
+    tmpIni.setAutoRemove(true);
+    QString settingsPath = filename;
+    if (rawFileContent.startsWith("\xEF\xBB\xBF")) {
+        tmpIni.setFileTemplate(QDir::tempPath() + QStringLiteral("/device_receiver_cfg_XXXXXX.ini"));
+        if (tmpIni.open()) {
+            tmpIni.write(rawFileContent.mid(3));
+            tmpIni.flush();
+            settingsPath = tmpIni.fileName();
+            qInfo() << "[AppConfig] 检测到 UTF-8 BOM：已用无 BOM 临时文件供 QSettings 加载（恢复布局/窗口状态）";
+        } else {
+            qWarning() << "[AppConfig] 无法创建临时配置文件，QSettings 仍读取原文件，带 BOM 时布局状态可能无法加载";
+        }
+    }
+
+    QSettings settings(settingsPath, QSettings::IniFormat);
 
     // 兼容 [General] 与 Qt/环境下可能出现的 [%General]（键名分别为 General/* 与 %General/*）
     auto valueGeneral = [&settings](const QString& key, const QVariant& defaultValue) -> QVariant {
@@ -106,10 +365,21 @@ bool AppConfig::loadFromFile(const QString& filename)
         return defaultValue;
     };
 
-    // 加载应用配置（不再因缺少 AppTitle 整文件失败，否则 UI/MainWindowState 等永远不会被读入）
-    m_appTitle = valueGeneral(QStringLiteral("AppTitle"), m_appTitle).toString();
+    // AppTitle：优先从文件按 UTF-8/GB18030 解析，避免 QSettings(IniFormat) 在 Windows 下按系统代码页读入导致中文标题乱码
+    {
+        const QString titleFromUtf8Ini = readAppTitleFromIniFileUtf8(filename);
+        if (!titleFromUtf8Ini.isEmpty()) {
+            m_appTitle = titleFromUtf8Ini;
+        } else {
+            // QSettings 通常已把 \\x 转义解码为 QString；若仍异常则再解一次
+            m_appTitle = decodeQtIniEscapedString(valueGeneral(QStringLiteral("AppTitle"), m_appTitle).toString());
+        }
+    }
+    // 从 UTF-8 文本解析出的标题也可能含 Qt 转义字面量
+    m_appTitle = decodeQtIniEscapedString(m_appTitle);
+    logAppTitleStep("final_appTitle", m_appTitle);
     if (m_appTitle.isEmpty()) {
-        m_appTitle = QStringLiteral("实时数据监控");
+        m_appTitle = QStringLiteral("测试软件");
     }
     
     // 加载窗口配置
@@ -176,6 +446,10 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_showStagePanel = settings.value("UI/ShowStagePanel", m_showStagePanel).toBool();
     m_mainWindowState = settings.value("UI/MainWindowState", m_mainWindowState).toByteArray();
     m_mainWindowGeometry = settings.value("UI/MainWindowGeometry", m_mainWindowGeometry).toByteArray();
+    if (settingsPath != filename) {
+        qInfo() << "[AppConfig] UI/MainWindowState 已加载字节数:" << m_mainWindowState.size()
+                << "UI/MainWindowGeometry 字节数:" << m_mainWindowGeometry.size();
+    }
 
     // 导出配置
     m_defaultExportDirectory = settings.value("Export/Directory", m_defaultExportDirectory).toString();
@@ -268,7 +542,7 @@ void AppConfig::loadDefaults()
     m_plotRefreshIntervalMs = 50;
     m_statsIntervalMs = 1000;
     m_temperatureAlarmThreshold = 80.0f;
-    m_appTitle = "实时数据监控";
+    m_appTitle = QStringLiteral("测试软件");
     m_windowSize = QSize(800, 600);
     m_showDevicePanel = true;
     m_showCommandPanel = true;

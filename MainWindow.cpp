@@ -432,6 +432,8 @@ void MainWindow::initUI()
         m_devicePanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
         
         QWidget* deviceWidget = new QWidget();
+        deviceWidget->setMinimumWidth(260);
+        deviceWidget->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
         QVBoxLayout* deviceLayout = new QVBoxLayout(deviceWidget);
         
         QGroupBox* serialGroup = new QGroupBox(QStringLiteral("被测设备连接"));
@@ -611,9 +613,22 @@ void MainWindow::initUI()
         deviceLayout->addWidget(mockGroup);
         deviceLayout->addWidget(controlGroup);
         deviceLayout->addWidget(grpcTestGroup);
-        deviceLayout->addStretch();
-        
-        m_devicePanel->setWidget(deviceWidget);
+        // 与「三轴台测试装置」一致：停靠条内用纵向滚动条承载内容。
+        // 须限制 QScrollArea 最大高度：否则其 minimumSizeHint 会随子控件总高度变大，主窗口最小尺寸被撑出屏幕（看起来像「滚动未生效」）。
+        auto* deviceScroll = new QScrollArea();
+        deviceScroll->setWidgetResizable(true);
+        deviceScroll->setFrameShape(QFrame::NoFrame);
+        deviceScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        deviceScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        deviceScroll->setMinimumSize(0, 0);
+        deviceScroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        if (QScreen* scr = QGuiApplication::primaryScreen()) {
+            const int cap = qMax(360, scr->availableGeometry().height() - 140);
+            deviceScroll->setMaximumHeight(cap);
+        }
+        deviceScroll->setWidget(deviceWidget);
+
+        m_devicePanel->setWidget(deviceScroll);
         addDockWidget(Qt::LeftDockWidgetArea, m_devicePanel);
 
         // 2. 三轴台测试装置（工装，gRPC StageService）— 非被测设备
@@ -1020,6 +1035,12 @@ void MainWindow::initUI()
         // 停靠条内横向不滚动：由换行与弹性布局适配窄宽度；纵向过长由滚动条承担
         stageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         stageScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        stageScroll->setMinimumSize(0, 0);
+        stageScroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+        if (QScreen* scr = QGuiApplication::primaryScreen()) {
+            const int cap = qMax(360, scr->availableGeometry().height() - 140);
+            stageScroll->setMaximumHeight(cap);
+        }
         stageScroll->setWidget(stageWidget);
 
         m_stagePanel->setWidget(stageScroll);
@@ -3340,16 +3361,14 @@ void MainWindow::setStyle(AppConfig::Style style)
     // Application style
     QString css;
     
-    // 尝试从多个可能的路径读取样式文件
+    // 尝试从多个可能的路径读取样式文件（优先内嵌 qrc，避免依赖「当前工作目录」）
     QStringList stylePaths;
-    // 1. 资源路径
+    // 1. 资源路径（:/files/css/...，与 realtime_data.qrc 一致）
     stylePaths << stylefile;
-    // 2. 相对于可执行文件的路径（build/release目录）
+    // 2. 与可执行文件同目录下散文件（便于无 qrc 时调试）
     stylePaths << QCoreApplication::applicationDirPath() + "/files/css/" + QFileInfo(stylefile).fileName();
-    // 3. 相对于项目根目录的路径
+    // 3. 当前工作目录（从项目根用命令行启动时可能命中）
     stylePaths << QDir::currentPath() + "/files/css/" + QFileInfo(stylefile).fileName();
-    // 4. 绝对路径（如果知道项目位置）
-    stylePaths << "f:/vsPro/DeviceReceiver/files/css/" + QFileInfo(stylefile).fileName();
     
     bool styleLoaded = false;
     for (const QString& path : stylePaths) {
@@ -3375,7 +3394,6 @@ void MainWindow::setStyle(AppConfig::Style style)
     toolbarPaths << styletoolbar;
     toolbarPaths << QCoreApplication::applicationDirPath() + "/files/css/" + QFileInfo(styletoolbar).fileName();
     toolbarPaths << QDir::currentPath() + "/files/css/" + QFileInfo(styletoolbar).fileName();
-    toolbarPaths << "f:/vsPro/DeviceReceiver/files/css/" + QFileInfo(styletoolbar).fileName();
     
     bool toolbarLoaded = false;
     for (const QString& path : toolbarPaths) {

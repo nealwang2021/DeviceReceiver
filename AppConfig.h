@@ -95,6 +95,7 @@ public:
     void setTemperatureAlarmThreshold(float threshold) { m_temperatureAlarmThreshold = threshold; }
     
     // ========== 应用配置 ==========
+    /** 主窗口标题，对应 config.ini [General] AppTitle（默认「测试软件」） */
     QString appTitle() const { return m_appTitle; }
     void setAppTitle(const QString& title) { m_appTitle = title; }
     
@@ -203,7 +204,7 @@ private:
     float m_temperatureAlarmThreshold = 80.0f; // 温度报警阈值（℃）
     
     // 应用配置
-    QString m_appTitle = "实时数据监控";
+    QString m_appTitle = QStringLiteral("测试软件");
     QSize m_windowSize = QSize(800, 600);
     
     // UI配置

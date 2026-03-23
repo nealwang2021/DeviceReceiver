@@ -2,6 +2,8 @@
 
 一个基于Qt 5.15.2开发的专业级实时数据监控系统，支持串口通信、数据处理、图形显示和远程控制功能。同时支持编译为 **WebAssembly (WASM)**，可直接在浏览器中运行并通过 **GitHub Pages** 托管部署。
 
+**编译产物路径**：`build_cmake.bat`（CMake）与 `build_and_run.bat`（qmake）生成的 `realtime_data.exe` **不在同一目录**，修改代码后请确认运行的是刚编译的那份，详见 [docs/BUILD_OUTPUT_PATHS.md](docs/BUILD_OUTPUT_PATHS.md)。
+
 ## 📋 项目概述
 
 **实时数据监控系统** 是一个功能完整的工业级数据监控解决方案，主要面向设备数据采集、实时监控和数据分析场景。系统采用模块化设计，支持多窗口绘图、设备配置管理、指令发送和数据记录等功能。
@@ -355,6 +357,9 @@ docs/                       # GitHub Pages 部署目录
 
 #### **配置文件格式**
 ```ini
+[General]
+AppTitle=测试软件
+
 [Serial]
 Port=COM3
 BaudRate=115200
@@ -381,6 +386,7 @@ maxHistory=20
 #### **配置项说明**
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
+| **General/AppTitle** | 测试软件 | 主窗口标题，可改为任意名称；推荐 **UTF-8（可带 BOM）** 保存 `config.ini`；值可加双引号，如 `AppTitle="测试软件"`。每次启动会在 **`realtime_data.log`** 与 **控制台** 输出带 **`[AppConfig/AppTitle]`** 的解析步骤，便于排查乱码。 |
 | **Serial/Port** | COM3 | 串口端口名称 |
 | **Serial/BaudRate** | 115200 | 波特率 |
 | **Receiver/BackendType** | grpc | 接收后端（serial/grpc） |
@@ -408,7 +414,11 @@ maxHistory=20
 cmd /c "build_and_run_fixed_cn.bat -Help"
 ```
 
-#### 2. **环境变量设置失败**
+#### 2. **窗口布局 / MDI 绘图区不恢复（config.ini 使用 UTF-8 BOM）**
+**原因**: 带 **UTF-8 BOM** 的 `config.ini` 在部分环境下会导致 Qt `QSettings` 解析不完整，`UI/MainWindowState` 读为空，表现为不恢复停靠布局与 MDI 子窗口。
+**说明**: 程序在加载配置时会**自动去掉 BOM 再交给 QSettings**（见日志 `[AppConfig] 检测到 UTF-8 BOM`），一般无需改文件。若仍异常，查看日志中 `UI/MainWindowState 已加载字节数` 是否为 0。
+
+#### 3. **环境变量设置失败**
 **症状**: "找不到vcvarsall.bat"或"找不到qmake.exe"错误
 **检查项目**:
 - Visual Studio是否正确安装
@@ -418,14 +428,14 @@ cmd /c "build_and_run_fixed_cn.bat -Help"
 - Qt: `C:\Qt\Qt5.15.2\5.15.2\msvc2019_64\bin\qmake.exe`
 - Visual Studio: `C:\Program Files\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvarsall.bat`
 
-#### 3. **构建失败**
+#### 4. **构建失败**
 **症状**: 编译过程中出现错误
 **解决步骤**:
 1. **清理项目**: `build_and_run_fixed_cn.bat -Clean`
 2. **检查依赖**: 确认Qt和VS环境正确配置
 3. **检查源文件**: 确认所有源文件完整无损坏
 
-#### 4. **串口连接失败**
+#### 5. **串口连接失败**
 **症状**: 无法打开串口或连接失败
 **检查步骤**:
 1. **端口存在**: 确认设备已连接且端口正确
@@ -433,7 +443,7 @@ cmd /c "build_and_run_fixed_cn.bat -Help"
 3. **端口占用**: 检查端口是否被其他程序占用
 4. **硬件状态**: 确认设备电源和连接正常
 
-#### 5. **数据不显示**
+#### 6. **数据不显示**
 **症状**: 连接成功但无数据显示
 **检查项目**:
 1. **数据源**: 确认模拟数据已启用或硬件正常

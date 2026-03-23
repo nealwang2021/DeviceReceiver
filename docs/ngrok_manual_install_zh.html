@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ngrok 手动安装与配置（Windows）— DeviceReceiver / Stage 穿透</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --card: #fff;
+      --text: #1a1a1a;
+      --muted: #5c6370;
+      --border: #e1e4e8;
+      --accent: #0969da;
+      --code-bg: #f0f3f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      line-height: 1.65;
+      color: var(--text);
+      background: var(--bg);
+      margin: 0;
+      padding: 1.5rem;
+    }
+    .wrap {
+      max-width: 52rem;
+      margin: 0 auto;
+      background: var(--card);
+      padding: 2rem 2.25rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    }
+    h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+    .meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    h2 {
+      font-size: 1.15rem;
+      margin: 2rem 0 0.75rem;
+      padding-bottom: 0.35rem;
+      border-bottom: 1px solid var(--border);
+    }
+    h2:first-of-type { margin-top: 0; }
+    p { margin: 0.65rem 0; }
+    ol, ul { margin: 0.5rem 0; padding-left: 1.35rem; }
+    li { margin: 0.35rem 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre {
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+      font-size: 0.88em;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      overflow-x: auto;
+      margin: 0.75rem 0;
+    }
+    .note {
+      background: #fff8c5;
+      border: 1px solid #e6d96a;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    .warn {
+      background: #ffeef0;
+      border: 1px solid #f0b4bc;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+      margin: 0.75rem 0;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.65rem;
+      text-align: left;
+    }
+    th { background: var(--code-bg); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>ngrok 手动安装与配置（Windows）</h1>
+    <p class="meta">
+      适用于本仓库 <strong>三轴台 Stage 桩</strong> 与 <code>scripts/start_stage_with_ngrok.bat</code> 联调场景；
+      以下为<strong>手动下载安装</strong>步骤（不做自动安装脚本）。
+    </p>
+
+    <h2>一、注册并获取 Authtoken</h2>
+    <ol>
+      <li>打开 <a href="https://ngrok.com" target="_blank" rel="noopener">https://ngrok.com</a>，注册或登录。</li>
+      <li>进入 <strong>Dashboard</strong>（控制台），找到 <strong>Your Authtoken</strong>（或连接向导中的 token）。</li>
+      <li>复制整段 token（注意保密）。</li>
+    </ol>
+    <div class="warn">
+      <strong>安全：</strong>不要将 token 提交到 Git 仓库或发送给不可信方。
+    </div>
+
+    <h2>二、下载并放置 ngrok（Windows）</h2>
+    <ol>
+      <li>打开 <a href="https://ngrok.com/download" target="_blank" rel="noopener">https://ngrok.com/download</a>，选择 <strong>Windows</strong>。</li>
+      <li>下载 zip，解压到固定目录，例如 <code>C:\Tools\ngrok\</code>，确保目录中有 <code>ngrok.exe</code>。</li>
+    </ol>
+
+    <h2>三、加入 PATH（任选一种）</h2>
+    <p><strong>方式 A（推荐）：用户级 PATH</strong></p>
+    <ol>
+      <li><kbd>Win + R</kbd>，输入 <code>sysdm.cpl</code> 回车。</li>
+      <li>「高级」→「环境变量」。</li>
+      <li>在「用户变量」中选中 <strong>Path</strong> →「编辑」→「新建」，填入 ngrok 所在目录，例如 <code>C:\Tools\ngrok</code>。</li>
+      <li>确定保存后，<strong>新开</strong>一个 cmd 或 PowerShell 窗口（旧窗口不会刷新 PATH）。</li>
+    </ol>
+    <p><strong>方式 B：不配置 PATH</strong></p>
+    <p>每次使用 ngrok 的完整路径，例如：</p>
+    <pre>C:\Tools\ngrok\ngrok.exe version</pre>
+
+    <h2>四、配置 Authtoken（一次性）</h2>
+    <p>在新的 PowerShell 或 cmd 中执行（将 <code>&lt;你的TOKEN&gt;</code> 替换为控制台复制的 token）：</p>
+    <pre>ngrok config add-authtoken &lt;你的TOKEN&gt;</pre>
+    <p>配置会写入本机用户目录下的 ngrok 配置文件（具体路径以 ngrok 版本为准）。</p>
+    <p>验证：</p>
+    <pre>ngrok version</pre>
+    <p>能正常显示版本号即表示 CLI 可用；若已正确添加 authtoken，后续隧道才可正常使用。</p>
+
+    <h2>五、与本项目联用（Stage 桩 + 外网地址）</h2>
+    <ol>
+      <li>进入本仓库根目录（例如 <code>d:\WS\qtpro\DeviceReceiver</code>）。</li>
+      <li>确认已安装 Python，且已执行 <code>pip install grpcio protobuf</code>。</li>
+      <li>在仓库根目录运行：
+        <pre>scripts\start_stage_with_ngrok.bat</pre>
+        或指定端口：
+        <pre>scripts\start_stage_with_ngrok.bat -Port 50052</pre>
+      </li>
+      <li>按控制台输出，将<strong>外网 gRPC 地址</strong> <code>host:port</code> 填到远端 <code>realtime_data</code> 的 <strong>StageGrpcEndpoint</strong>（不要带 <code>tcp://</code> 前缀）。</li>
+    </ol>
+    <div class="note">
+      若提示找不到 <code>ngrok</code>：检查 PATH 是否生效，或使用 <code>ngrok.exe</code> 的完整路径；亦可查看
+      <a href="http://127.0.0.1:4040" target="_blank" rel="noopener">http://127.0.0.1:4040</a>（隧道启动后）确认隧道信息。
+    </div>
+
+    <h2>六、防火墙（按需）</h2>
+    <p>若连接异常，可在「Windows 安全中心 → 防火墙」中为 <code>ngrok.exe</code>、<code>python.exe</code> 允许专用网络访问（按需允许公用网络）。</p>
+
+    <h2>七、常见问题</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>现象</th>
+          <th>处理</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>ngrok</code> 不是内部或外部命令</td>
+          <td>PATH 未配置或未新开终端；或使用完整路径运行 <code>ngrok.exe</code>。</td>
+        </tr>
+        <tr>
+          <td>authtoken 无效</td>
+          <td>在控制台重新复制 token，避免多余空格或换行。</td>
+        </tr>
+        <tr>
+          <td>脚本未打印外网地址</td>
+          <td>等待数秒后重试；浏览器打开 <code>http://127.0.0.1:4040</code> 查看；确认账号与 TCP 隧道策略（以 ngrok 官网为准）。</td>
+        </tr>
+        <tr>
+          <td>无法运行 <code>.ps1</code></td>
+          <td>仅当前用户：<code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>八、安全提醒</h2>
+    <p>当前 Stage gRPC 为 <strong>明文 insecure</strong>，仅适合测试；经 ngrok 中继的流量请勿用于不可信环境或长期公网暴露。生产环境请使用 TLS、VPN 或专线。</p>
+
+    <p class="meta" style="margin-top:2rem;">
+      相关 Markdown：<code>scripts/README_stage_tunnel.md</code> · 功能说明：<code>STAGE_FUNCTIONAL_TEST.md</code>
+    </p>
+  </div>
+</body>
+</html>

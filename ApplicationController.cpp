@@ -462,8 +462,7 @@ bool ApplicationController::initMainWindow()
         return false;
     }
     
-    // 设置窗口标题
-    m_mainWindow->setWindowTitle(QString("实时数据监控 v1.0"));
+    // 窗口标题由 MainWindow::initialize() 根据 AppConfig::appTitle()（config.ini General/AppTitle）设置
     
     // 初始化主窗口界面
     m_mainWindow->initialize();
