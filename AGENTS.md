@@ -6,6 +6,16 @@
 
 This is a Qt 5.15 C++ real-time data monitoring desktop application (DeviceReceiver) with Python gRPC mock servers. See `README.md` for full documentation.
 
+### Primary Development Environment (Owner's Local)
+
+- **OS:** Windows 10/11
+- **Compiler:** MSVC 2019 x64 (Visual Studio 2019, v14.2+)
+- **Qt:** 5.15.2 msvc2019_64
+- **Package manager:** vcpkg (gRPC, HDF5, protobuf v6.x, and transitive deps)
+- **Build:** `build_cmake.bat` (CMake, full features including gRPC + HDF5)
+
+Cloud agents must not introduce changes that break the Windows MSVC 2019 + Qt 5.15 build. The checked-in proto generated files (`proto/generated/`) and `CMakeLists.txt` Windows linking logic target this toolchain.
+
 ### Building on Linux (Cloud Agent Environment)
 
 The project was designed for Windows (MSVC + vcpkg), but builds on Linux with GCC and system Qt5 packages.
