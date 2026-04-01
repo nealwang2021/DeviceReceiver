@@ -34,11 +34,10 @@ static QColor colorForCurveId(int id)
 } // namespace
 
 PulsedDecayPlotWindow::PulsedDecayPlotWindow(QWidget* parent)
-    : PlotWindow(parent)
+    : PlotWindowBase(parent)
 {
     setWindowTitle("脉冲涡流衰减曲线");
     resize(1000, 640);
-    stripBasePlotLayout();
     rebuildPlotUi();
     m_replotThrottle.start();
 }
@@ -48,23 +47,6 @@ PulsedDecayPlotWindow::~PulsedDecayPlotWindow()
     if (m_mockTimer) {
         m_mockTimer->stop();
     }
-}
-
-void PulsedDecayPlotWindow::stripBasePlotLayout()
-{
-    QLayout* existingLayout = layout();
-    if (!existingLayout) {
-        return;
-    }
-    QLayoutItem* item = nullptr;
-    while ((item = existingLayout->takeAt(0)) != nullptr) {
-        if (item->widget()) {
-            item->widget()->deleteLater();
-        }
-        delete item;
-    }
-    delete existingLayout;
-    setLayout(nullptr);
 }
 
 void PulsedDecayPlotWindow::rebuildPlotUi()

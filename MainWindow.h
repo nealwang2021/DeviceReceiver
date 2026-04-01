@@ -17,7 +17,7 @@
 // 前置声明
 class ApplicationController;
 class PlotWindowManager;
-class PlotWindow;
+class PlotWindowBase;
 class QTextEdit;
 class QComboBox;
 class QLineEdit;

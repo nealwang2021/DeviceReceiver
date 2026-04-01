@@ -5,6 +5,7 @@
 #include "SerialReceiver.h"
 #include "GrpcReceiverBackend.h"
 #include "StageReceiverBackend.h"
+#include "PlotWindowBase.h"
 #include "PlotWindow.h"
 #include "PlotWindowManager.h"
 #include "DataProcessor.h"
@@ -17,6 +18,26 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QDir>
+
+namespace {
+
+PlotWindowManager::PlotType normalizeStoredPlotType(int v)
+{
+    switch (v) {
+    case 5: return PlotWindowManager::HeatmapPlot;
+    case 6: return PlotWindowManager::ArrayPlot;
+    case 7: return PlotWindowManager::PulsedDecayPlot;
+    case 8: return PlotWindowManager::InspectionPlot;
+    default: break;
+    }
+    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::InspectionPlot)) {
+        return static_cast<PlotWindowManager::PlotType>(v);
+    }
+    qWarning() << "ApplicationController: 无效的绘图类型序号" << v << "，回退为组合图";
+    return PlotWindowManager::CombinedPlot;
+}
+
+} // namespace
 
 ApplicationController::ApplicationController(QObject *parent)
     : QObject(parent)
@@ -308,7 +329,7 @@ void ApplicationController::stop()
     emit stopped();
 }
 
-PlotWindow* ApplicationController::plotWindow() const
+PlotWindowBase* ApplicationController::plotWindow() const
 {
     return m_plotWindow.get();
 }
@@ -414,7 +435,7 @@ bool ApplicationController::initDefaultPlotWindow()
     }
     
     // 在主窗口的MDI区域中创建默认绘图窗口
-    PlotWindowManager::PlotType windowType = static_cast<PlotWindowManager::PlotType>(m_config.initialWindowType);
+    PlotWindowManager::PlotType windowType = normalizeStoredPlotType(static_cast<int>(m_config.initialWindowType));
     
     // 获取MainWindow的MDI区域（需要添加访问方法）
     // 暂时使用一个变通方法：通过查找子对象获取QMdiArea
@@ -432,7 +453,7 @@ bool ApplicationController::initDefaultPlotWindow()
     }
     
     // 在MDI区域中创建窗口
-    PlotWindow* plotWindow = m_plotWindowManager->createWindowInMdiArea(mdiArea, windowType);
+    PlotWindowBase* plotWindow = m_plotWindowManager->createWindowInMdiArea(mdiArea, windowType);
     if (!plotWindow) {
         qCritical() << "在MDI区域中创建默认绘图窗口失败";
         return false;
@@ -711,16 +732,15 @@ PlotWindowManager* ApplicationController::plotWindowManager() const
     return m_plotWindowManager;
 }
 
-PlotWindow* ApplicationController::createPlotWindow(PlotType type)
+PlotWindowBase* ApplicationController::createPlotWindow(PlotType type)
 {
     if (!m_plotWindowManager) {
         qWarning() << "绘图窗口管理器未初始化";
         return nullptr;
     }
     
-    // 将ApplicationController::PlotType转换为PlotWindowManager::PlotType
-    PlotWindowManager::PlotType windowType = static_cast<PlotWindowManager::PlotType>(type);
-    PlotWindow* window = m_plotWindowManager->createWindow(windowType);
+    PlotWindowManager::PlotType windowType = normalizeStoredPlotType(static_cast<int>(type));
+    PlotWindowBase* window = m_plotWindowManager->createWindow(windowType);
     if (window) {
         window->show();
         qInfo() << "创建新绘图窗口:" << window->windowTitle();

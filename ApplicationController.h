@@ -8,7 +8,7 @@
 // 前置声明，减少头文件依赖
 class DataCacheManager;
 class IReceiverBackend;
-class PlotWindow;
+class PlotWindowBase;
 class DataProcessor;
 class AppConfig;
 class PlotWindowManager;
@@ -26,13 +26,10 @@ public:
     /// 与 PlotWindowManager::PlotType 枚举顺序一致（勿打乱，createPlotWindow 内 static_cast 依赖序值）
     enum PlotType {
         CombinedPlot,
-        TemperaturePlot,
-        HumidityPlot,
-        VoltagePlot,
-        HistoryPlot,
         HeatmapPlot,
         ArrayPlot,
-        PulsedDecayPlot
+        PulsedDecayPlot,
+        InspectionPlot
     };
 
     /**
@@ -67,9 +64,9 @@ public:
     
     /**
      * @brief 获取绘图窗口指针（用于向后兼容）
-     * @return PlotWindow指针，如果未初始化则返回nullptr
+     * @return 默认绘图窗口指针，如果未初始化则返回 nullptr
      */
-    PlotWindow* plotWindow() const;
+    PlotWindowBase* plotWindow() const;
     
     /**
      * @brief 获取PlotWindowManager实例
@@ -88,7 +85,7 @@ public:
      * @param type 窗口类型
      * @return 创建的窗口指针
      */
-    PlotWindow* createPlotWindow(PlotType type = CombinedPlot);
+    PlotWindowBase* createPlotWindow(PlotType type = CombinedPlot);
     
     /**
      * @brief 将指令转发到串口模块（线程安全，使用QueuedConnection）
@@ -181,7 +178,7 @@ private:
     QScopedPointer<IReceiverBackend> m_serialReceiver;
     QScopedPointer<QThread> m_stageThread;
     QScopedPointer<IReceiverBackend> m_stageReceiver;
-    QScopedPointer<PlotWindow> m_plotWindow;  // 向后兼容的默认窗口
+    QScopedPointer<PlotWindowBase> m_plotWindow;  // 向后兼容的默认窗口
     QScopedPointer<DataProcessor> m_dataProcessor;
     PlotWindowManager* m_plotWindowManager = nullptr;  // 绘图窗口管理器
     QScopedPointer<MainWindow> m_mainWindow;  // 主界面窗口

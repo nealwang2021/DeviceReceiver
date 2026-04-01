@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QDebug>
 #include "FrameData.h"
+#include "PlotWindowBase.h"
 #include "ApplicationController.h"
 #include "AppConfig.h"
 #include <QFile>
@@ -51,6 +52,7 @@ int main(int argc, char *argv[])
         
         // 注册FrameData类型用于跨线程信号槽
         qRegisterMetaType<FrameData>("FrameData");
+        qRegisterMetaType<PlotWindowBase*>("PlotWindowBase*");
 
 #ifdef QT_COMPILE_FOR_WASM
         // WASM环境没有系统字体，需要手动加载中文字体

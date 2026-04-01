@@ -36,7 +36,7 @@ static bool minMaxFinite(const QVector<double>& data, double* minV, double* maxV
 } // namespace
 
 HeatMapPlotWindow::HeatMapPlotWindow(QWidget *parent)
-    : PlotWindow(parent)
+    : PlotWindowBase(parent)
     , m_gridWidth(101)
     , m_gridHeight(101)
     , m_dataMin(0.0)
@@ -46,18 +46,6 @@ HeatMapPlotWindow::HeatMapPlotWindow(QWidget *parent)
 {
     setWindowTitle("热力图");
     resize(1200, 600);
-
-    // 清空从 PlotWindow 继承的布局
-    QLayout* existingLayout = layout();
-    if (existingLayout) {
-        QLayoutItem* item;
-        while ((item = existingLayout->takeAt(0)) != nullptr) {
-            if (item->widget()) {
-                item->widget()->deleteLater();
-            }
-            delete item;
-        }
-    }
 
     // 创建主布局
     QWidget* centralWidget = new QWidget(this);

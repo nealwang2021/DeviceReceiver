@@ -1,7 +1,7 @@
 #ifndef PULSEDDECAYPLOTWINDOW_H
 #define PULSEDDECAYPLOTWINDOW_H
 
-#include "PlotWindow.h"
+#include "PlotWindowBase.h"
 #include <QVector>
 #include <QColor>
 #include <QElapsedTimer>
@@ -34,7 +34,7 @@ class QTimer;
  * - 可选自动：相邻帧 timestamp 间隔超过阈值视为新脉冲起点。
  * 后续可在 proto / FrameData 增加 pulse_seq、sample_in_pulse，由设备显式标定，再优先使用协议字段。
  */
-class PulsedDecayPlotWindow : public PlotWindow
+class PulsedDecayPlotWindow : public PlotWindowBase
 {
     Q_OBJECT
 public:
@@ -66,7 +66,6 @@ private:
         QCPGraph* graph = nullptr;
     };
 
-    void stripBasePlotLayout();
     void rebuildPlotUi();
     bool scalarFromFrame(const FrameData& frame, int ch, double* out) const;
     void processFrame(const FrameData& frame);

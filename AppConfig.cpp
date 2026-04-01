@@ -428,6 +428,10 @@ bool AppConfig::loadFromFile(const QString& filename)
     // 加载绘图配置
     m_maxPlotPoints = settings.value("Plot/MaxPoints", m_maxPlotPoints).toInt();
     m_plotRefreshIntervalMs = settings.value("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs).toInt();
+
+    // 检测分析窗口
+    m_inspectionChannelsPerGroup = qBound(1,
+        settings.value("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup).toInt(), 256);
     
     // 加载统计配置
     m_statsIntervalMs = settings.value("Stats/IntervalMs", m_statsIntervalMs).toInt();
@@ -489,6 +493,9 @@ bool AppConfig::saveToFile(const QString& filename)
     // 保存绘图配置
     settings.setValue("Plot/MaxPoints", m_maxPlotPoints);
     settings.setValue("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs);
+
+    // 检测分析窗口
+    settings.setValue("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup);
     
     // 保存统计配置
     settings.setValue("Stats/IntervalMs", m_statsIntervalMs);
@@ -541,6 +548,7 @@ void AppConfig::loadDefaults()
     m_mockDataIntervalMs = 100;
     m_maxPlotPoints = 200;
     m_plotRefreshIntervalMs = 50;
+    m_inspectionChannelsPerGroup = 8;
     m_statsIntervalMs = 1000;
     m_temperatureAlarmThreshold = 80.0f;
     m_appTitle = QStringLiteral("测试软件");

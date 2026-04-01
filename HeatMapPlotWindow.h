@@ -1,7 +1,7 @@
 #ifndef HEATMAPPLOTWINDOW_H
 #define HEATMAPPLOTWINDOW_H
 
-#include "PlotWindow.h"
+#include "PlotWindowBase.h"
 #include <QVector>
 #include <QLabel>
 #include <QTimer>
@@ -15,7 +15,7 @@ class QCustomPlot;
 class QCPColorMap;
 class QCPColorScale;
 
-class HeatMapPlotWindow : public PlotWindow
+class HeatMapPlotWindow : public PlotWindowBase
 {
     Q_OBJECT
 public:

@@ -1,8 +1,10 @@
 #include "PlotWindowManager.h"
+#include "PlotWindowBase.h"
 #include "PlotWindow.h"
 #include "HeatMapPlotWindow.h"
 #include "ArrayPlotWindow.h"
 #include "PulsedDecayPlotWindow.h"
+#include "InspectionPlotWindow.h"
 #include "DataCacheManager.h"
 #include "AppConfig.h"
 #include "PlotDataHub.h"
@@ -11,7 +13,6 @@
 #include <QPointer>
 #include <QDebug>
 
-// 静态成员初始化
 PlotWindowManager* PlotWindowManager::m_instance = nullptr;
 
 PlotWindowManager::PlotWindowManager(QObject *parent)
@@ -49,7 +50,6 @@ void PlotWindowManager::initialize()
         return;
     }
 
-    // 创建更新定时器
     m_updateTimer = new QTimer(this);
     int intervalMs = 50;
     if (AppConfig* config = AppConfig::instance()) {
@@ -62,7 +62,6 @@ void PlotWindowManager::initialize()
         PlotDataHub::instance()->setMaxPoints(config->maxPlotPoints());
     }
 
-    // 连接DataCacheManager的报警信号
     DataCacheManager* cacheManager = DataCacheManager::instance();
     if (cacheManager) {
         connect(cacheManager, &DataCacheManager::criticalFrameReceived,
@@ -76,10 +75,8 @@ void PlotWindowManager::initialize()
 void PlotWindowManager::cleanup()
 {
     stopUpdates();
-    
-    // 注意：这里不删除窗口，窗口由其父对象管理
     m_windows.clear();
-    
+
     if (m_updateTimer) {
         m_updateTimer->deleteLater();
         m_updateTimer = nullptr;
@@ -87,56 +84,44 @@ void PlotWindowManager::cleanup()
 
     m_lastDispatchedTimestamp = 0;
     PlotDataHub::instance()->reset();
-    
     m_isInitialized = false;
 }
 
-PlotWindow* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
+PlotWindowBase* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
 {
-    PlotWindow* window = nullptr;
+    PlotWindowBase* window = nullptr;
     QString title;
 
     switch (type) {
     case CombinedPlot:
         window = new PlotWindow(parent);
-        title = "组合监控";
-        break;
-    case TemperaturePlot:
-        window = new PlotWindow(parent);
-        title = "监控1";
-        break;
-    case HumidityPlot:
-        window = new PlotWindow(parent);
-        title = "监控2";
-        break;
-    case VoltagePlot:
-        window = new PlotWindow(parent);
-        title = "监控3";
-        break;
-    case HistoryPlot:
-        window = new PlotWindow(parent);
-        title = "历史数据4";
+        title = QStringLiteral("组合监控");
         break;
     case HeatmapPlot:
         window = new HeatMapPlotWindow(parent);
-        title = "热力图5";
+        title = QStringLiteral("热力图");
         break;
     case ArrayPlot:
         window = new ArrayPlotWindow(parent);
-        title = "阵列图6";
+        title = QStringLiteral("阵列图");
         break;
     case PulsedDecayPlot:
         window = new PulsedDecayPlotWindow(parent);
-        title = "脉冲衰减7";
+        title = QStringLiteral("脉冲衰减");
+        break;
+    case InspectionPlot:
+        window = new InspectionPlotWindow(parent);
+        title = QStringLiteral("检测分析");
         break;
     default:
+        qWarning() << "PlotWindowManager::createWindow 未知类型，回退组合图, type=" << static_cast<int>(type);
         window = new PlotWindow(parent);
-        title = "未知监控";
+        title = QStringLiteral("组合监控");
         break;
     }
 
     if (!window) {
-        qCritical() << "创建PlotWindow失败";
+        qCritical() << "创建绘图窗口失败";
         return nullptr;
     }
 
@@ -145,22 +130,20 @@ PlotWindow* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
     return window;
 }
 
-PlotWindow* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType type)
+PlotWindowBase* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType type)
 {
     qDebug() << "[PlotWindowManager] createWindowInMdiArea enter, type" << type << "mdiArea" << mdiArea;
     if (!mdiArea) {
         qCritical() << "MDI区域无效";
         return nullptr;
     }
-    
-    // 创建PlotWindow实例（父对象为null，将由QMdiSubWindow管理）
-    PlotWindow* plotWindow = createWindow(type);
+
+    PlotWindowBase* plotWindow = createWindow(type);
     qDebug() << "[PlotWindowManager] createWindow returned" << plotWindow;
     if (!plotWindow) {
         return nullptr;
     }
-    
-    // 创建MDI子窗口
+
     qDebug() << "[PlotWindowManager] adding subwindow for" << plotWindow;
     QMdiSubWindow* subWindow = mdiArea->addSubWindow(plotWindow);
     qDebug() << "[PlotWindowManager] subwindow result" << subWindow;
@@ -169,30 +152,27 @@ PlotWindow* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, PlotType
         delete plotWindow;
         return nullptr;
     }
-    
-    // 配置子窗口属性
+
     subWindow->setAttribute(Qt::WA_DeleteOnClose);
     subWindow->setWindowTitle(plotWindow->windowTitle());
     subWindow->resize(600, 400);
     subWindow->show();
-    
-    // 当子窗口关闭时，从管理器注销PlotWindow
-    // 使用QPointer安全地跟踪PlotWindow
-    QPointer<PlotWindow> plotWindowPtr(plotWindow);
+
+    QPointer<PlotWindowBase> plotWindowPtr(plotWindow);
     connect(subWindow, &QMdiSubWindow::destroyed, this, [this, plotWindowPtr]() {
         qDebug() << "[PlotWindowManager] subWindow destroyed, unregistering" << plotWindowPtr;
         if (plotWindowPtr) {
             unregisterWindow(plotWindowPtr);
         }
     });
-    
+
     qInfo() << "在MDI区域创建窗口:" << plotWindow->windowTitle();
     qDebug() << "[PlotWindowManager] createWindowInMdiArea exit";
-    
+
     return plotWindow;
 }
 
-void PlotWindowManager::registerWindow(PlotWindow* window)
+void PlotWindowManager::registerWindow(PlotWindowBase* window)
 {
     if (!window || m_windows.contains(window)) {
         qDebug() << "registerWindow skipped for" << window;
@@ -201,42 +181,38 @@ void PlotWindowManager::registerWindow(PlotWindow* window)
 
     qDebug() << "registering window" << window << "title" << window->windowTitle();
     m_windows.append(window);
-    
-    // 连接数据更新信号
-    connect(this, &PlotWindowManager::dataUpdated,
-            window, &PlotWindow::onDataUpdated);
-    connect(this, &PlotWindowManager::plotSnapshotUpdated,
-            window, &PlotWindow::onPlotSnapshotUpdated);
-    
-    // 连接报警信号
-    connect(this, &PlotWindowManager::criticalFrameReceived,
-            window, &PlotWindow::onCriticalFrame);
 
-    qInfo() << "注册PlotWindow:" << window->windowTitle() 
+    connect(this, &PlotWindowManager::dataUpdated,
+            window, &PlotWindowBase::onDataUpdated);
+    connect(this, &PlotWindowManager::plotSnapshotUpdated,
+            window, &PlotWindowBase::onPlotSnapshotUpdated);
+    connect(this, &PlotWindowManager::criticalFrameReceived,
+            window, &PlotWindowBase::onCriticalFrame);
+
+    qInfo() << "注册绘图窗口:" << window->windowTitle()
             << "，当前窗口数:" << m_windows.size();
-    
+
     emit windowAdded(window);
 }
 
-void PlotWindowManager::unregisterWindow(PlotWindow* window)
+void PlotWindowManager::unregisterWindow(PlotWindowBase* window)
 {
     if (!window || !m_windows.contains(window)) {
         return;
     }
 
-    // 断开信号连接
     disconnect(this, &PlotWindowManager::dataUpdated,
-               window, &PlotWindow::onDataUpdated);
+               window, &PlotWindowBase::onDataUpdated);
     disconnect(this, &PlotWindowManager::plotSnapshotUpdated,
-               window, &PlotWindow::onPlotSnapshotUpdated);
+               window, &PlotWindowBase::onPlotSnapshotUpdated);
     disconnect(this, &PlotWindowManager::criticalFrameReceived,
-               window, &PlotWindow::onCriticalFrame);
+               window, &PlotWindowBase::onCriticalFrame);
 
     m_windows.removeOne(window);
-    
-    qInfo() << "注销PlotWindow:" << window->windowTitle()
+
+    qInfo() << "注销绘图窗口:" << window->windowTitle()
             << "，剩余窗口数:" << m_windows.size();
-    
+
     emit windowRemoved(window);
 }
 
@@ -252,11 +228,11 @@ void PlotWindowManager::updateAllWindows()
 void PlotWindowManager::setUpdateInterval(int intervalMs)
 {
     if (intervalMs < 10) {
-        intervalMs = 10; // 最小10ms（100Hz）
+        intervalMs = 10;
     } else if (intervalMs > 1000) {
-        intervalMs = 1000; // 最大1000ms（1Hz）
+        intervalMs = 1000;
     }
-    
+
     if (m_updateTimer) {
         m_updateTimer->setInterval(intervalMs);
         qInfo() << "更新间隔设置为:" << intervalMs << "ms";
@@ -285,13 +261,11 @@ QVector<FrameData> PlotWindowManager::getRecentFrames(int count)
     if (cacheManager) {
         return cacheManager->getLastNFrames(count);
     }
-    
     return QVector<FrameData>();
 }
 
 void PlotWindowManager::onUpdateTimer()
 {
-    // 自适应拉取：窗口越多，单次拉取越少，降低UI线程突发负载
     int fetchCount = 5;
     if (m_windows.size() > 8) {
         fetchCount = 2;
@@ -304,7 +278,6 @@ void PlotWindowManager::onUpdateTimer()
         return;
     }
 
-    // 仅分发“新增帧”，避免重复绘制最近窗口数据
     QVector<FrameData> incrementalFrames;
     incrementalFrames.reserve(frames.size());
     qint64 maxTimestamp = m_lastDispatchedTimestamp;
@@ -324,13 +297,10 @@ void PlotWindowManager::onUpdateTimer()
 
     m_lastDispatchedTimestamp = maxTimestamp;
 
-    // 分发共享快照给所有注册窗口（保留旧信号用于兼容占位窗口）
     emit dataUpdated(incrementalFrames);
     emit plotSnapshotUpdated(PlotDataHub::instance()->appendFrames(incrementalFrames));
-    
-    // 性能监控：如果窗口过多，可以适当降低更新频率
+
     if (m_windows.size() > 5) {
-        // 每5个窗口增加10ms延迟
         int recommendedInterval = m_baseUpdateIntervalMs + (m_windows.size() / 5) * 10;
         if (m_updateTimer->interval() != recommendedInterval) {
             setUpdateInterval(recommendedInterval);

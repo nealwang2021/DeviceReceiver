@@ -1,7 +1,7 @@
 #ifndef ARRAYPLOTWINDOW_H
 #define ARRAYPLOTWINDOW_H
 
-#include "PlotWindow.h"
+#include "PlotWindowBase.h"
 #include <QVector>
 #include <QLabel>
 #include <QTimer>
@@ -9,7 +9,7 @@
 class QCustomPlot;
 class QCPAxisRect;
 
-class ArrayPlotWindow : public PlotWindow
+class ArrayPlotWindow : public PlotWindowBase
 {
     Q_OBJECT
 public:

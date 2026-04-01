@@ -19,4 +19,6 @@ public slots:
     virtual void onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot) = 0;
 };
 
+Q_DECLARE_METATYPE(PlotWindowBase*)
+
 #endif // PLOTWINDOWBASE_H

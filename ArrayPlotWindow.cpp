@@ -10,23 +10,11 @@
 #include <algorithm>
 
 ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
-    : PlotWindow(parent)
+    : PlotWindowBase(parent)
 {
     setWindowTitle(QStringLiteral("多通道阵列图窗口"));
     resize(1200, 700);
-    
-    // 清除继承的布局
-    QLayout* existingLayout = layout();
-    if (existingLayout) {
-        QLayoutItem* item;
-        while ((item = existingLayout->takeAt(0)) != nullptr) {
-            if (item->widget()) {
-                item->widget()->deleteLater();
-            }
-            delete item;
-        }
-    }
-    
+
     // 创建新的主布局
     QWidget *centralWidget = new QWidget(this);
     QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);

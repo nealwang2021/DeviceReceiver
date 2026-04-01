@@ -1,13 +1,14 @@
 #include "MainWindow.h"
 #include "ApplicationController.h"
 #include "PlotWindowManager.h"
-#include "PlotWindow.h"
+#include "PlotWindowBase.h"
 #include "AppConfig.h"
 #include "SerialReceiver.h"
 #include "DataCacheManager.h"
 
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QApplication>
 #include <QDateTime>
 #include <QGuiApplication>
 #include <QMessageBox>
@@ -1117,7 +1118,8 @@ void MainWindow::initUI()
         QFormLayout* createLayout = new QFormLayout(createGroup);
         
         m_windowTypeCombo = new QComboBox();
-        m_windowTypeCombo->addItems({"组合图",  "历史图", "热力图", "阵列图", "脉冲衰减"});
+        m_windowTypeCombo->addItems({QStringLiteral("组合图"), QStringLiteral("热力图"), QStringLiteral("阵列图"),
+                                     QStringLiteral("脉冲衰减"), QStringLiteral("检测分析")});
         m_createWindowButton = new QPushButton("新建窗口");
         
         createLayout->addRow("窗口类型:", m_windowTypeCombo);
@@ -1727,9 +1729,9 @@ void MainWindow::updateWindowList()
     }
     
     m_windowList->clear();
-    QList<PlotWindow*> windows = m_plotWindowManager->windows();
+    QList<PlotWindowBase*> windows = m_plotWindowManager->windows();
     
-    for (PlotWindow* window : windows) {
+    for (PlotWindowBase* window : windows) {
         QListWidgetItem* item = new QListWidgetItem(window->windowTitle());
         item->setData(Qt::UserRole, QVariant::fromValue(window));
         m_windowList->addItem(item);
@@ -3048,14 +3050,18 @@ void MainWindow::onCreateWindowClicked()
     
     switch (typeIndex) {
     case 0: type = PlotWindowManager::CombinedPlot; break;
-    case 1: type = PlotWindowManager::HistoryPlot; break;
-    case 2: type = PlotWindowManager::HeatmapPlot; break;
-    case 3: type = PlotWindowManager::ArrayPlot; break;
-    case 4: type = PlotWindowManager::PulsedDecayPlot; break;
+    case 1: type = PlotWindowManager::HeatmapPlot; break;
+    case 2: type = PlotWindowManager::ArrayPlot; break;
+    case 3: type = PlotWindowManager::PulsedDecayPlot; break;
+    case 4: type = PlotWindowManager::InspectionPlot; break;
+    default:
+        qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
+        type = PlotWindowManager::CombinedPlot;
+        break;
     }
     
     qDebug() << "[MainWindow] creating window type" << type;
-    PlotWindow* window = m_plotWindowManager->createWindowInMdiArea(m_mdiArea, type);
+    PlotWindowBase* window = m_plotWindowManager->createWindowInMdiArea(m_mdiArea, type);
     qDebug() << "[MainWindow] createWindowInMdiArea returned" << window;
     if (window) {
         updateWindowList();
@@ -3071,7 +3077,7 @@ void MainWindow::onCloseWindowClicked()
         return;
     }
     
-    PlotWindow* window = item->data(Qt::UserRole).value<PlotWindow*>();
+    PlotWindowBase* window = item->data(Qt::UserRole).value<PlotWindowBase*>();
     if (window) {
         window->close();
         updateWindowList();
@@ -3115,7 +3121,7 @@ void MainWindow::onWindowListDoubleClicked(const QModelIndex& index)
         return;
     }
     
-    PlotWindow* window = item->data(Qt::UserRole).value<PlotWindow*>();
+    PlotWindowBase* window = item->data(Qt::UserRole).value<PlotWindowBase*>();
     if (window) {
         window->raise();
         window->activateWindow();
