@@ -109,12 +109,12 @@ void InspectionPlotWindow::rebuildUi()
     m_plotSplitter->setChildrenCollapsible(false);
 
     m_timeCol1 = buildTimeBaseColumn(m_tbPlot1);
-    m_tbPlot1->xAxis->setLabel(QStringLiteral("时间 (ms)"));
-    m_tbPlot1->yAxis->setLabel(QStringLiteral("数值"));
+    m_tbPlot1->xAxis->setLabel(QStringLiteral("数值"));
+    m_tbPlot1->yAxis->setLabel(QStringLiteral("时间 (ms)"));
 
     m_timeCol2 = buildTimeBaseColumn(m_tbPlot2);
-    m_tbPlot2->xAxis->setLabel(QStringLiteral("时间 (ms)"));
-    m_tbPlot2->yAxis->setLabel(QStringLiteral("数值"));
+    m_tbPlot2->xAxis->setLabel(QStringLiteral("数值"));
+    m_tbPlot2->yAxis->setLabel(QStringLiteral("时间 (ms)"));
 
     m_impedanceCol = buildImpedanceColumn();
 
@@ -172,6 +172,19 @@ QWidget* InspectionPlotWindow::buildTopBar()
     m_channelCheckArea->setWidget(m_channelCheckContainer);
     lay->addWidget(m_channelCheckArea, 1);
 
+    m_curveCheckArea = new QScrollArea(bar);
+    m_curveCheckArea->setWidgetResizable(true);
+    m_curveCheckArea->setFixedHeight(32);
+    m_curveCheckArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_curveCheckArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_curveCheckArea->setFrameShape(QFrame::NoFrame);
+    m_curveCheckContainer = new QWidget();
+    m_curveCheckLayout = new QHBoxLayout(m_curveCheckContainer);
+    m_curveCheckLayout->setContentsMargins(0, 0, 0, 0);
+    m_curveCheckLayout->setSpacing(4);
+    m_curveCheckArea->setWidget(m_curveCheckContainer);
+    lay->addWidget(m_curveCheckArea, 1);
+
     return bar;
 }
 
@@ -219,6 +232,7 @@ QWidget* InspectionPlotWindow::buildTimeBaseColumn(QCustomPlot*& plotOut)
 
     plotOut = new QCustomPlot(col);
     stylePlot(plotOut);
+    plotOut->yAxis->setRangeReversed(true);
     plotOut->legend->setVisible(false);
     plotOut->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
     lay->addWidget(plotOut, 1);
@@ -427,6 +441,7 @@ void InspectionPlotWindow::onPlotSnapshotUpdated(const QSharedPointer<const Plot
 
         rebuildGroupCombo(ch);
         rebuildChannelChecks();
+        rebuildCurveChecks();
         rebuildTimeBaseGraphs();
 
         rebuildFreqChecks(ch);
@@ -490,9 +505,50 @@ void InspectionPlotWindow::rebuildChannelChecks()
     m_channelCheckLayout->addStretch();
 }
 
+void InspectionPlotWindow::rebuildCurveChecks()
+{
+    qDeleteAll(m_curveChecks);
+    m_curveChecks.clear();
+
+    while (m_curveCheckLayout->count() > 0) {
+        QLayoutItem* item = m_curveCheckLayout->takeAt(0);
+        delete item;
+    }
+
+    const int groupIdx = m_groupCombo->currentIndex();
+    if (groupIdx < 0)
+        return;
+
+    const int firstCh = groupIdx * m_channelsPerGroup;
+    const int lastCh  = qMin(firstCh + m_channelsPerGroup, m_lastChannelCount);
+
+    auto addCheck = [&](const QString& text, bool checked = true) {
+        QCheckBox* cb = new QCheckBox(text, m_curveCheckContainer);
+        cb->setChecked(checked);
+        connect(cb, &QCheckBox::toggled, this, &InspectionPlotWindow::onCurveCheckToggled);
+        m_curveCheckLayout->addWidget(cb);
+        m_curveChecks.append(cb);
+    };
+
+    if (m_lastMode == FrameData::MultiChannelReal) {
+        for (int ch = firstCh; ch < lastCh; ++ch)
+            addCheck(QStringLiteral("Ch%1 幅值").arg(ch + 1));
+    } else if (m_lastMode == FrameData::MultiChannelComplex) {
+        for (int ch = firstCh; ch < lastCh; ++ch) {
+            addCheck(QStringLiteral("Ch%1 幅值").arg(ch + 1));
+            addCheck(QStringLiteral("Ch%1 相位").arg(ch + 1));
+            addCheck(QStringLiteral("Ch%1 实部").arg(ch + 1));
+            addCheck(QStringLiteral("Ch%1 虚部").arg(ch + 1));
+        }
+    }
+
+    m_curveCheckLayout->addStretch();
+}
+
 void InspectionPlotWindow::onGroupComboChanged(int /*index*/)
 {
     rebuildChannelChecks();
+    rebuildCurveChecks();
     rebuildTimeBaseGraphs();
 
     auto snap = PlotDataHub::instance()->snapshot();
@@ -511,6 +567,7 @@ void InspectionPlotWindow::onChannelsPerGroupChanged(int value)
 
     rebuildGroupCombo(m_lastChannelCount);
     rebuildChannelChecks();
+    rebuildCurveChecks();
     rebuildTimeBaseGraphs();
 
     auto snap = PlotDataHub::instance()->snapshot();
@@ -521,6 +578,15 @@ void InspectionPlotWindow::onChannelsPerGroupChanged(int value)
 }
 
 void InspectionPlotWindow::onChannelCheckToggled()
+{
+    auto snap = PlotDataHub::instance()->snapshot();
+    if (snap) {
+        updateTimeBasePlots(snap);
+        scheduleReplot();
+    }
+}
+
+void InspectionPlotWindow::onCurveCheckToggled()
 {
     auto snap = PlotDataHub::instance()->snapshot();
     if (snap) {
@@ -548,7 +614,7 @@ void InspectionPlotWindow::rebuildTimeBaseGraphs()
     if (m_lastMode == FrameData::MultiChannelReal) {
         m_tbPlot1->yAxis->setLabel(QStringLiteral("幅值"));
         for (int ch = firstCh; ch < lastCh; ++ch) {
-            QCPGraph* g = m_tbPlot1->addGraph();
+            QCPGraph* g = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
             g->setPen(QPen(colorForChannel(ch), 1.5));
             g->setName(QStringLiteral("Ch%1").arg(ch + 1));
         }
@@ -556,11 +622,11 @@ void InspectionPlotWindow::rebuildTimeBaseGraphs()
         m_tbPlot1->yAxis->setLabel(QStringLiteral("幅值 / 相位"));
         for (int ch = firstCh; ch < lastCh; ++ch) {
             QColor c = colorForChannel(ch);
-            QCPGraph* gMag = m_tbPlot1->addGraph();
+            QCPGraph* gMag = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
             gMag->setPen(QPen(c, 1.5, Qt::SolidLine));
             gMag->setName(QStringLiteral("Ch%1 幅值").arg(ch + 1));
 
-            QCPGraph* gPhase = m_tbPlot1->addGraph();
+            QCPGraph* gPhase = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
             gPhase->setPen(QPen(c, 1.0, Qt::DashLine));
             gPhase->setName(QStringLiteral("Ch%1 相位").arg(ch + 1));
         }
@@ -568,11 +634,11 @@ void InspectionPlotWindow::rebuildTimeBaseGraphs()
         m_tbPlot2->yAxis->setLabel(QStringLiteral("实部 / 虚部"));
         for (int ch = firstCh; ch < lastCh; ++ch) {
             QColor c = colorForChannel(ch);
-            QCPGraph* gRe = m_tbPlot2->addGraph();
+            QCPGraph* gRe = m_tbPlot2->addGraph(m_tbPlot2->yAxis, m_tbPlot2->xAxis);
             gRe->setPen(QPen(c, 1.5, Qt::SolidLine));
             gRe->setName(QStringLiteral("Ch%1 实部").arg(ch + 1));
 
-            QCPGraph* gIm = m_tbPlot2->addGraph();
+            QCPGraph* gIm = m_tbPlot2->addGraph(m_tbPlot2->yAxis, m_tbPlot2->xAxis);
             gIm->setPen(QPen(c, 1.0, Qt::DashLine));
             gIm->setName(QStringLiteral("Ch%1 虚部").arg(ch + 1));
         }
@@ -597,13 +663,37 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
     if (chCount <= 0)
         return;
 
+    const double latestTime = snap->timeMs.last();
+    const double windowStart = qMax(0.0, latestTime - kTimeWindowMs);
+
+    int startIdx = 0;
+    while (startIdx < snap->timeMs.size() && snap->timeMs[startIdx] < windowStart)
+        ++startIdx;
+
+    QVector<double> timeRel;
+    timeRel.reserve(snap->timeMs.size() - startIdx);
+    for (int i = startIdx; i < snap->timeMs.size(); ++i)
+        timeRel.push_back(snap->timeMs[i] - windowStart);
+
+    auto setGraphData = [&](QCPGraph* graph, const QVector<double>& series) {
+        if (!graph)
+            return;
+        const int available = qMax(0, series.size() - startIdx);
+        const int count = qMin(timeRel.size(), available);
+        if (count <= 0) {
+            graph->data()->clear();
+            return;
+        }
+        graph->setData(timeRel.mid(0, count), series.mid(startIdx, count), true);
+    };
+
     if (m_lastMode == FrameData::MultiChannelReal) {
         for (int i = 0; i < chCount && i < m_tbPlot1->graphCount(); ++i) {
             const int ch = firstCh + i;
             const bool visible = (i < m_channelChecks.size()) ? m_channelChecks[i]->isChecked() : true;
             m_tbPlot1->graph(i)->setVisible(visible);
             if (visible && ch < snap->realAmp.size())
-                m_tbPlot1->graph(i)->setData(snap->timeMs, snap->realAmp[ch], true);
+                setGraphData(m_tbPlot1->graph(i), snap->realAmp[ch]);
         }
     } else if (m_lastMode == FrameData::MultiChannelComplex) {
         const bool showMag = m_showMagCheck   && m_showMagCheck->isChecked();
@@ -622,9 +712,9 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
             m_tbPlot1->graph(gPhase)->setVisible(channelVis && showPh);
             if (channelVis) {
                 if (ch < snap->complexMag.size())
-                    m_tbPlot1->graph(gMag)->setData(snap->timeMs, snap->complexMag[ch], true);
+                    setGraphData(m_tbPlot1->graph(gMag), snap->complexMag[ch]);
                 if (ch < snap->complexPhase.size())
-                    m_tbPlot1->graph(gPhase)->setData(snap->timeMs, snap->complexPhase[ch], true);
+                    setGraphData(m_tbPlot1->graph(gPhase), snap->complexPhase[ch]);
             }
         }
 
@@ -639,17 +729,20 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
             m_tbPlot2->graph(gIm)->setVisible(channelVis && showIm);
             if (channelVis) {
                 if (ch < snap->complexReal.size())
-                    m_tbPlot2->graph(gRe)->setData(snap->timeMs, snap->complexReal[ch], true);
+                    setGraphData(m_tbPlot2->graph(gRe), snap->complexReal[ch]);
                 if (ch < snap->complexImag.size())
-                    m_tbPlot2->graph(gIm)->setData(snap->timeMs, snap->complexImag[ch], true);
+                    setGraphData(m_tbPlot2->graph(gIm), snap->complexImag[ch]);
             }
         }
     }
 
-    const double latestTime = snap->timeMs.last();
-    m_tbPlot1->xAxis->setRange(latestTime - kTimeWindowMs, latestTime);
-    if (m_timeCol2 && m_timeCol2->isVisible())
-        m_tbPlot2->xAxis->setRange(latestTime - kTimeWindowMs, latestTime);
+    const double timeSpan = qMax(1.0, latestTime - windowStart);
+    m_tbPlot1->rescaleAxes(true);
+    m_tbPlot1->yAxis->setRange(0.0, timeSpan);
+    if (m_timeCol2 && m_timeCol2->isVisible()) {
+        m_tbPlot2->rescaleAxes(true);
+        m_tbPlot2->yAxis->setRange(0.0, timeSpan);
+    }
 }
 
 // ============================================================================
