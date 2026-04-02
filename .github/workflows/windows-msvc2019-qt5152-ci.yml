@@ -1,0 +1,63 @@
+name: Windows MSVC2019 Qt5.15.2 CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows-msvc2019:
+    runs-on: windows-2019
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt 5.15.2 (msvc2019_64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+          cache: true
+
+      - name: Resolve Qt prefix for CMake
+        shell: pwsh
+        run: |
+          $qtPrefix = (& qmake -query QT_INSTALL_PREFIX).Trim()
+          if ([string]::IsNullOrWhiteSpace($qtPrefix)) {
+            throw "Failed to resolve Qt install prefix from qmake."
+          }
+          "QT_PREFIX=$qtPrefix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "QT_PREFIX=$qtPrefix"
+
+      - name: Configure (CMake, Release)
+        shell: pwsh
+        run: |
+          cmake -S . -B build_ci `
+            -G "Visual Studio 16 2019" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$env:QT_PREFIX" `
+            -DENABLE_GRPC=OFF `
+            -DENABLE_HDF5=OFF `
+            -DENABLE_WASM=OFF `
+            -DBUILD_TESTS=OFF
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build_ci --config Release --parallel
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: realtime_data-windows-msvc2019-qt5152
+          path: |
+            build_ci/build/release/realtime_data.exe
+            build_ci/build/release/*.dll
+          if-no-files-found: warn
