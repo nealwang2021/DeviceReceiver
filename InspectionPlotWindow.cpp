@@ -379,12 +379,13 @@ void InspectionPlotWindow::setupConnections()
 
 void InspectionPlotWindow::applyTimeBaseModeLayout()
 {
-    if (!m_plotSplitter || !m_timeCol2 || !m_legendBar)
+    if (!m_plotSplitter || !m_timeCol2 || !m_legendBar || !m_curveCheckArea)
         return;
 
     const bool complex = (m_lastMode == FrameData::MultiChannelComplex);
     m_timeCol2->setVisible(complex);
     m_legendBar->setVisible(complex);
+    m_curveCheckArea->setVisible(complex);
 
     m_plotSplitter->setStretchFactor(0, 1);
     m_plotSplitter->setStretchFactor(1, complex ? 1 : 0);
@@ -403,6 +404,24 @@ void InspectionPlotWindow::applyTimeBaseModeLayout()
 
 void InspectionPlotWindow::onComponentCheckToggled()
 {
+    if (m_lastMode == FrameData::MultiChannelComplex && !m_curveChecks.isEmpty()) {
+        const bool showMag = m_showMagCheck && m_showMagCheck->isChecked();
+        const bool showPh  = m_showPhaseCheck && m_showPhaseCheck->isChecked();
+        const bool showRe  = m_showRealCheck && m_showRealCheck->isChecked();
+        const bool showIm  = m_showImagCheck && m_showImagCheck->isChecked();
+        QSignalBlocker blocker(m_curveCheckContainer);
+        const int stride = (m_lastMode == FrameData::MultiChannelComplex) ? 4 : 1;
+        for (int i = 0; i < m_curveChecks.size(); ++i) {
+            bool on = true;
+            if (stride == 4) {
+                const int part = i % 4;
+                on = (part == 0) ? showMag : (part == 1) ? showPh : (part == 2) ? showRe : showIm;
+            } else {
+                on = showMag;
+            }
+            m_curveChecks[i]->setChecked(on);
+        }
+    }
     auto snap = PlotDataHub::instance()->snapshot();
     if (snap) {
         updateTimeBasePlots(snap);
@@ -543,6 +562,8 @@ void InspectionPlotWindow::rebuildCurveChecks()
     }
 
     m_curveCheckLayout->addStretch();
+    if (m_curveCheckArea)
+        m_curveCheckArea->setVisible(m_lastMode == FrameData::MultiChannelComplex);
 }
 
 void InspectionPlotWindow::onGroupComboChanged(int /*index*/)
@@ -612,14 +633,14 @@ void InspectionPlotWindow::rebuildTimeBaseGraphs()
     const int lastCh  = qMin(firstCh + m_channelsPerGroup, m_lastChannelCount);
 
     if (m_lastMode == FrameData::MultiChannelReal) {
-        m_tbPlot1->yAxis->setLabel(QStringLiteral("幅值"));
+        m_tbPlot1->xAxis->setLabel(QStringLiteral("幅值"));
         for (int ch = firstCh; ch < lastCh; ++ch) {
             QCPGraph* g = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
             g->setPen(QPen(colorForChannel(ch), 1.5));
             g->setName(QStringLiteral("Ch%1").arg(ch + 1));
         }
     } else if (m_lastMode == FrameData::MultiChannelComplex) {
-        m_tbPlot1->yAxis->setLabel(QStringLiteral("幅值 / 相位"));
+        m_tbPlot1->xAxis->setLabel(QStringLiteral("幅值 / 相位"));
         for (int ch = firstCh; ch < lastCh; ++ch) {
             QColor c = colorForChannel(ch);
             QCPGraph* gMag = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
@@ -631,7 +652,7 @@ void InspectionPlotWindow::rebuildTimeBaseGraphs()
             gPhase->setName(QStringLiteral("Ch%1 相位").arg(ch + 1));
         }
 
-        m_tbPlot2->yAxis->setLabel(QStringLiteral("实部 / 虚部"));
+        m_tbPlot2->xAxis->setLabel(QStringLiteral("实部 / 虚部"));
         for (int ch = firstCh; ch < lastCh; ++ch) {
             QColor c = colorForChannel(ch);
             QCPGraph* gRe = m_tbPlot2->addGraph(m_tbPlot2->yAxis, m_tbPlot2->xAxis);
@@ -704,12 +725,15 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
         for (int i = 0; i < chCount; ++i) {
             const int ch = firstCh + i;
             const bool channelVis = (i < m_channelChecks.size()) ? m_channelChecks[i]->isChecked() : true;
+            const int cBase = i * 4;
+            const bool cMag = (cBase < m_curveChecks.size()) ? m_curveChecks[cBase]->isChecked() : true;
+            const bool cPh  = (cBase + 1 < m_curveChecks.size()) ? m_curveChecks[cBase + 1]->isChecked() : true;
             const int gMag   = i * 2;
             const int gPhase = i * 2 + 1;
             if (gMag >= m_tbPlot1->graphCount() || gPhase >= m_tbPlot1->graphCount())
                 break;
-            m_tbPlot1->graph(gMag)->setVisible(channelVis && showMag);
-            m_tbPlot1->graph(gPhase)->setVisible(channelVis && showPh);
+            m_tbPlot1->graph(gMag)->setVisible(channelVis && showMag && cMag);
+            m_tbPlot1->graph(gPhase)->setVisible(channelVis && showPh && cPh);
             if (channelVis) {
                 if (ch < snap->complexMag.size())
                     setGraphData(m_tbPlot1->graph(gMag), snap->complexMag[ch]);
@@ -721,12 +745,15 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
         for (int i = 0; i < chCount; ++i) {
             const int ch = firstCh + i;
             const bool channelVis = (i < m_channelChecks.size()) ? m_channelChecks[i]->isChecked() : true;
+            const int cBase = i * 4;
+            const bool cRe  = (cBase + 2 < m_curveChecks.size()) ? m_curveChecks[cBase + 2]->isChecked() : true;
+            const bool cIm  = (cBase + 3 < m_curveChecks.size()) ? m_curveChecks[cBase + 3]->isChecked() : true;
             const int gRe = i * 2;
             const int gIm = i * 2 + 1;
             if (gRe >= m_tbPlot2->graphCount() || gIm >= m_tbPlot2->graphCount())
                 break;
-            m_tbPlot2->graph(gRe)->setVisible(channelVis && showRe);
-            m_tbPlot2->graph(gIm)->setVisible(channelVis && showIm);
+            m_tbPlot2->graph(gRe)->setVisible(channelVis && showRe && cRe);
+            m_tbPlot2->graph(gIm)->setVisible(channelVis && showIm && cIm);
             if (channelVis) {
                 if (ch < snap->complexReal.size())
                     setGraphData(m_tbPlot2->graph(gRe), snap->complexReal[ch]);
