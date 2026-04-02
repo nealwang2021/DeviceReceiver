@@ -409,16 +409,10 @@ void InspectionPlotWindow::onComponentCheckToggled()
         const bool showPh  = m_showPhaseCheck && m_showPhaseCheck->isChecked();
         const bool showRe  = m_showRealCheck && m_showRealCheck->isChecked();
         const bool showIm  = m_showImagCheck && m_showImagCheck->isChecked();
-        QSignalBlocker blocker(m_curveCheckContainer);
-        const int stride = (m_lastMode == FrameData::MultiChannelComplex) ? 4 : 1;
         for (int i = 0; i < m_curveChecks.size(); ++i) {
-            bool on = true;
-            if (stride == 4) {
-                const int part = i % 4;
-                on = (part == 0) ? showMag : (part == 1) ? showPh : (part == 2) ? showRe : showIm;
-            } else {
-                on = showMag;
-            }
+            const int part = i % 4;
+            const bool on = (part == 0) ? showMag : (part == 1) ? showPh : (part == 2) ? showRe : showIm;
+            QSignalBlocker blocker(m_curveChecks[i]);
             m_curveChecks[i]->setChecked(on);
         }
     }
