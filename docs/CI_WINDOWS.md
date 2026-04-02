@@ -1,7 +1,7 @@
 # Windows 云端持续集成（MSVC2019 + Qt 5.15.2）
 
 本仓库已提供 GitHub Actions 工作流：  
-`/home/runner/work/DeviceReceiver/DeviceReceiver/.github/workflows/windows-msvc2019-qt5152-ci.yml`
+`.github/workflows/windows-msvc2019-qt5152-ci.yml`
 
 目标：在云端尽量贴近本地生产环境（Windows + MSVC2019 + Qt 5.15.2）自动完成构建校验。
 
