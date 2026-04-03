@@ -21,13 +21,14 @@ class QVBoxLayout;
 class QHBoxLayout;
 class QWidget;
 class QScrollArea;
+class QFrame;
 
 /**
- * 检测分析窗口：顶栏（组/通道）+ 横向三列（时基1 | 时基2 | 阻抗）。
+ * 检测分析窗口：顶栏（组/通道）+ 图例栏 + 横向三列（时基1 | 时基2 | 阻抗）。
  *
  * 复数模式：时基1 幅值(实线)/相位(虚线)，时基2 实部(实线)/虚部(虚线)；
- *   每图顶栏有分量全局勾选；组内通道勾选仍有效。
- * 实数模式：仅第一列时基（幅值），第二列隐藏；列1:列3 约 1:2。
+ *   图例栏统一显示四个分量勾选，组内通道勾选仍有效。
+ * 实数模式：仅第一列时基（幅值），第二列及图例栏隐藏；列1:列3 约 1:2。
  */
 class InspectionPlotWindow : public PlotWindowBase
 {
@@ -49,20 +50,32 @@ private slots:
     void onChannelsPerGroupChanged(int value);
     void onChannelCheckToggled();
     void onComponentCheckToggled();
+    void onCurveCheckToggled();
     void onFreqCheckToggled();
     void onImpedanceModeChanged();
     void onCircleRadiusChanged(double radius);
     void onCircleShowToggled(bool show);
 
 private:
+    // --- UI construction (split from monolithic rebuildUi) ---
     void rebuildUi();
+    QWidget* buildTopBar();
+    QWidget* buildLegendBar();
+    QWidget* buildTimeBaseColumn(QCustomPlot*& plotOut);
+    QWidget* buildImpedanceColumn();
+    void setupConnections();
+    void stylePlot(QCustomPlot* plot);
+
     void applyTimeBaseModeLayout();
 
+    // --- group / channel management ---
     void rebuildGroupCombo(int totalChannels);
     void rebuildChannelChecks();
+    void rebuildCurveChecks();
     void rebuildTimeBaseGraphs();
     void updateTimeBasePlots(const QSharedPointer<const PlotSnapshot>& snap);
 
+    // --- impedance plane ---
     void rebuildFreqChecks(int totalChannels);
     void rebuildImpedanceCurves(int totalChannels);
     void updateImpedancePlane(const QSharedPointer<const PlotSnapshot>& snap);
@@ -72,22 +85,11 @@ private:
     void scheduleReplot();
 
     static QColor colorForChannel(int ch);
+    static QPixmap lineStyleIcon(Qt::PenStyle style, const QColor& color = QColor("#333"),
+                                 int w = 32, int h = 14);
 
+    // Top bar (group selector + channel checks)
     QWidget* m_topBar = nullptr;
-    QSplitter* m_plotSplitter = nullptr;
-
-    QWidget* m_timeCol1 = nullptr;
-    QWidget* m_tb1ComponentRow = nullptr;
-    QCheckBox* m_showMagCheck = nullptr;
-    QCheckBox* m_showPhaseCheck = nullptr;
-
-    QWidget* m_timeCol2 = nullptr;
-    QWidget* m_tb2ComponentRow = nullptr;
-    QCheckBox* m_showRealCheck = nullptr;
-    QCheckBox* m_showImagCheck = nullptr;
-
-    QWidget* m_impedanceCol = nullptr;
-
     QComboBox* m_groupCombo = nullptr;
     QSpinBox* m_chPerGroupSpin = nullptr;
     QScrollArea* m_channelCheckArea = nullptr;
@@ -95,9 +97,28 @@ private:
     QHBoxLayout* m_channelCheckLayout = nullptr;
     QVector<QCheckBox*> m_channelChecks;
 
+    // Legend bar (unified component toggles with line-style preview icons)
+    QWidget* m_legendBar = nullptr;
+    QCheckBox* m_showMagCheck = nullptr;
+    QCheckBox* m_showPhaseCheck = nullptr;
+    QCheckBox* m_showRealCheck = nullptr;
+    QCheckBox* m_showImagCheck = nullptr;
+    QScrollArea* m_curveCheckArea = nullptr;
+    QWidget* m_curveCheckContainer = nullptr;
+    QHBoxLayout* m_curveCheckLayout = nullptr;
+    QVector<QCheckBox*> m_curveChecks;
+
+    // Three-column splitter
+    QSplitter* m_plotSplitter = nullptr;
+    QWidget* m_timeCol1 = nullptr;
+    QWidget* m_timeCol2 = nullptr;
+    QWidget* m_impedanceCol = nullptr;
+
+    // Time-base plots
     QCustomPlot* m_tbPlot1 = nullptr;
     QCustomPlot* m_tbPlot2 = nullptr;
 
+    // Impedance plane
     QCustomPlot* m_impedancePlot = nullptr;
     QRadioButton* m_adaptiveRadio = nullptr;
     QRadioButton* m_defaultRadio = nullptr;
@@ -109,9 +130,9 @@ private:
     QCheckBox* m_circleShowCheck = nullptr;
     QCPItemEllipse* m_circleItem = nullptr;
     QLabel* m_statusLabel = nullptr;
-
     QVector<QCPCurve*> m_impedanceCurves;
 
+    // State
     FrameData::DetectionMode m_lastMode = FrameData::Legacy;
     int m_lastChannelCount = 0;
     quint64 m_lastSnapshotVersion = 0;
