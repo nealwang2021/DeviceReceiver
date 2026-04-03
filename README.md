@@ -109,6 +109,13 @@
 
 ## 🛠️ 构建和运行
 
+### ☁️ 云端持续集成（Windows）
+
+仓库已提供与本地环境对齐的 GitHub Actions Windows CI（MSVC2019 + Qt 5.15.2）：  
+`/.github/workflows/windows-msvc2019-qt5152-ci.yml`
+
+详细说明见：`docs/CI_WINDOWS.md`
+
 ### 主要构建脚本
 
 本项目提供了多种构建脚本，推荐使用增强版构建脚本。

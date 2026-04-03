@@ -50,6 +50,7 @@ private slots:
     void onChannelsPerGroupChanged(int value);
     void onChannelCheckToggled();
     void onComponentCheckToggled();
+    void onCurveCheckToggled();
     void onFreqCheckToggled();
     void onImpedanceModeChanged();
     void onCircleRadiusChanged(double radius);
@@ -70,6 +71,7 @@ private:
     // --- group / channel management ---
     void rebuildGroupCombo(int totalChannels);
     void rebuildChannelChecks();
+    void rebuildCurveChecks();
     void rebuildTimeBaseGraphs();
     void updateTimeBasePlots(const QSharedPointer<const PlotSnapshot>& snap);
 
@@ -101,6 +103,10 @@ private:
     QCheckBox* m_showPhaseCheck = nullptr;
     QCheckBox* m_showRealCheck = nullptr;
     QCheckBox* m_showImagCheck = nullptr;
+    QScrollArea* m_curveCheckArea = nullptr;
+    QWidget* m_curveCheckContainer = nullptr;
+    QHBoxLayout* m_curveCheckLayout = nullptr;
+    QVector<QCheckBox*> m_curveChecks;
 
     // Three-column splitter
     QSplitter* m_plotSplitter = nullptr;
