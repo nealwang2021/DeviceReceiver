@@ -2,6 +2,8 @@
 
 一个基于Qt 5.15.2开发的专业级实时数据监控系统，支持串口通信、数据处理、图形显示和远程控制功能。同时支持编译为 **WebAssembly (WASM)**，可直接在浏览器中运行并通过 **GitHub Pages** 托管部署。
 
+**构建约定（重要）**：本项目统一使用 `build_cmake.bat` 进行构建。默认不要使用 qmake/其它构建脚本作为主构建入口。
+
 **编译产物路径**：`build_cmake.bat`（CMake）与 `build_and_run.bat`（qmake）生成的 `realtime_data.exe` **不在同一目录**，修改代码后请确认运行的是刚编译的那份，详见 [docs/BUILD_OUTPUT_PATHS.md](docs/BUILD_OUTPUT_PATHS.md)。
 
 ## 📋 项目概述
@@ -118,38 +120,27 @@
 
 ### 主要构建脚本
 
-本项目提供了多种构建脚本，推荐使用增强版构建脚本。
+本项目桌面端统一使用 `build_cmake.bat` 作为构建入口。
 
-#### 🚀 **`build_and_run_fixed_cn.bat` - 增强构建脚本（推荐）**
-功能完整的构建脚本，支持多种参数选项，修复了中文编码问题。
+#### 🚀 **`build_cmake.bat` - 标准构建脚本（唯一推荐）**
+用于 Windows + MSVC2019 + Qt 5.15.2 的标准 CMake 构建流程。
 
 **基本用法:**
 ```cmd
-build_and_run_fixed_cn.bat [参数]
+build_cmake.bat
 ```
 
-**可用参数:**
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| `-Help` | 显示帮助信息 | `build_and_run_fixed_cn.bat -Help` |
-| `-Debug` | 构建调试版本 | `build_and_run_fixed_cn.bat -Debug` |
-| `-Clean` | 清理构建文件 | `build_and_run_fixed_cn.bat -Clean` |
-| `-Run` | 构建后运行程序 | `build_and_run_fixed_cn.bat -Run` |
-| 无参数 | 构建Release版本 | `build_and_run_fixed_cn.bat` |
+**说明:**
+- 默认构建产物位于 `build_cmake/`（含 `build/release/realtime_data.exe`）
+- 该脚本会按仓库预设处理依赖与配置，适合日常开发与联调
 
 **组合使用示例:**
 ```cmd
-# 清理后构建Release版本
-build_and_run_fixed_cn.bat -Clean
+# 执行标准构建
+build_cmake.bat
 
-# 构建Debug版本
-build_and_run_fixed_cn.bat -Debug
-
-# 清理、构建并运行
-build_and_run_fixed_cn.bat -Clean -Run
-
-# 构建Debug版本并运行
-build_and_run_fixed_cn.bat -Debug -Run
+# 构建完成后运行
+build_cmake\build\release\realtime_data.exe
 ```
 
 #### 📦 **其他构建脚本**
@@ -165,6 +156,14 @@ build_and_run_fixed_cn.bat -Debug -Run
 #### 🧩 **`package_grpc_test_server.bat` - gRPC 测试服务打包脚本**
 
 将 `grpc_test_server.py` 打包为单文件 `grpc_test_server.exe`，供主程序“启动测试服务”按钮直接调用（生产环境推荐）。
+
+`grpc_test_server.py` 当前基于 `proto/device.proto` 的 `AcquisitionDevice` 服务实现（非旧版 DeviceDataService）。
+
+**回放行为说明：**
+- 默认启用 CSV 回放：`proto/display_aligned_20260327_171739.csv`
+- 使用 `--no-csv` 可切换为纯模拟数据
+- 非 CSV 模式默认通道数为 `40`（可通过 `--cells` 覆盖）
+- CSV 模式为保证前端持续刷新，时间戳采用实时单调递增时钟
 
 **基本用法:**
 ```cmd

@@ -11,7 +11,7 @@
 
 #ifdef HAS_GRPC
 #include <grpcpp/grpcpp.h>
-#include "device_data.grpc.pb.h"
+#include "device.grpc.pb.h"
 #endif
 
 /**
@@ -19,8 +19,8 @@
  *
  * 支持两种工作模式：
  *   - Mock 模式（m_mockMode=true）：QTimer 驱动，本地生成伪随机帧，无需真实服务端。
- *   - Real 模式（m_mockMode=false）：订阅服务端流式 RPC（DeviceDataService::Subscribe），
- *     在独立的 std::thread 中阻塞读取 DataFrame，通过 Qt::QueuedConnection 回传主线程。
+ *   - Real 模式（m_mockMode=false）：订阅服务端流式 RPC（AcquisitionDevice::SubscribeProcessedFrames），
+ *     在独立的 std::thread 中阻塞读取 ProcessedFrameReply，通过 Qt::QueuedConnection 回传主线程。
  *
  * 线程安全：
  *   m_connected / m_paused / m_stopStream / m_mockMode 均为 std::atomic<bool>，
@@ -89,7 +89,7 @@ private:
 
 #ifdef HAS_GRPC
     std::shared_ptr<grpc::Channel>                         m_channel;
-    std::unique_ptr<device_data::DeviceDataService::Stub>  m_stub;
+    std::unique_ptr<xiaoche::device::AcquisitionDevice::Stub>  m_stub;
     std::unique_ptr<grpc::ClientContext>                   m_streamCtx;
 #endif
 };

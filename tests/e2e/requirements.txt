@@ -1,0 +1,4 @@
+# 可选 E2E：pytest + 报告；pywinauto 用于 Windows 控件级自动化（可选）
+pytest>=7.0
+pytest-html>=3.2
+# pywinauto>=0.6.8; sys_platform == "win32"

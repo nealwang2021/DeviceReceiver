@@ -1,0 +1,5 @@
+#pragma once
+/** 由 CMake 生成：stage_grpc_test_server.py 的绝对路径 */
+#define STAGE_TEST_SERVER_SCRIPT "@STAGE_GRPC_TEST_SERVER_PATH@"
+/** 测试用 config.ini 所在目录 */
+#define STAGE_TEST_FIXTURES_DIR "@STAGE_TEST_FIXTURES_DIR@"

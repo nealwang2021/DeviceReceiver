@@ -1,12 +1,12 @@
 @echo off
 REM ============================================================================
-REM  package_grpc_test_server.bat — 将 grpc_test_server.py 打成独立 exe（PyInstaller）
+REM  package_stage_grpc_test_server.bat — 将 stage_grpc_test_server.py 打成独立 exe
 REM ----------------------------------------------------------------------------
-REM  功能: 自动寻找可 import grpc/protobuf 的 Python，用 PyInstaller --onefile 打包
-REM        被测设备数据流 AcquisitionDevice（非三轴台 stage_grpc_test_server）
-REM  输出: build\release\grpc_test_server.exe（若存在 build\debug 会同步复制）
-REM  前置: 根目录存在 grpc_test_server.py 与 proto\generated_py\device_pb2*.py
-REM  首次会自动 pip install pyinstaller（若未安装）
+REM  功能: 与 package_grpc_test_server.bat 相同流程，目标为三轴台 StageService 桩
+REM        输出 build\release\stage_grpc_test_server.exe
+REM  前置: stage_grpc_test_server.py + proto\generated_py\stage_pb2*.py
+REM        （若缺桩，脚本内提示 protoc 命令）
+REM  与 grpc_test_server.exe 区别: 本包为工装/三轴台 gRPC，非主数据通道
 REM ============================================================================
 setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
@@ -35,24 +35,23 @@ if not defined PYTHON_EXE (
 
 if not defined PYTHON_EXE (
     echo [ERROR] 未找到满足条件的 Python 解释器（需可 import grpc 和 google.protobuf）
-    echo [INFO] 可先执行: python -m pip install grpcio protobuf
     popd >nul
     exit /b 1
 )
 
 echo [INFO] 使用解释器: "%PYTHON_EXE%" %PYTHON_ARGS%
 
-if not exist "grpc_test_server.py" (
-    echo [ERROR] 未找到 grpc_test_server.py
+if not exist "stage_grpc_test_server.py" (
+    echo [ERROR] 未找到 stage_grpc_test_server.py
     popd >nul
     exit /b 1
 )
 
 set "PROTO_PY_SRC=%CD%\proto\generated_py"
 
-if not exist "%PROTO_PY_SRC%\device_pb2.py" (
-    echo [ERROR] 未找到 proto\generated_py\device_pb2.py
-    echo [INFO] 请先生成 Python protobuf 文件后再打包
+if not exist "%PROTO_PY_SRC%\stage_pb2.py" (
+    echo [ERROR] 未找到 proto\generated_py\stage_pb2.py
+    echo [INFO] 请执行: python -m grpc_tools.protoc -Iproto --python_out=proto/generated_py --grpc_python_out=proto/generated_py proto/stage.proto
     popd >nul
     exit /b 1
 )
@@ -69,29 +68,29 @@ if errorlevel 1 (
 )
 
 set "DIST_DIR=build\release"
-set "WORK_DIR=build\temp\pyinstaller"
+set "WORK_DIR=build\temp\pyinstaller_stage"
 
 if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 if not exist "%WORK_DIR%" mkdir "%WORK_DIR%"
 
-echo [INFO] 开始打包 grpc_test_server.exe ...
+echo [INFO] 开始打包 stage_grpc_test_server.exe （三轴台 StageService，区别于 grpc_test_server.exe）...
 "%PYTHON_EXE%" %PYTHON_ARGS% -m PyInstaller ^
     --noconfirm ^
     --clean ^
     --onefile ^
-    --name grpc_test_server ^
+    --name stage_grpc_test_server ^
     --distpath "%DIST_DIR%" ^
     --workpath "%WORK_DIR%" ^
     --specpath "%WORK_DIR%" ^
     --paths "%PROTO_PY_SRC%" ^
     --add-data "%PROTO_PY_SRC%;proto\generated_py" ^
-    --hidden-import device_pb2 ^
-    --hidden-import device_pb2_grpc ^
+    --hidden-import stage_pb2 ^
+    --hidden-import stage_pb2_grpc ^
     --hidden-import grpc ^
     --hidden-import google.protobuf ^
     --collect-submodules google.protobuf ^
     --hidden-import grpc._cython.cygrpc ^
-    grpc_test_server.py
+    stage_grpc_test_server.py
 
 if errorlevel 1 (
     echo [ERROR] 打包失败
@@ -100,10 +99,10 @@ if errorlevel 1 (
 )
 
 if exist "build\debug\" (
-    copy /Y "%DIST_DIR%\grpc_test_server.exe" "build\debug\grpc_test_server.exe" >nul 2>&1
+    copy /Y "%DIST_DIR%\stage_grpc_test_server.exe" "build\debug\stage_grpc_test_server.exe" >nul 2>&1
 )
 
-echo [OK] 打包完成: %DIST_DIR%\grpc_test_server.exe
+echo [OK] 打包完成: %DIST_DIR%\stage_grpc_test_server.exe
 popd >nul
 exit /b 0
 
@@ -116,7 +115,6 @@ if not exist "%CAND_PY_EXE%" exit /b 0
 
 "%CAND_PY_EXE%" %CAND_PY_ARGS% -c "import grpc, google.protobuf" >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] 跳过解释器（缺少 grpc/protobuf）: "%CAND_PY_EXE%" %CAND_PY_ARGS%
     exit /b 0
 )
 

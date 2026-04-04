@@ -35,12 +35,12 @@ grpc_client {
 
     # 直接引用由构建脚本 [Prebuild] 步骤（protoc）预生成的 C++ 文件
     # qmake/nmake 不再调用 protoc，避免路径和 PATH 问题
-    SOURCES += $$PROTO_GENERATED/device_data.pb.cc \
-               $$PROTO_GENERATED/device_data.grpc.pb.cc \
+    SOURCES += $$PROTO_GENERATED/device.pb.cc \
+               $$PROTO_GENERATED/device.grpc.pb.cc \
                $$PROTO_GENERATED/stage.pb.cc \
                $$PROTO_GENERATED/stage.grpc.pb.cc
-    HEADERS += $$PROTO_GENERATED/device_data.pb.h \
-               $$PROTO_GENERATED/device_data.grpc.pb.h \
+    HEADERS += $$PROTO_GENERATED/device.pb.h \
+               $$PROTO_GENERATED/device.grpc.pb.h \
                $$PROTO_GENERATED/stage.pb.h \
                $$PROTO_GENERATED/stage.grpc.pb.h
 

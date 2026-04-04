@@ -227,8 +227,8 @@ if(ENABLE_GRPC)
             
             # 添加proto生成源文件
             target_sources(realtime_data PRIVATE
-                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/device_data.pb.cc
-                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/device_data.grpc.pb.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/device.pb.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/device.grpc.pb.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/stage.pb.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/stage.grpc.pb.cc
             )

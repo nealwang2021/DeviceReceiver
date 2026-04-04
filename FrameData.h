@@ -10,6 +10,7 @@ struct FrameData
 {
     // 基本字段
     int64_t timestamp;     // 时间戳（毫秒）
+    uint64_t sequence;     // 原始序列号（device.proto: sequence）
     uint16_t frameId;      // 帧ID（0-65535）
 
     // 检测模式：用于区分 legacy / 多通道实数 / 多通道复数
@@ -28,6 +29,12 @@ struct FrameData
     QVector<double> channels_comp0;
     QVector<double> channels_comp1;
 
+    // 新协议四值通道数据（device.proto: ChannelSampleReply）
+    QVector<double> channels_amp;
+    QVector<double> channels_phase;
+    QVector<double> channels_x;
+    QVector<double> channels_y;
+
     // 三轴台位（与 stage.proto PositionsReply / StageService 一致）；由 StagePoseLatch 在写入缓存前
     // 按「最近台位 last-known」附加到每条被测设备帧；未连接台或未收到过台位时 hasStagePose=false。
     // mm：物理位移（毫米），由下位机按标定从 pulse 换算，便于读数与 MoveAbs(mm) 对齐。
@@ -43,11 +50,16 @@ struct FrameData
 
     FrameData() :
         timestamp(0),
+        sequence(0),
         frameId(0),
         detectMode(Legacy),
         channelCount(0),
         channels_comp0(),
         channels_comp1(),
+        channels_amp(),
+        channels_phase(),
+        channels_x(),
+        channels_y(),
         hasStagePose(false),
         stageTimestampMs(0),
         stageXMm(0.0),

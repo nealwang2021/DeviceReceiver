@@ -216,10 +216,10 @@ if "%CLEAN_BUILD%"=="1" (
     if exist debug rmdir /s /q debug >nul 2>&1
     if exist release rmdir /s /q release >nul 2>&1
     del /q Makefile Makefile.Debug Makefile.Release .qmake.stash 2>nul
-    if exist proto\generated\device_data.pb.h     del /q proto\generated\device_data.pb.h
-    if exist proto\generated\device_data.pb.cc    del /q proto\generated\device_data.pb.cc
-    if exist proto\generated\device_data.grpc.pb.h  del /q proto\generated\device_data.grpc.pb.h
-    if exist proto\generated\device_data.grpc.pb.cc del /q proto\generated\device_data.grpc.pb.cc
+    if exist proto\generated\device.pb.h     del /q proto\generated\device.pb.h
+    if exist proto\generated\device.pb.cc    del /q proto\generated\device.pb.cc
+    if exist proto\generated\device.grpc.pb.h  del /q proto\generated\device.grpc.pb.h
+    if exist proto\generated\device.grpc.pb.cc del /q proto\generated\device.grpc.pb.cc
     if exist proto\generated\stage.pb.h     del /q proto\generated\stage.pb.h
     if exist proto\generated\stage.pb.cc    del /q proto\generated\stage.pb.cc
     if exist proto\generated\stage.grpc.pb.h  del /q proto\generated\stage.grpc.pb.h
@@ -227,13 +227,13 @@ if "%CLEAN_BUILD%"=="1" (
 )
 
 REM ============================================================
-REM [Prebuild] 从 proto/device_data.proto 生成 protobuf/gRPC C++ 代码
+REM [Prebuild] 从 proto/device.proto 生成 protobuf/gRPC C++ 代码
 REM 仅在 ENABLE_GRPC=1 时执行；若工具不可用则跳过并依赖已有生成文件
 REM ============================================================
 if "%ENABLE_GRPC%"=="1" (
     set "PROTO_DIR=%CD%\proto"
     set "PROTO_OUT=%CD%\proto\generated"
-    set "PROTO_FILE=%CD%\proto\device_data.proto"
+    set "PROTO_FILE=%CD%\proto\device.proto"
     set "PROTO_FILE_STAGE=%CD%\proto\stage.proto"
 )
 REM 延迟展开：检查 PROTO_FILE 是否存在（变量在 if 块内赋值，需用 !VAR! 读取）

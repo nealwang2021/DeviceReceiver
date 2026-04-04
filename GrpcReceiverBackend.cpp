@@ -6,14 +6,13 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QRandomGenerator>
-#include <QUuid>
 #include <QtGlobal>
 
 #ifdef HAS_GRPC
 #include <chrono>
 #include <grpcpp/grpcpp.h>
-#include "device_data.pb.h"
-#include "device_data.grpc.pb.h"
+#include "device.pb.h"
+#include "device.grpc.pb.h"
 #endif
 
 // ============================================================
@@ -75,7 +74,37 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
     }
 
     // 创建强类型 Stub（每次连接时重建）
-    m_stub = device_data::DeviceDataService::NewStub(m_channel);
+    m_stub = xiaoche::device::AcquisitionDevice::NewStub(m_channel);
+
+    // 新协议通常需要先打开设备：自动选择第一个设备进行 Open
+    {
+        google::protobuf::Empty emptyReq;
+        xiaoche::device::ListDevicesReply listReply;
+        grpc::ClientContext listCtx;
+        listCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        const grpc::Status listStatus = m_stub->ListDevices(&listCtx, emptyReq, &listReply);
+
+        if (listStatus.ok() && listReply.devices_size() > 0) {
+            xiaoche::device::OpenDeviceRequest openReq;
+            openReq.set_device_id(listReply.devices(0).device_id());
+            xiaoche::device::CommandReply openReply;
+            grpc::ClientContext openCtx;
+            openCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+            const grpc::Status openStatus = m_stub->OpenDevice(&openCtx, openReq, &openReply);
+
+            if (!openStatus.ok() || !openReply.ok()) {
+                emitBackendStatus("openDeviceWarning",
+                    QString("设备打开失败（将继续尝试订阅）: %1")
+                        .arg(openStatus.ok() ? QString::fromStdString(openReply.message())
+                                             : QString::fromStdString(openStatus.error_message())));
+            }
+        } else if (!listStatus.ok()) {
+            emitBackendStatus("listDevicesWarning",
+                QString("设备列表获取失败（将继续尝试订阅）: [%1] %2")
+                    .arg(listStatus.error_code())
+                    .arg(QString::fromStdString(listStatus.error_message())));
+        }
+    }
 
     setConnected(true);
     emitBackendStatus("connected", QString("已连接 gRPC 服务端: %1").arg(m_endpoint));
@@ -97,6 +126,20 @@ void GrpcReceiverBackend::disconnectBackend()
     }
 
 #ifdef HAS_GRPC
+    if (m_stub) {
+        google::protobuf::Empty req;
+        xiaoche::device::CommandReply stopReply;
+        xiaoche::device::CommandReply closeReply;
+
+        grpc::ClientContext stopCtx;
+        stopCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
+        (void)m_stub->StopSampling(&stopCtx, req, &stopReply);
+
+        grpc::ClientContext closeCtx;
+        closeCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
+        (void)m_stub->CloseDevice(&closeCtx, req, &closeReply);
+    }
+
     m_stub.reset();
     m_channel.reset();
 #endif
@@ -196,36 +239,8 @@ void GrpcReceiverBackend::sendCommand(const QByteArray& command)
     }
 
 #ifdef HAS_GRPC
-    if (!m_stub) {
-        emit commandError("gRPC Stub 未初始化");
-        return;
-    }
-
-    // 构造请求
-    device_data::CommandRequest req;
-    req.set_payload(command.constData(), static_cast<size_t>(command.size()));
-    req.set_command_id(QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString());
-
-    device_data::CommandResponse resp;
-    grpc::ClientContext ctx;
-    // 设置 5 秒超时
-    ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
-
-    grpc::Status status = m_stub->SendCommand(&ctx, req, &resp);
-
-    if (status.ok()) {
-        QJsonObject ack;
-        ack.insert("type",       "commandAck");
-        ack.insert("mode",       "real");
-        ack.insert("success",    resp.success());
-        ack.insert("message",    QString::fromStdString(resp.message()));
-        ack.insert("command_id", QString::fromStdString(resp.command_id()));
-        emit dataReceived(QJsonDocument(ack).toJson(QJsonDocument::Compact), false);
-    } else {
-        emit commandError(QString("指令发送失败: [%1] %2")
-            .arg(status.error_code())
-            .arg(QString::fromStdString(status.error_message())));
-    }
+    Q_UNUSED(command)
+    emit commandError("当前 device.proto 协议未提供通用 SendCommand，已禁用该功能");
 #else
     emit commandError("当前构建未启用 gRPC 支持");
 #endif
@@ -297,7 +312,7 @@ void GrpcReceiverBackend::onReconnectCheck()
         // 尝试重新连接并重启流
         const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
         if (m_channel->WaitForConnected(deadline)) {
-            m_stub = device_data::DeviceDataService::NewStub(m_channel);
+            m_stub = xiaoche::device::AcquisitionDevice::NewStub(m_channel);
             setConnected(true);
             startStreamThread(m_acquisitionIntervalMs);
             emitBackendStatus("reconnected", "重连成功");
@@ -367,48 +382,62 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         m_streamCtx = std::move(ctx);
     }
 
-    // 构造订阅请求
-    device_data::SubscribeRequest req;
-    req.set_channel_count(0);        // 0 = 全通道
-    req.set_interval_ms(static_cast<uint32_t>(qMax(10, intervalMs)));
+    google::protobuf::Empty req;
 
-    auto reader = m_stub->Subscribe(m_streamCtx.get(), req);
+    // 新协议在订阅前尝试启动采样
+    {
+        xiaoche::device::CommandReply startReply;
+        grpc::ClientContext startCtx;
+        startCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        const grpc::Status startStatus = m_stub->StartSampling(&startCtx, req, &startReply);
+        if (!startStatus.ok() || !startReply.ok()) {
+            const QString detail = startStatus.ok()
+                ? QString::fromStdString(startReply.message())
+                : QString("[%1] %2").arg(startStatus.error_code()).arg(QString::fromStdString(startStatus.error_message()));
+            QMetaObject::invokeMethod(this, [this, detail]() {
+                emitBackendStatus("startSamplingWarning", QString("StartSampling 失败，继续尝试订阅: %1").arg(detail));
+            }, Qt::QueuedConnection);
+        }
+    }
+
+    auto reader = m_stub->SubscribeProcessedFrames(m_streamCtx.get(), req);
 
     // 读取帧循环
-    device_data::DataFrame pbFrame;
+    xiaoche::device::ProcessedFrameReply pbFrame;
     while (!m_stopStream.load() && reader->Read(&pbFrame)) {
         if (m_paused.load()) {
             continue; // 暂停时丢弃接收到的帧
         }
 
-        // 将 protobuf DataFrame 转换为应用层 FrameData
+        // 将 protobuf ProcessedFrameReply 转换为应用层 FrameData
         FrameData frame;
-        frame.timestamp    = static_cast<int64_t>(pbFrame.timestamp());
-        frame.frameId      = static_cast<uint16_t>(pbFrame.frame_id() & 0xFFFF);
-        const uint32_t detectModeRaw = pbFrame.detect_mode();
-        frame.detectMode   = (detectModeRaw <= static_cast<uint32_t>(FrameData::MultiChannelComplex))
-            ? static_cast<FrameData::DetectionMode>(detectModeRaw)
-            : FrameData::Legacy;
-        frame.channelCount = static_cast<uint8_t>(pbFrame.channel_count());
+        frame.timestamp    = static_cast<int64_t>(pbFrame.timestamp_unix_ms());
+        frame.sequence     = static_cast<uint64_t>(pbFrame.sequence());
+        frame.frameId      = static_cast<uint16_t>(pbFrame.sequence() & 0xFFFF);
+        frame.detectMode   = FrameData::MultiChannelComplex;
 
-        const int comp0Size = pbFrame.channels_comp0_size();
-        const int comp1Size = pbFrame.channels_comp1_size();
+        const int sampleCount = pbFrame.samples_size();
+        const int declaredCount = static_cast<int>(pbFrame.cell_count());
+        const int channelCount = qMax(sampleCount, declaredCount);
+        frame.channelCount = static_cast<uint8_t>(qBound(0, channelCount, 255));
 
-        frame.channels_comp0.resize(comp0Size);
-        for (int i = 0; i < comp0Size; ++i) {
-            frame.channels_comp0[i] = pbFrame.channels_comp0(i);
-        }
+        frame.channels_amp.resize(sampleCount);
+        frame.channels_phase.resize(sampleCount);
+        frame.channels_x.resize(sampleCount);
+        frame.channels_y.resize(sampleCount);
+        frame.channels_comp0.resize(sampleCount);
+        frame.channels_comp1.resize(sampleCount);
 
-        frame.channels_comp1.resize(comp1Size);
-        for (int i = 0; i < comp1Size; ++i) {
-            frame.channels_comp1[i] = pbFrame.channels_comp1(i);
-        }
+        for (int i = 0; i < sampleCount; ++i) {
+            const auto& sample = pbFrame.samples(i);
+            frame.channels_amp[i] = static_cast<double>(sample.amp());
+            frame.channels_phase[i] = static_cast<double>(sample.phase());
+            frame.channels_x[i] = static_cast<double>(sample.x());
+            frame.channels_y[i] = static_cast<double>(sample.y());
 
-        const int inferredChannels = qMax(comp0Size, comp1Size);
-        if (frame.channelCount == 0 && inferredChannels > 0) {
-            frame.channelCount = static_cast<uint8_t>(qBound(0, inferredChannels, 255));
-        } else if (inferredChannels > static_cast<int>(frame.channelCount)) {
-            frame.channelCount = static_cast<uint8_t>(qBound(0, inferredChannels, 255));
+            // 兼容既有绘图链路：当前复数主通道沿用 x/y
+            frame.channels_comp0[i] = frame.channels_x[i];
+            frame.channels_comp1[i] = frame.channels_y[i];
         }
 
         // 跨线程发射信号（Qt::QueuedConnection 自动处理）
@@ -423,6 +452,7 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         pkt.insert("type",         "streamFrame");
         pkt.insert("mode",         "real");
         pkt.insert("frameId",      static_cast<int>(frame.frameId));
+        pkt.insert("sequence",     QString::number(static_cast<qulonglong>(frame.sequence)));
         pkt.insert("timestamp",    static_cast<qint64>(frame.timestamp));
         pkt.insert("channelCount", static_cast<int>(frame.channelCount));
         pkt.insert("detectMode",   static_cast<int>(frame.detectMode));

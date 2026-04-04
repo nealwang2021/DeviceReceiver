@@ -70,7 +70,10 @@ private:
     QList<PlotWindowBase*> m_windows;
     QTimer* m_updateTimer;
     bool m_isInitialized;
+    bool m_hasLastDispatchedKey{false};
+    quint64 m_lastDispatchedSequence{0};
     qint64 m_lastDispatchedTimestamp{0};
+    uint16_t m_lastDispatchedFrameId{0};
     int m_baseUpdateIntervalMs{50};
 };
 

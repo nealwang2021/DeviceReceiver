@@ -10,7 +10,6 @@
 #include "PlotDataHub.h"
 #include <QMdiArea>
 #include <QMdiSubWindow>
-#include <QPointer>
 #include <QDebug>
 
 PlotWindowManager* PlotWindowManager::m_instance = nullptr;
@@ -82,7 +81,10 @@ void PlotWindowManager::cleanup()
         m_updateTimer = nullptr;
     }
 
+    m_hasLastDispatchedKey = false;
+    m_lastDispatchedSequence = 0;
     m_lastDispatchedTimestamp = 0;
+    m_lastDispatchedFrameId = 0;
     PlotDataHub::instance()->reset();
     m_isInitialized = false;
 }
@@ -158,12 +160,9 @@ PlotWindowBase* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, Plot
     subWindow->resize(600, 400);
     subWindow->show();
 
-    QPointer<PlotWindowBase> plotWindowPtr(plotWindow);
-    connect(subWindow, &QMdiSubWindow::destroyed, this, [this, plotWindowPtr]() {
-        qDebug() << "[PlotWindowManager] subWindow destroyed, unregistering" << plotWindowPtr;
-        if (plotWindowPtr) {
-            unregisterWindow(plotWindowPtr);
-        }
+    connect(subWindow, &QMdiSubWindow::destroyed, this, [this, plotWindow]() {
+        qDebug() << "[PlotWindowManager] subWindow destroyed, unregistering" << plotWindow;
+        unregisterWindow(plotWindow);
     });
 
     qInfo() << "在MDI区域创建窗口:" << plotWindow->windowTitle();
@@ -182,6 +181,10 @@ void PlotWindowManager::registerWindow(PlotWindowBase* window)
     qDebug() << "registering window" << window << "title" << window->windowTitle();
     m_windows.append(window);
 
+    connect(window, &QObject::destroyed, this, [this, window]() {
+        unregisterWindow(window);
+    });
+
     connect(this, &PlotWindowManager::dataUpdated,
             window, &PlotWindowBase::onDataUpdated);
     connect(this, &PlotWindowManager::plotSnapshotUpdated,
@@ -191,6 +194,10 @@ void PlotWindowManager::registerWindow(PlotWindowBase* window)
 
     qInfo() << "注册绘图窗口:" << window->windowTitle()
             << "，当前窗口数:" << m_windows.size();
+
+    if (auto snapshot = PlotDataHub::instance()->snapshot()) {
+        emit plotSnapshotUpdated(snapshot);
+    }
 
     emit windowAdded(window);
 }
@@ -280,22 +287,34 @@ void PlotWindowManager::onUpdateTimer()
 
     QVector<FrameData> incrementalFrames;
     incrementalFrames.reserve(frames.size());
-    qint64 maxTimestamp = m_lastDispatchedTimestamp;
-
-    for (const FrameData& frame : frames) {
-        if (frame.timestamp > m_lastDispatchedTimestamp) {
-            incrementalFrames.append(frame);
-            if (frame.timestamp > maxTimestamp) {
-                maxTimestamp = frame.timestamp;
+    int startIndex = 0;
+    if (m_hasLastDispatchedKey) {
+        int lastSeenIndex = -1;
+        for (int i = frames.size() - 1; i >= 0; --i) {
+            const FrameData& frame = frames.at(i);
+            if (frame.sequence == m_lastDispatchedSequence
+                && frame.timestamp == m_lastDispatchedTimestamp
+                && frame.frameId == m_lastDispatchedFrameId) {
+                lastSeenIndex = i;
+                break;
             }
         }
+        startIndex = (lastSeenIndex >= 0) ? (lastSeenIndex + 1) : 0;
+    }
+
+    for (int i = startIndex; i < frames.size(); ++i) {
+        incrementalFrames.append(frames.at(i));
     }
 
     if (incrementalFrames.isEmpty()) {
         return;
     }
 
-    m_lastDispatchedTimestamp = maxTimestamp;
+    const FrameData& lastFrame = incrementalFrames.last();
+    m_hasLastDispatchedKey = true;
+    m_lastDispatchedSequence = lastFrame.sequence;
+    m_lastDispatchedTimestamp = lastFrame.timestamp;
+    m_lastDispatchedFrameId = lastFrame.frameId;
 
     emit dataUpdated(incrementalFrames);
     emit plotSnapshotUpdated(PlotDataHub::instance()->appendFrames(incrementalFrames));

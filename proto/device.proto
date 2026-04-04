@@ -1,0 +1,65 @@
+﻿syntax = "proto3";
+
+option csharp_namespace = "XiaoChe.GrpcDeviceService.Protos";
+package xiaoche.device;
+
+import "google/protobuf/empty.proto";
+
+service AcquisitionDevice {
+  rpc ListDevices (google.protobuf.Empty) returns (ListDevicesReply);
+  rpc OpenDevice (OpenDeviceRequest) returns (CommandReply);
+  rpc CloseDevice (google.protobuf.Empty) returns (CommandReply);
+  rpc StartSampling (google.protobuf.Empty) returns (CommandReply);
+  rpc StopSampling (google.protobuf.Empty) returns (CommandReply);
+  rpc ResetDevice (google.protobuf.Empty) returns (CommandReply);
+  rpc GetStatus (google.protobuf.Empty) returns (StatusReply);
+  rpc SubscribeProcessedFrames (google.protobuf.Empty) returns (stream ProcessedFrameReply);
+}
+
+message DeviceItem {
+  string device_id = 1;
+  string display_name = 2;
+  bool opened = 3;
+  string serial_number = 4;
+}
+
+message ListDevicesReply {
+  repeated DeviceItem devices = 1;
+}
+
+message OpenDeviceRequest {
+  string device_id = 1;
+}
+
+message CommandReply {
+  bool ok = 1;
+  string message = 2;
+}
+
+message StatusReply {
+  bool opened = 1;
+  bool sampling = 2;
+  string current_device_id = 3;
+  uint32 cell_count = 4;
+}
+
+message ChannelSampleReply {
+  // 这里是“显示位置索引”，不是原始通道号
+  uint32 display_index = 1;
+
+  // 原始来源通道号，保留给调试和追踪
+  uint32 source_channel = 2;
+
+  // 全部都是“先处理，再按上位机显示逻辑补偿后”的结果
+  float amp = 3;//幅值，对应实数模式
+  float phase = 4;//相位，对应实数模式
+  float x = 5;//实部，对应复数模式
+  float y = 6;//虚部，对应复数模式
+}
+
+message ProcessedFrameReply {
+  uint64 sequence = 1;
+  int64 timestamp_unix_ms = 2;
+  uint32 cell_count = 3;
+  repeated ChannelSampleReply samples = 4;
+}
