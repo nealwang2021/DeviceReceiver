@@ -19,7 +19,7 @@ if(NOT DEFINED CMAKE_PREFIX_PATH AND NOT DEFINED QT5_DIR)
 endif()
 
 # 查找Qt库（Qt 5.15）
-find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Sql)
 if(NOT ENABLE_WASM)
     find_package(Qt5 5.15 REQUIRED COMPONENTS SerialPort OpenGL)
 else()
@@ -77,6 +77,7 @@ set(SOURCE_FILES
     AppConfig.cpp
     PlotDataHub.cpp
     StagePoseLatch.cpp
+    RealtimeSqlRecorder.cpp
     PlotWindowManager.cpp
     MainWindow.cpp
 )
@@ -102,6 +103,7 @@ set(HEADER_FILES
     AppConfig.h
     PlotDataHub.h
     StagePoseLatch.h
+    RealtimeSqlRecorder.h
     PlotWindowManager.h
     MainWindow.h
 )
@@ -135,6 +137,7 @@ target_link_libraries(realtime_data
     Qt5::Widgets
     Qt5::Network
     Qt5::PrintSupport
+    Qt5::Sql
 )
 
 if(NOT ENABLE_WASM)
@@ -374,6 +377,8 @@ if(WIN32 AND NOT ENABLE_WASM)
             "$<TARGET_FILE:Qt5::Network>" "$<TARGET_FILE_DIR:realtime_data>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt5::PrintSupport>" "$<TARGET_FILE_DIR:realtime_data>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt5::Sql>" "$<TARGET_FILE_DIR:realtime_data>"
     )
     
     if(NOT ENABLE_WASM)

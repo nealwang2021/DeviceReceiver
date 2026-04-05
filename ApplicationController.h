@@ -14,6 +14,7 @@ class AppConfig;
 class PlotWindowManager;
 class MainWindow;
 class QThread;
+class RealtimeSqlRecorder;
 /**
  * @brief 应用控制器类，负责协调所有模块的初始化和生命周期管理
  * 
@@ -184,6 +185,7 @@ private:
     QScopedPointer<MainWindow> m_mainWindow;  // 主界面窗口
     QString m_activeBackendType = "serial";
     StagePoseLatch m_stagePoseLatch;
+    QScopedPointer<RealtimeSqlRecorder> m_realtimeRecorder;
 
     // 配置参数（后续可迁移到AppConfig类）
     struct {

@@ -4,7 +4,7 @@ if(NOT ENABLE_GRPC OR NOT DEFINED GRPC_ROOT)
   return()
 endif()
 
-find_package(Qt5 5.15 REQUIRED COMPONENTS Test)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Test Sql)
 if(NOT ENABLE_WASM)
   find_package(OpenGL REQUIRED)
 endif()
@@ -112,6 +112,7 @@ target_link_libraries(tst_stage_panel
   Qt5::Widgets
   Qt5::Network
   Qt5::PrintSupport
+  Qt5::Sql
   Qt5::Test
 )
 if(NOT ENABLE_WASM)

@@ -11,13 +11,16 @@
 #include "DataProcessor.h"
 #include "AppConfig.h"
 #include "MainWindow.h"
+#include "RealtimeSqlRecorder.h"
 #include <QThread>
 #include <QMetaObject>
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QDir>
+#include <QDateTime>
 
 namespace {
 
@@ -113,6 +116,18 @@ ApplicationController::~ApplicationController()
 bool ApplicationController::initialize()
 {
     qInfo() << "开始初始化应用模块...";
+
+    if (!m_realtimeRecorder) {
+        m_realtimeRecorder.reset(new RealtimeSqlRecorder(this));
+    }
+    const QString startupTimestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    const QString recorderDbPath = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("data/device_realtime_%1.db").arg(startupTimestamp));
+    if (!m_realtimeRecorder->start(recorderDbPath)) {
+        qWarning() << "实时SQLite记录器启动失败:" << recorderDbPath;
+    } else {
+        qInfo() << "实时SQLite记录器文件:" << recorderDbPath;
+    }
     
     // 按照依赖顺序初始化各模块
     if (!initCacheManager()) {
@@ -395,6 +410,9 @@ bool ApplicationController::initReceiverBackend()
                          FrameData copy = frame;
                          // 附加最近一次三轴台位（mm + pulse）；与 DUT 时间戳可能不同，见 FrameData 注释
                          m_stagePoseLatch.applyToFrame(copy);
+                         if (m_realtimeRecorder) {
+                             m_realtimeRecorder->enqueueFrame(copy);
+                         }
                          m_cacheManager->addFrame(copy);
                      }, Qt::DirectConnection);
 
@@ -500,6 +518,11 @@ bool ApplicationController::initMainWindow()
                          m_mainWindow.get(), &MainWindow::updateConnectionStatus, Qt::QueuedConnection);
         QObject::connect(this, &ApplicationController::stopped,
                          m_mainWindow.get(), [this]() { m_mainWindow->updateConnectionStatus(false); }, Qt::QueuedConnection);
+        if (m_realtimeRecorder) {
+            QObject::disconnect(m_realtimeRecorder.get(), nullptr, m_mainWindow.get(), nullptr);
+            QObject::connect(m_realtimeRecorder.get(), &RealtimeSqlRecorder::dropFrameAlert,
+                             m_mainWindow.get(), &MainWindow::onRecorderDropAlert, Qt::QueuedConnection);
+        }
     }
     
     // 显示主窗口
@@ -751,6 +774,11 @@ PlotWindowBase* ApplicationController::createPlotWindow(PlotType type)
 
 void ApplicationController::cleanup()
 {
+    if (m_realtimeRecorder) {
+        m_realtimeRecorder->stop();
+        m_realtimeRecorder.reset();
+    }
+
     // 先断开三轴台（信号指向 MainWindow，须在销毁主窗口前）
     disconnectStageBackend();
 

@@ -2589,11 +2589,29 @@ void MainWindow::addDataToMonitor(const QString& data, bool isHex, bool isReceiv
                              .arg(payload);
     
     // 添加到监控区域
-    m_dataMonitor->append(displayText);
+    appendMonitorLog(displayText);
     
     // 自动滚动到底部
     QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar();
     scrollBar->setValue(scrollBar->maximum());
+}
+
+void MainWindow::appendMonitorLog(const QString& text, const QString& color)
+{
+    if (!m_dataMonitor || text.isEmpty()) {
+        return;
+    }
+
+    const QString escaped = text.toHtmlEscaped();
+    if (color.isEmpty()) {
+        m_dataMonitor->append(escaped);
+    } else {
+        m_dataMonitor->append(QStringLiteral("<span style=\"color:%1;\">%2</span>").arg(color, escaped));
+    }
+
+    if (QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar()) {
+        scrollBar->setValue(scrollBar->maximum());
+    }
 }
 
 // 槽函数实现
@@ -3237,12 +3255,14 @@ void MainWindow::onStageCommandError(const QString& error)
 
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
     const QString errorText = QStringLiteral("%1 [错误]: %2").arg(timestamp, error);
-    if (m_dataMonitor) {
-        m_dataMonitor->append(errorText);
-        if (QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar()) {
-            scrollBar->setValue(scrollBar->maximum());
-        }
-    }
+    appendMonitorLog(errorText, QStringLiteral("red"));
+}
+
+void MainWindow::onRecorderDropAlert(const QString& message)
+{
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
+    const QString text = QStringLiteral("%1 [丢帧告警]: %2").arg(timestamp, message);
+    appendMonitorLog(text, QStringLiteral("red"));
 }
 
 void MainWindow::onStageConnectionStateChanged(bool connected)
@@ -3299,11 +3319,8 @@ void MainWindow::onCommandError(const QString& error)
 
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
     QString errorText = QString("%1 [错误]: %2").arg(timestamp).arg(error);
-    
-    m_dataMonitor->append(errorText);
-    
-    QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar();
-    scrollBar->setValue(scrollBar->maximum());
+
+    appendMonitorLog(errorText, QStringLiteral("red"));
 }
 
 void MainWindow::onUpdateTimer()

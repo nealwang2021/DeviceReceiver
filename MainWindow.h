@@ -87,6 +87,7 @@ public slots:
     void onStageCommandSent(const QByteArray& command);
     void onStageCommandError(const QString& error);
     void onStageConnectionStateChanged(bool connected);
+    void onRecorderDropAlert(const QString& message);
 
 protected:
     /**
@@ -191,6 +192,7 @@ private:
      * @param isReceived 是否为接收数据（true：接收，false：发送）
      */
     void addDataToMonitor(const QString& data, bool isHex = false, bool isReceived = true);
+    void appendMonitorLog(const QString& text, const QString& color = QString());
 
     /**
      * @brief 切换样式（深色/浅色）

@@ -1,7 +1,7 @@
 QT += core gui widgets network
 # 根据编译目标条件添加模块
 !wasm {
-    QT += serialport
+    QT += serialport sql
 } else {
     # WebAssembly环境需要额外添加的模块
     QT += network
@@ -236,6 +236,7 @@ SOURCES += main.cpp \
            AppConfig.cpp \
            PlotDataHub.cpp \
            StagePoseLatch.cpp \
+           RealtimeSqlRecorder.cpp \
            PlotWindowManager.cpp \
            MainWindow.cpp
 
@@ -259,6 +260,7 @@ HEADERS += FrameData.h \
            AppConfig.h \
            PlotDataHub.h \
            StagePoseLatch.h \
+           RealtimeSqlRecorder.h \
            PlotWindowManager.h \
            MainWindow.h
 

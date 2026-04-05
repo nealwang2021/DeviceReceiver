@@ -245,13 +245,18 @@ build/
 │   ├── grpc_test_server.exe      # 被测设备数据 gRPC 测试服务（DeviceDataService）
 │   ├── stage_grpc_test_server.exe# 三轴台 StageService 测试服务（可选）
 │   ├── realtime_data.pdb   # 程序数据库文件
-│   └── realtime_data.log   # 运行日志文件
+│   ├── realtime_data.log   # 运行日志文件
+│   └── data/               # 实时SQLite数据目录（启动自动创建）
+│       ├── device_realtime_yyyyMMdd_HHmmss.db      # 每次启动生成一个新库
+│       ├── device_realtime_yyyyMMdd_HHmmss.db-wal  # WAL日志文件（运行期）
+│       └── device_realtime_yyyyMMdd_HHmmss.db-shm  # WAL共享内存文件（运行期）
 └── debug/                  # Debug版本输出目录
     ├── realtime_data.exe
     ├── grpc_test_server.exe
     ├── stage_grpc_test_server.exe
     ├── realtime_data.pdb
-    └── realtime_data.log
+   ├── realtime_data.log
+   └── data/
 
 build-wasm/                 # WASM构建输出目录
 ├── realtime_data.html      # 入口HTML页面 (~3KB)
@@ -356,6 +361,83 @@ docs/                       # GitHub Pages 部署目录
 - **日志文件**: `realtime_data.log` 保存运行日志
 - **日志级别**: 支持DEBUG/INFO/WARNING/ERROR不同级别
 - **日志内容**: 包含时间戳、日志级别和详细信息
+
+#### **实时 SQLite 记录（默认开启）**
+- **文件策略**: 每次软件启动创建一个新的数据库文件：`data/device_realtime_yyyyMMdd_HHmmss.db`
+- **写入模式**: 异步写库（采集线程入队、独立DB线程批量事务落盘），避免阻塞主采集链路
+- **SQLite 设置**: 启用 `WAL`（并使用 `synchronous=NORMAL`）以平衡吞吐与可靠性
+- **检索索引**: 默认建立时间与通道相关索引，支持按时间范围快速查询
+- **容量控制**: 内置按时间与库体积双阈值清理策略，防止数据库无限增长
+- **丢帧日志**: 当发生队列溢出或写库失败时，会在 `realtime_data.log` 记录 `队列溢出丢帧` / `写库失败导致丢帧`（含累计计数与范围）
+
+##### 常用 SQL 排查语句
+
+> 以下示例可用 `sqlite3 data/device_realtime_*.db` 执行（Windows 可用 DB Browser for SQLite 执行同样 SQL）。
+
+1) 查看时间范围与总帧数
+```sql
+SELECT
+   MIN(timestamp_ms) AS min_ts,
+   MAX(timestamp_ms) AS max_ts,
+   COUNT(*)          AS frame_count
+FROM frames;
+```
+
+2) 查询最近 1 分钟帧率（按秒聚合）
+```sql
+SELECT
+   (timestamp_ms / 1000) AS sec,
+   COUNT(*)              AS frames_in_sec
+FROM frames
+WHERE timestamp_ms >= (SELECT MAX(timestamp_ms) - 60000 FROM frames)
+GROUP BY sec
+ORDER BY sec;
+```
+
+3) 检查 sequence 是否有缺口（快速定位疑似丢帧区间）
+```sql
+WITH ordered AS (
+   SELECT sequence,
+             LAG(sequence) OVER (ORDER BY sequence) AS prev_seq
+   FROM frames
+)
+SELECT
+   prev_seq,
+   sequence,
+   (sequence - prev_seq - 1) AS missing_count
+FROM ordered
+WHERE prev_seq IS NOT NULL
+   AND sequence > prev_seq + 1
+ORDER BY missing_count DESC, sequence ASC
+LIMIT 200;
+```
+
+4) 按通道检查样本密度（某时间段）
+```sql
+SELECT
+   channel_index,
+   COUNT(*) AS sample_count
+FROM frame_samples
+WHERE timestamp_ms BETWEEN 1711900000000 AND 1711900060000
+GROUP BY channel_index
+ORDER BY channel_index;
+```
+
+5) 检查“帧-样本”是否匹配（每帧通道样本数）
+```sql
+SELECT
+   f.id,
+   f.timestamp_ms,
+   f.channel_count,
+   COUNT(s.channel_index) AS sample_rows,
+   (f.channel_count - COUNT(s.channel_index)) AS diff
+FROM frames f
+LEFT JOIN frame_samples s ON s.frame_row_id = f.id
+GROUP BY f.id, f.timestamp_ms, f.channel_count
+HAVING diff <> 0
+ORDER BY f.timestamp_ms DESC
+LIMIT 200;
+```
 
 #### **指令历史**
 - **历史记录**: 自动保存发送的指令
