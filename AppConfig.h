@@ -86,6 +86,9 @@ public:
     int plotRefreshIntervalMs() const { return m_plotRefreshIntervalMs; }
     void setPlotRefreshIntervalMs(int ms) { m_plotRefreshIntervalMs = ms; }
 
+    int arrayPlotRowHeightPx() const { return m_arrayPlotRowHeightPx; }
+    void setArrayPlotRowHeightPx(int px) { m_arrayPlotRowHeightPx = qBound(0, px, 300); }
+
     // ========== 检测分析窗口配置 ==========
     int inspectionChannelsPerGroup() const { return m_inspectionChannelsPerGroup; }
     void setInspectionChannelsPerGroup(int n) { m_inspectionChannelsPerGroup = qBound(1, n, 256); }
@@ -200,6 +203,7 @@ private:
     // 绘图配置
     int m_maxPlotPoints = 200;         // 最大绘图点数
     int m_plotRefreshIntervalMs = 50;  // 绘图刷新间隔（毫秒）
+    int m_arrayPlotRowHeightPx = 0;    // 阵列图每通道高度（像素，0=使用密度默认值）
     int m_inspectionChannelsPerGroup = 8; // 检测分析窗口每组通道数
     
     // 数据统计配置

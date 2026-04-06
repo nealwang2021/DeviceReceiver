@@ -34,6 +34,8 @@ struct FrameData
     QVector<double> channels_phase;
     QVector<double> channels_x;
     QVector<double> channels_y;
+    QVector<int> channels_display_index;
+    QVector<int> channels_source_channel;
 
     // 三轴台位（与 stage.proto PositionsReply / StageService 一致）；由 StagePoseLatch 在写入缓存前
     // 按「最近台位 last-known」附加到每条被测设备帧；未连接台或未收到过台位时 hasStagePose=false。
@@ -60,6 +62,8 @@ struct FrameData
         channels_phase(),
         channels_x(),
         channels_y(),
+        channels_display_index(),
+        channels_source_channel(),
         hasStagePose(false),
         stageTimestampMs(0),
         stageXMm(0.0),

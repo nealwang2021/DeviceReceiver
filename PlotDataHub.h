@@ -21,6 +21,10 @@ struct PlotSnapshot
     QVector<QVector<double>> complexImag;
     QVector<QVector<double>> complexMag;
     QVector<QVector<double>> complexPhase;
+
+    // Optional row identity metadata for UI labels.
+    QVector<int> rowDisplayIndex;
+    QVector<int> rowSourceChannel;
 };
 
 class PlotDataHub

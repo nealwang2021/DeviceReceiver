@@ -27,6 +27,7 @@ set "RUN_AFTER=0"
 set "ENABLE_HDF5=1"
 set "ENABLE_GRPC=1"
 set "ENABLE_WASM=0"
+set "FAST_BUILD=0"
 set "HDF5_ROOT="
 set "GRPC_ROOT="
 REM 保留环境变量中的 VCPKG_ROOT（全功能构建常用）
@@ -94,6 +95,11 @@ if /I "%~1"=="-Wasm" (
     shift
     goto :parse_args
 )
+if /I "%~1"=="-Fast" (
+    set "FAST_BUILD=1"
+    shift
+    goto :parse_args
+)
 if /I "%~1"=="-Hdf5Root" (
     shift
     if "%~1"=="" (
@@ -153,7 +159,7 @@ goto :show_help
 
 :show_help
 echo(
-echo 用法: build_cmake.bat [-Debug ^| -Release] [-Clean] [-Run] [-NoHdf5] [-NoGrpc] [-Wasm] [-Hdf5Root 路径] [-GrpcRoot 路径] [-VcpkgRoot 路径] [-VSVersion 版本] [-Help]
+echo 用法: build_cmake.bat [-Debug ^| -Release] [-Clean] [-Run] [-NoHdf5] [-NoGrpc] [-Wasm] [-Fast] [-Hdf5Root 路径] [-GrpcRoot 路径] [-VcpkgRoot 路径] [-VSVersion 版本] [-Help]
 echo(
 echo 参数:
 echo  -Debug     构建调试版本 (默认: 发布版本)
@@ -163,6 +169,7 @@ echo  -Run       构建成功后运行程序
 echo  -NoHdf5    禁用 HDF5 导出功能构建
 echo  -NoGrpc    禁用 gRPC Client 支持构建
 echo  -Wasm      启用 WebAssembly 构建 (WASM)
+echo  -Fast      快速模式：仅构建主程序，跳过测试目标和部署步骤
 echo  -Hdf5Root  指定 HDF5 根目录
 echo  -GrpcRoot  指定 gRPC 根目录
 echo  -VcpkgRoot 指定 vcpkg 根目录
@@ -175,6 +182,7 @@ echo 示例:
 echo  build_cmake.bat
 echo  build_cmake.bat -Debug -Run
 echo  build_cmake.bat -Clean -NoHdf5
+echo  build_cmake.bat -Fast
 echo  build_cmake.bat -Hdf5Root C:\vcpkg\installed\x64-windows -GRPC
 echo  build_cmake.bat -Wasm
 echo  build_cmake.bat -VcpkgRoot D:\vcpkg -VSVersion 2022
@@ -343,7 +351,11 @@ if "%ENABLE_WASM%"=="1" (
 )
 
 REM 三轴台 / Stage 自动化测试（tst_stage_integration、tst_stage_panel），需 gRPC 且非 WASM
-set "CMAKE_OPTIONS=!CMAKE_OPTIONS! -DBUILD_TESTS=ON"
+if "%FAST_BUILD%"=="1" (
+    set "CMAKE_OPTIONS=!CMAKE_OPTIONS! -DBUILD_TESTS=OFF"
+) else (
+    set "CMAKE_OPTIONS=!CMAKE_OPTIONS! -DBUILD_TESTS=ON"
+)
 
 if defined VCPKG_ROOT (
     set "CMAKE_OPTIONS=!CMAKE_OPTIONS! -DVCPKG_ROOT="!VCPKG_ROOT!""
@@ -410,6 +422,7 @@ if /I "!CMAKE_GENERATOR!"=="NMake Makefiles" (
 
 echo [OK] CMake 配置成功
 echo [INFO] 功能摘要: ENABLE_GRPC=%ENABLE_GRPC% ENABLE_HDF5=%ENABLE_HDF5% ENABLE_WASM=%ENABLE_WASM%
+if "%FAST_BUILD%"=="1" echo [INFO]   FAST_BUILD=ON (skip tests/deploy)
 if defined GRPC_ROOT echo [INFO]   GRPC_ROOT=!GRPC_ROOT!
 if defined HDF5_ROOT echo [INFO]   HDF5_ROOT=!HDF5_ROOT!
 if defined VCPKG_ROOT echo [INFO]   VCPKG_ROOT=!VCPKG_ROOT!
@@ -418,9 +431,17 @@ REM --- 构建项目 ---
 echo [INFO] 构建项目 (%BUILD_TYPE%)...
 
 if /I "!USE_NMAKE!"=="1" (
-    cmake --build . > cmake_build.log 2>&1
+    if "%FAST_BUILD%"=="1" (
+        cmake --build . --target realtime_data > cmake_build.log 2>&1
+    ) else (
+        cmake --build . > cmake_build.log 2>&1
+    )
 ) else (
-    cmake --build . --config %BUILD_TYPE% > cmake_build.log 2>&1
+    if "%FAST_BUILD%"=="1" (
+        cmake --build . --config %BUILD_TYPE% --target realtime_data > cmake_build.log 2>&1
+    ) else (
+        cmake --build . --config %BUILD_TYPE% > cmake_build.log 2>&1
+    )
 )
 
 if errorlevel 1 (
@@ -432,7 +453,7 @@ if errorlevel 1 (
 )
 
 REM --- 构建 Stage 自动化测试目标（如果启用 gRPC 且非 WASM）---
-if /I "%ENABLE_GRPC%"=="1" (
+if "%FAST_BUILD%"=="0" if /I "%ENABLE_GRPC%"=="1" (
     if /I "%ENABLE_WASM%"=="0" (
         echo [INFO] 构建 Stage 自动化测试目标...
         cmake --build . --target tst_stage_integration > stage_tests_build_integration.log 2>&1
@@ -491,7 +512,7 @@ for %%D in ("!EXE_FULL_PATH!") do set "EXE_DIR=%%~dpD"
 echo [OK] 构建成功: !EXE_FULL_PATH!
 
 REM --- 复制依赖DLL ---
-if "%ENABLE_WASM%"=="0" (
+if "%FAST_BUILD%"=="0" if "%ENABLE_WASM%"=="0" (
     REM 查找windeployqt
     for /f "usebackq tokens=*" %%I in (`where windeployqt 2^>nul`) do (
         set "WINDEPLOYQT=%%I"
@@ -561,5 +582,6 @@ echo [INFO] Executable: !EXE_FULL_PATH!
 if "%ENABLE_HDF5%"=="1" echo [INFO] HDF5: enabled
 if "%ENABLE_GRPC%"=="1" echo [INFO] gRPC: enabled
 if "%ENABLE_WASM%"=="1" echo [INFO] WASM: enabled
+if "%FAST_BUILD%"=="1" echo [INFO] Fast mode: enabled
 echo [INFO] Build type: %BUILD_TYPE%
 exit /b 0

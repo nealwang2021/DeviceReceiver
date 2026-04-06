@@ -425,6 +425,8 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         frame.channels_phase.resize(sampleCount);
         frame.channels_x.resize(sampleCount);
         frame.channels_y.resize(sampleCount);
+        frame.channels_display_index.resize(sampleCount);
+        frame.channels_source_channel.resize(sampleCount);
         frame.channels_comp0.resize(sampleCount);
         frame.channels_comp1.resize(sampleCount);
 
@@ -434,6 +436,8 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
             frame.channels_phase[i] = static_cast<double>(sample.phase());
             frame.channels_x[i] = static_cast<double>(sample.x());
             frame.channels_y[i] = static_cast<double>(sample.y());
+            frame.channels_display_index[i] = static_cast<int>(sample.display_index());
+            frame.channels_source_channel[i] = static_cast<int>(sample.source_channel());
 
             // 兼容既有绘图链路：当前复数主通道沿用 x/y
             frame.channels_comp0[i] = frame.channels_x[i];

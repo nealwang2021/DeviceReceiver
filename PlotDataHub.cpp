@@ -73,6 +73,8 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
             next->complexImag.clear();
             next->complexMag.clear();
             next->complexPhase.clear();
+            next->rowDisplayIndex.clear();
+            next->rowSourceChannel.clear();
 
             if (frame.detectMode == FrameData::MultiChannelReal) {
                 next->realAmp.resize(ch);
@@ -82,10 +84,26 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
                 next->complexMag.resize(ch);
                 next->complexPhase.resize(ch);
             }
+
+            next->rowDisplayIndex.resize(ch);
+            next->rowSourceChannel.resize(ch);
+            for (int i = 0; i < ch; ++i) {
+                next->rowDisplayIndex[i] = i;
+                next->rowSourceChannel[i] = i;
+            }
         }
 
         const double t = static_cast<double>(frame.timestamp);
         next->timeMs.append(t);
+
+        for (int i = 0; i < ch; ++i) {
+            if (i < frame.channels_display_index.size()) {
+                next->rowDisplayIndex[i] = frame.channels_display_index.at(i);
+            }
+            if (i < frame.channels_source_channel.size()) {
+                next->rowSourceChannel[i] = frame.channels_source_channel.at(i);
+            }
+        }
 
         if (frame.detectMode == FrameData::MultiChannelReal) {
             for (int i = 0; i < ch; ++i) {

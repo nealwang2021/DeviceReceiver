@@ -462,6 +462,11 @@ StageGrpcEndpoint=[::1]:50052
 UseMockData=false
 MockDataIntervalMs=100
 
+[Plot]
+MaxPoints=200
+RefreshIntervalMs=50
+ArrayRowHeightPx=24
+
 [UI]
 showDevicePanel=true
 showCommandPanel=true
@@ -485,6 +490,7 @@ maxHistory=20
 | **Receiver/StageGrpcEndpoint** | （启动时为本机 IPv6 + 50052） | 三轴台 StageService gRPC 地址，独立配置 |
 | **Receiver/UseMockData** | false | 是否启用本地模拟（true=mock, false=真实服务） |
 | **Receiver/MockDataIntervalMs** | 100 | 模拟数据间隔(ms) |
+| **Plot/ArrayRowHeightPx** | 0 | 阵列图每通道基准高度（像素）；`0` 表示使用界面密度默认值，`>0` 表示以该值作为“适中”基准，`紧凑/宽松`会在此基础上缩放。推荐基准：`24`（更紧凑）、`32`（标准）、`40`（宽松） |
 | **UI/showDevicePanel** | true | 显示设备面板 |
 | **UI/showCommandPanel** | true | 显示指令面板 |
 | **Commands/maxHistory** | 20 | 最大指令历史数量 |

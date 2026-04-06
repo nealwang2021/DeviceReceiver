@@ -428,6 +428,9 @@ bool AppConfig::loadFromFile(const QString& filename)
     // 加载绘图配置
     m_maxPlotPoints = settings.value("Plot/MaxPoints", m_maxPlotPoints).toInt();
     m_plotRefreshIntervalMs = settings.value("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs).toInt();
+    m_arrayPlotRowHeightPx = qBound(0,
+        settings.value("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx).toInt(), 300);
+    qInfo() << "[AppConfig] Plot/ArrayRowHeightPx =" << m_arrayPlotRowHeightPx;
 
     // 检测分析窗口
     m_inspectionChannelsPerGroup = qBound(1,
@@ -463,7 +466,8 @@ bool AppConfig::loadFromFile(const QString& filename)
     // 日志配置
     m_logLevel = settings.value("Log/Level", m_logLevel).toString();
     
-    qInfo() << "配置文件加载成功：" << filename;
+    qInfo() << "配置文件加载成功：" << filename
+            << "Plot/ArrayRowHeightPx=" << m_arrayPlotRowHeightPx;
     return true;
 }
 
@@ -493,6 +497,7 @@ bool AppConfig::saveToFile(const QString& filename)
     // 保存绘图配置
     settings.setValue("Plot/MaxPoints", m_maxPlotPoints);
     settings.setValue("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs);
+    settings.setValue("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx);
 
     // 检测分析窗口
     settings.setValue("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup);
@@ -548,6 +553,7 @@ void AppConfig::loadDefaults()
     m_mockDataIntervalMs = 100;
     m_maxPlotPoints = 200;
     m_plotRefreshIntervalMs = 50;
+    m_arrayPlotRowHeightPx = 0;
     m_inspectionChannelsPerGroup = 8;
     m_statsIntervalMs = 1000;
     m_temperatureAlarmThreshold = 80.0f;

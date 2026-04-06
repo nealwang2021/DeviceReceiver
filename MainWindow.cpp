@@ -29,6 +29,7 @@
 #include <QLabel>
 #include <QTextEdit>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPushButton>
@@ -2574,6 +2575,13 @@ void MainWindow::addDataToMonitor(const QString& data, bool isHex, bool isReceiv
     }
 
     QString payload = data;
+    if (!isHex) {
+        const QString decodedPayload = QTextDocumentFragment::fromHtml(payload).toPlainText();
+        if (!decodedPayload.isEmpty()) {
+            payload = decodedPayload;
+        }
+    }
+
     if (payload.size() > 256) {
         payload = payload.left(256) + " ...";
     }
@@ -2602,10 +2610,19 @@ void MainWindow::appendMonitorLog(const QString& text, const QString& color)
         return;
     }
 
-    const QString escaped = text.toHtmlEscaped();
+    QString normalized = text;
+    for (int i = 0; i < 3; ++i) {
+        const QString decoded = QTextDocumentFragment::fromHtml(normalized).toPlainText();
+        if (decoded.isEmpty() || decoded == normalized) {
+            break;
+        }
+        normalized = decoded;
+    }
+
     if (color.isEmpty()) {
-        m_dataMonitor->append(escaped);
+        m_dataMonitor->append(normalized);
     } else {
+        const QString escaped = normalized.toHtmlEscaped();
         m_dataMonitor->append(QStringLiteral("<span style=\"color:%1;\">%2</span>").arg(color, escaped));
     }
 
