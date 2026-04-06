@@ -35,10 +35,7 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     
     // 创建控制按钮面板
     QHBoxLayout *controlLayout = new QHBoxLayout();
-    QPushButton *startButton = new QPushButton(QStringLiteral("启动模拟"));
-    QPushButton *stopButton = new QPushButton(QStringLiteral("停止模拟"));
     m_exportButton = new QPushButton(QStringLiteral("导出图像"), this);
-    stopButton->setEnabled(false);
     QLabel *componentLabel = new QLabel(QStringLiteral("分量:"));
     QLabel *rowLabelLabel = new QLabel(QStringLiteral("行标识:"));
     QLabel *densityLabel = new QLabel(QStringLiteral("密度:"));
@@ -68,8 +65,6 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     m_statsLabel = new QLabel(QStringLiteral("状态：就绪"));
     controlLayout->setSpacing(3);
     
-    controlLayout->addWidget(startButton);
-    controlLayout->addWidget(stopButton);
     controlLayout->addWidget(componentLabel);
     controlLayout->addWidget(m_componentCombo);
     controlLayout->addWidget(rowLabelLabel);
@@ -207,24 +202,6 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
 
     connect(m_exportButton, &QPushButton::clicked,
             this, &ArrayPlotWindow::onExportClicked);
-    
-    // 按钮信号连接
-    connect(startButton, &QPushButton::clicked, this, [this, startButton, stopButton]() {
-        m_useMockData = true;
-        m_frameCount = 0;
-        m_mockDataTimer->start(100); // 每100ms更新一次
-        m_statsLabel->setText(QStringLiteral("状态：模拟数据运行中..."));
-        startButton->setEnabled(false);
-        stopButton->setEnabled(true);
-    });
-    
-    connect(stopButton, &QPushButton::clicked, this, [this, startButton, stopButton]() {
-        m_useMockData = false;
-        m_mockDataTimer->stop();
-        m_statsLabel->setText(QStringLiteral("状态：已停止"));
-        startButton->setEnabled(true);
-        stopButton->setEnabled(false);
-    });
 }
 
 ArrayPlotWindow::~ArrayPlotWindow()
