@@ -6,6 +6,8 @@
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QRandomGenerator>
+#include <QHostInfo>
+#include <QHostAddress>
 #include <QtGlobal>
 
 #ifdef HAS_GRPC
@@ -41,9 +43,12 @@ GrpcReceiverBackend::~GrpcReceiverBackend()
 bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 {
     QString grpcTarget;
-    if (!GrpcEndpointUtils::parseHostPort(endpoint, &grpcTarget, nullptr, nullptr)) {
+    bool useTls = false;
+    QString parsedHost;
+    int parsedPort = 0;
+    if (!GrpcEndpointUtils::parseChannelEndpoint(endpoint, &grpcTarget, &useTls, &parsedHost, &parsedPort)) {
         emit commandError(QStringLiteral(
-            "gRPC 地址格式无效。示例: 127.0.0.1:50051、device.local:50051、或 IPv6: [::1]:50051"));
+            "gRPC 地址格式无效。示例: 127.0.0.1:50051、[::1]:50051、或 https://example.ngrok-free.dev"));
         return false;
     }
     m_endpoint = grpcTarget;
@@ -57,19 +62,128 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 
 #ifdef HAS_GRPC
     // ---- Real 模式：建立 Channel 并等待连接 ----
-    m_channel = grpc::CreateChannel(
-        m_endpoint.toStdString(),
-        grpc::InsecureChannelCredentials()
-    );
-    if (!m_channel) {
-        emit commandError("创建 gRPC Channel 失败");
-        return false;
+    auto tryConnect = [this](const QString& target,
+                             bool tls,
+                             const QString& tlsOverrideHost,
+                             QString* errorOut) -> bool {
+        if (errorOut) {
+            errorOut->clear();
+        }
+
+        std::shared_ptr<grpc::ChannelCredentials> credentials;
+        if (tls) {
+            grpc::SslCredentialsOptions sslOptions;
+            credentials = grpc::SslCredentials(sslOptions);
+        } else {
+            credentials = grpc::InsecureChannelCredentials();
+        }
+
+        grpc::ChannelArguments args;
+        if (tls && !tlsOverrideHost.trimmed().isEmpty()) {
+            args.SetSslTargetNameOverride(tlsOverrideHost.toStdString());
+        }
+
+        m_channel = grpc::CreateCustomChannel(target.toStdString(), credentials, args);
+        if (!m_channel) {
+            if (errorOut) {
+                *errorOut = QStringLiteral("CreateChannel failed");
+            }
+            return false;
+        }
+
+        const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(6000);
+        if (!m_channel->WaitForConnected(deadline)) {
+            if (errorOut) {
+                const auto state = m_channel->GetState(false);
+                *errorOut = QStringLiteral("WaitForConnected timeout, state=%1")
+                    .arg(static_cast<int>(state));
+            }
+            m_channel.reset();
+            return false;
+        }
+        return true;
+    };
+
+    struct ConnectAttempt {
+        bool tls = false;
+        QString label;
+    };
+    QVector<ConnectAttempt> attempts;
+    attempts.append({useTls, useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")});
+    attempts.append({!useTls, !useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")});
+
+    // 去重
+    QVector<ConnectAttempt> orderedAttempts;
+    for (const ConnectAttempt& a : attempts) {
+        bool exists = false;
+        for (const ConnectAttempt& b : orderedAttempts) {
+            if (a.tls == b.tls) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            orderedAttempts.append(a);
+        }
     }
 
-    const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(2000);
-    if (!m_channel->WaitForConnected(deadline)) {
-        emit commandError(QString("连接 gRPC 服务端超时: %1").arg(m_endpoint));
-        m_channel.reset();
+    bool connected = false;
+    QStringList failureReasons;
+    for (const ConnectAttempt& attempt : orderedAttempts) {
+        QString reason;
+        emitBackendStatus("connectAttempt",
+                          QStringLiteral("尝试连接: %1 endpoint=%2")
+                              .arg(attempt.label, m_endpoint));
+        if (tryConnect(m_endpoint, attempt.tls, QString(), &reason)) {
+            connected = true;
+            useTls = attempt.tls;
+            break;
+        }
+        failureReasons << QStringLiteral("%1 -> %2")
+                              .arg(attempt.label, reason.isEmpty() ? QStringLiteral("unknown") : reason);
+    }
+
+    if (!connected && !parsedHost.trimmed().isEmpty()) {
+        const QHostInfo hostInfo = QHostInfo::fromName(parsedHost);
+        if (hostInfo.error() == QHostInfo::NoError) {
+            for (const QHostAddress& addr : hostInfo.addresses()) {
+                if (addr.protocol() != QAbstractSocket::IPv4Protocol) {
+                    continue;
+                }
+
+                const QString ipTarget = QStringLiteral("%1:%2").arg(addr.toString()).arg(parsedPort);
+                for (const ConnectAttempt& attempt : orderedAttempts) {
+                    QString reason;
+                    const QString label = QStringLiteral("%1/ip=%2")
+                        .arg(attempt.label, addr.toString());
+                    emitBackendStatus("connectAttempt",
+                                      QStringLiteral("尝试连接: %1 endpoint=%2")
+                                          .arg(label, ipTarget));
+                    if (tryConnect(ipTarget,
+                                   attempt.tls,
+                                   attempt.tls ? parsedHost : QString(),
+                                   &reason)) {
+                        connected = true;
+                        useTls = attempt.tls;
+                        m_endpoint = ipTarget;
+                        break;
+                    }
+                    failureReasons << QStringLiteral("%1 -> %2")
+                                          .arg(label, reason.isEmpty() ? QStringLiteral("unknown") : reason);
+                }
+
+                if (connected) {
+                    break;
+                }
+            }
+        } else {
+            failureReasons << QStringLiteral("DNS -> %1").arg(hostInfo.errorString());
+        }
+    }
+
+    if (!connected) {
+        emit commandError(QString("连接 gRPC 服务端失败: %1；详情: %2")
+                              .arg(m_endpoint, failureReasons.join(QStringLiteral(" | "))));
         return false;
     }
 
@@ -107,7 +221,10 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
     }
 
     setConnected(true);
-    emitBackendStatus("connected", QString("已连接 gRPC 服务端: %1").arg(m_endpoint));
+    emitBackendStatus("connected",
+                      QString("已连接 gRPC 服务端: %1（%2）")
+                          .arg(m_endpoint)
+                          .arg(useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")));
     return true;
 #else
     emit commandError("当前构建未启用 gRPC 支持（请以 CONFIG+=grpc_client 重新编译）");
@@ -300,6 +417,22 @@ void GrpcReceiverBackend::onReconnectCheck()
         return;
     }
 
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 streamStartMs = m_streamStartMs.load(std::memory_order_relaxed);
+    const qint64 lastFrameMs = m_lastFrameReceivedMs.load(std::memory_order_relaxed);
+
+    // 外网链路首帧可能较慢（如 ngrok），预热期内不做激进重连
+    const bool inWarmupWindow = (streamStartMs > 0 && (nowMs - streamStartMs) < 20000);
+    if (inWarmupWindow) {
+        return;
+    }
+
+    // 最近仍有数据到达，说明链路可用，不应重连打断
+    const bool frameArrivingRecently = (lastFrameMs > 0 && (nowMs - lastFrameMs) < 15000);
+    if (frameArrivingRecently) {
+        return;
+    }
+
     const grpc_connectivity_state state = m_channel->GetState(false);
     if (state == GRPC_CHANNEL_TRANSIENT_FAILURE || state == GRPC_CHANNEL_SHUTDOWN) {
         emitBackendStatus("reconnecting",
@@ -332,6 +465,8 @@ void GrpcReceiverBackend::startStreamThread(int intervalMs)
     stopStreamThread(); // 确保旧线程已退出
 
     m_stopStream.store(false);
+    m_streamStartMs.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_relaxed);
+    m_lastFrameReceivedMs.store(0, std::memory_order_relaxed);
     m_streamThread = std::thread([this, intervalMs]() {
         streamLoop(intervalMs);
     });
@@ -384,18 +519,91 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
 
     google::protobuf::Empty req;
 
-    // 新协议在订阅前尝试启动采样
+    // 订阅前流程（与脚本对齐）：ListDevices -> OpenDevice -> StartSampling
     {
-        xiaoche::device::CommandReply startReply;
-        grpc::ClientContext startCtx;
-        startCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-        const grpc::Status startStatus = m_stub->StartSampling(&startCtx, req, &startReply);
-        if (!startStatus.ok() || !startReply.ok()) {
-            const QString detail = startStatus.ok()
-                ? QString::fromStdString(startReply.message())
-                : QString("[%1] %2").arg(startStatus.error_code()).arg(QString::fromStdString(startStatus.error_message()));
-            QMetaObject::invokeMethod(this, [this, detail]() {
-                emitBackendStatus("startSamplingWarning", QString("StartSampling 失败，继续尝试订阅: %1").arg(detail));
+        auto grpcErr = [](const grpc::Status& s) -> QString {
+            return QString("[%1] %2")
+                .arg(s.error_code())
+                .arg(QString::fromStdString(s.error_message()));
+        };
+
+        bool statusOpened = false;
+        bool statusSampling = false;
+        {
+            xiaoche::device::StatusReply statusReply;
+            grpc::ClientContext statusCtx;
+            statusCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+            const grpc::Status status = m_stub->GetStatus(&statusCtx, req, &statusReply);
+            if (status.ok()) {
+                statusOpened = statusReply.opened();
+                statusSampling = statusReply.sampling();
+            } else {
+                const QString detail = grpcErr(status);
+                QMetaObject::invokeMethod(this, [this, detail]() {
+                    emitBackendStatus("statusWarning", QString("GetStatus 失败，继续按流程尝试: %1").arg(detail));
+                }, Qt::QueuedConnection);
+            }
+        }
+
+        google::protobuf::Empty emptyReq;
+        xiaoche::device::ListDevicesReply listReply;
+        bool hasDevice = false;
+        {
+            grpc::ClientContext listCtx;
+            listCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+            const grpc::Status listStatus = m_stub->ListDevices(&listCtx, emptyReq, &listReply);
+            if (!listStatus.ok()) {
+                const QString detail = grpcErr(listStatus);
+                QMetaObject::invokeMethod(this, [this, detail]() {
+                    emitBackendStatus("listDevicesWarning", QString("ListDevices 失败，继续尝试 StartSampling: %1").arg(detail));
+                }, Qt::QueuedConnection);
+            } else {
+                hasDevice = (listReply.devices_size() > 0);
+                if (!hasDevice) {
+                    QMetaObject::invokeMethod(this, [this]() {
+                        emitBackendStatus("openDeviceSkip",
+                                          QStringLiteral("ListDevices 返回空列表，跳过 OpenDevice，直接尝试 StartSampling"));
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
+
+        // 只要服务端给出设备列表，就始终执行一次 OpenDevice（对齐脚本，避免会话未绑定）
+        if (hasDevice) {
+            xiaoche::device::OpenDeviceRequest openReq;
+            openReq.set_device_id(listReply.devices(0).device_id());
+            xiaoche::device::CommandReply openReply;
+            grpc::ClientContext openCtx;
+            openCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+            const grpc::Status openStatus = m_stub->OpenDevice(&openCtx, openReq, &openReply);
+            if (!openStatus.ok() || !openReply.ok()) {
+                const QString detail = openStatus.ok()
+                    ? QString::fromStdString(openReply.message())
+                    : grpcErr(openStatus);
+                QMetaObject::invokeMethod(this, [this, detail]() {
+                    emit commandError(QString("OpenDevice 失败，无法开始采集: %1").arg(detail));
+                }, Qt::QueuedConnection);
+                return;
+            }
+        }
+
+        if (!statusSampling) {
+            xiaoche::device::CommandReply startReply;
+            grpc::ClientContext startCtx;
+            startCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+            const grpc::Status startStatus = m_stub->StartSampling(&startCtx, req, &startReply);
+            if (!startStatus.ok() || !startReply.ok()) {
+                const QString detail = startStatus.ok()
+                    ? QString::fromStdString(startReply.message())
+                    : grpcErr(startStatus);
+                QMetaObject::invokeMethod(this, [this, detail]() {
+                    emit commandError(QString("StartSampling 失败，无法开始采集: %1").arg(detail));
+                }, Qt::QueuedConnection);
+                return;
+            }
+        } else if (!statusOpened) {
+            QMetaObject::invokeMethod(this, [this]() {
+                emitBackendStatus("samplingHint", QStringLiteral("GetStatus 显示已采样，直接订阅数据流"));
             }, Qt::QueuedConnection);
         }
     }
@@ -445,6 +653,7 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         }
 
         // 跨线程发射信号（Qt::QueuedConnection 自动处理）
+        m_lastFrameReceivedMs.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_relaxed);
         emit frameReceived(frame);
 
         if (!shouldEmitRealtimePacket(frame.timestamp)) {

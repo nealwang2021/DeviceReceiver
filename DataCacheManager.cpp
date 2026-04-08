@@ -93,6 +93,8 @@ void DataCacheManager::addFrame(const FrameData& frame)
         m_head = (m_head + 1) % m_frameCache.size();
     }
 
+    ++m_totalFrameCount;
+
     // 清理过期数据
     cleanExpiredFrames();
 
@@ -166,6 +168,18 @@ int DataCacheManager::getCacheSize()
     return m_size;
 }
 
+qint64 DataCacheManager::getTotalFrameCount()
+{
+    QReadLocker locker(&m_rwLock);
+    return m_totalFrameCount;
+}
+
+int DataCacheManager::getMaxCacheSize()
+{
+    QReadLocker locker(&m_rwLock);
+    return m_maxCacheSize;
+}
+
 void DataCacheManager::setMaxCacheSize(int maxSize)
 {
     QWriteLocker locker(&m_rwLock);
@@ -193,6 +207,7 @@ void DataCacheManager::clearCache()
     m_frameCache.clear();
     m_head = 0;
     m_size = 0;
+    m_totalFrameCount = 0;
 }
 
 void DataCacheManager::cleanExpiredFrames()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QUrl>
 
 /**
  * gRPC 目标地址解析（IPv4 / 主机名 / IPv6）。
@@ -76,6 +77,78 @@ inline bool parseHostPort(const QString& text, QString* grpcTarget, QString* out
     }
     if (outPort) {
         *outPort = p;
+    }
+    return true;
+}
+
+/**
+ * 解析 gRPC 连接地址（兼容 host:port 与 http(s)://host[:port][/path]）。
+ *
+ * 输出：
+ *  - grpcTarget: grpc::CreateChannel 目标（host:port 或 [ipv6]:port）
+ *  - useTls:     是否使用 TLS（https=true, 其余=false）
+ */
+inline bool parseChannelEndpoint(const QString& text,
+                                 QString* grpcTarget,
+                                 bool* useTls,
+                                 QString* outHost = nullptr,
+                                 int* outPort = nullptr)
+{
+    const QString t = text.trimmed();
+    if (t.isEmpty()) {
+        return false;
+    }
+
+    // 先走传统 host:port / [IPv6]:port 解析
+    QString target;
+    QString host;
+    int port = 0;
+    if (parseHostPort(t, &target, &host, &port)) {
+        if (grpcTarget) {
+            *grpcTarget = target;
+        }
+        if (useTls) {
+            *useTls = false;
+        }
+        if (outHost) {
+            *outHost = host;
+        }
+        if (outPort) {
+            *outPort = port;
+        }
+        return true;
+    }
+
+    // 再尝试 URL（例如 https://example.ngrok-free.dev）
+    const QUrl url(t);
+    if (!url.isValid() || url.scheme().isEmpty() || url.host().isEmpty()) {
+        return false;
+    }
+
+    const QString scheme = url.scheme().toLower();
+    if (scheme != QStringLiteral("https") && scheme != QStringLiteral("http")) {
+        return false;
+    }
+
+    const int defaultPort = (scheme == QStringLiteral("https")) ? 443 : 80;
+    const int portValue = (url.port() > 0) ? url.port() : defaultPort;
+    const QString hostValue = url.host();
+    const QString normalizedHost = hostValue.contains(QLatin1Char(':'))
+        ? QStringLiteral("[%1]").arg(hostValue)
+        : hostValue;
+    const QString targetValue = QStringLiteral("%1:%2").arg(normalizedHost).arg(portValue);
+
+    if (grpcTarget) {
+        *grpcTarget = targetValue;
+    }
+    if (useTls) {
+        *useTls = (scheme == QStringLiteral("https"));
+    }
+    if (outHost) {
+        *outHost = hostValue;
+    }
+    if (outPort) {
+        *outPort = portValue;
     }
     return true;
 }

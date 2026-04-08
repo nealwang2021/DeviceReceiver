@@ -74,6 +74,8 @@ private:
     std::atomic<bool> m_stopStream {false};
     std::atomic<bool> m_mockMode   {true};
     std::atomic<qint64> m_lastRealtimePacketMs {0};
+    std::atomic<qint64> m_streamStartMs {0};
+    std::atomic<qint64> m_lastFrameReceivedMs {0};
     /// UI 侧 streamFrame JSON 节流（不影响 frameReceived / 缓存 / 热力图）
     int m_realtimePacketIntervalMs = 100;
 

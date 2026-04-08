@@ -248,12 +248,7 @@ void MainWindow::updateConnectionStatus(bool connected)
         logGrpcInteraction("connect-state", connected ? "客户端状态: 已连接" : "客户端状态: 已断开");
     }
 
-    if (connected && isGrpcRealMode && !m_autoSelfTestTriggeredForConnection) {
-        m_autoSelfTestTriggeredForConnection = true;
-        QTimer::singleShot(250, this, [this]() {
-            startGrpcSelfTest(true);
-        });
-    }
+    // 当前 device.proto 协议未提供通用 SendCommand，自动 selftest 会产生误导性错误日志，默认关闭。
 
     updateStagePanelUiState();
     updateGrpcTestUiState();
@@ -1171,10 +1166,12 @@ void MainWindow::initUI()
         // 状态栏
         QHBoxLayout* statusLayout = new QHBoxLayout();
         m_frameRateLabel = new QLabel("帧率: 0 fps");
-        m_dataCountLabel = new QLabel("数据: 0 帧");
+        m_uiRefreshLabel = new QLabel(QStringLiteral("绘图周期: -- ms (-- Hz) | 拉取 -- 收到 -- 分发 -- 未消费累计 --"));
+        m_dataCountLabel = new QLabel(QStringLiteral("数据: 累计 0 帧 | 缓存 0/0 帧"));
         m_alarmCountLabel = new QLabel("报警: 0 次");
         
         statusLayout->addWidget(m_frameRateLabel);
+        statusLayout->addWidget(m_uiRefreshLabel);
         statusLayout->addWidget(m_dataCountLabel);
         statusLayout->addWidget(m_alarmCountLabel);
         statusLayout->addStretch();
@@ -1408,6 +1405,13 @@ void MainWindow::initConnections()
     connect(m_tileWindowsButton, &QPushButton::clicked, this, &MainWindow::onTileWindowsClicked);
     connect(m_cascadeWindowsButton, &QPushButton::clicked, this, &MainWindow::onCascadeWindowsClicked);
     connect(m_windowList, &QListWidget::doubleClicked, this, &MainWindow::onWindowListDoubleClicked);
+
+    if (m_plotWindowManager) {
+        connect(m_plotWindowManager,
+                &PlotWindowManager::telemetryUpdated,
+                this,
+                &MainWindow::onPlotManagerTelemetryUpdated);
+    }
 
     connect(m_startGrpcTestServerButton, &QPushButton::clicked, this, &MainWindow::onStartGrpcTestServerClicked);
     connect(m_stopGrpcTestServerButton, &QPushButton::clicked, this, &MainWindow::onStopGrpcTestServerClicked);
@@ -3344,21 +3348,38 @@ void MainWindow::onUpdateTimer()
 {
     // 更新帧率显示
     qint64 currentTime = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastUpdateTime > 0) {
+    DataCacheManager* cache = DataCacheManager::instance();
+    if (cache) {
+        const qint64 totalFrameCount = cache->getTotalFrameCount();
+        if (m_lastUpdateTime <= 0) {
+            m_frameCount = static_cast<int>(totalFrameCount);
+            m_frameRateLabel->setText(QStringLiteral("帧率: 0.0 fps"));
+            const int cacheSize = cache->getCacheSize();
+            const int maxCacheSize = cache->getMaxCacheSize();
+            m_dataCountLabel->setText(QStringLiteral("数据: 累计 %1 帧 | 缓存 %2/%3 帧")
+                                      .arg(totalFrameCount)
+                                      .arg(cacheSize)
+                                      .arg(maxCacheSize));
+            m_lastUpdateTime = currentTime;
+            updateWindowList();
+            return;
+        }
+
         double elapsed = (currentTime - m_lastUpdateTime) / 1000.0;
         if (elapsed > 0) {
-            // 从DataCacheManager获取帧数统计
-            DataCacheManager* cache = DataCacheManager::instance();
-            if (cache) {
-                int currentFrameCount = cache->getCacheSize();
-                int framesInPeriod = currentFrameCount - m_frameCount;
-                
-                double frameRate = framesInPeriod / elapsed;
-                m_frameRateLabel->setText(QString("帧率: %1 fps").arg(frameRate, 0, 'f', 1));
-                
-                m_frameCount = currentFrameCount;
-                m_dataCountLabel->setText(QString("数据: %1 帧").arg(m_frameCount));
-            }
+            const qint64 currentFrameCount = totalFrameCount;
+            const qint64 framesInPeriod = currentFrameCount - m_frameCount;
+
+            const double frameRate = framesInPeriod / elapsed;
+            m_frameRateLabel->setText(QString("帧率: %1 fps").arg(frameRate, 0, 'f', 1));
+
+            m_frameCount = static_cast<int>(currentFrameCount);
+            const int cacheSize = cache->getCacheSize();
+            const int maxCacheSize = cache->getMaxCacheSize();
+            m_dataCountLabel->setText(QStringLiteral("数据: 累计 %1 帧 | 缓存 %2/%3 帧")
+                                      .arg(currentFrameCount)
+                                      .arg(cacheSize)
+                                      .arg(maxCacheSize));
         }
     }
     
@@ -3366,6 +3387,36 @@ void MainWindow::onUpdateTimer()
     
     // 更新窗口列表
     updateWindowList();
+}
+
+void MainWindow::onPlotManagerTelemetryUpdated(int configuredIntervalMs,
+                                               int actualIntervalMs,
+                                               int fetchCount,
+                                               qint64 receivedFramesSinceLast,
+                                               int dispatchedFrames,
+                                               qint64 unconsumedFramesTotal)
+{
+    Q_UNUSED(configuredIntervalMs)
+    if (!m_uiRefreshLabel) {
+        return;
+    }
+
+    if (actualIntervalMs > 0) {
+        const double hz = 1000.0 / static_cast<double>(actualIntervalMs);
+        m_uiRefreshLabel->setText(QStringLiteral("绘图周期: %1 ms (%2 Hz) | 拉取 %3 收到 %4 分发 %5 未消费累计 %6")
+                                  .arg(actualIntervalMs)
+                                  .arg(hz, 0, 'f', 1)
+                                  .arg(fetchCount)
+                                  .arg(receivedFramesSinceLast)
+                                  .arg(dispatchedFrames)
+                                  .arg(unconsumedFramesTotal));
+    } else {
+        m_uiRefreshLabel->setText(QStringLiteral("绘图周期: -- ms (-- Hz) | 拉取 %1 收到 %2 分发 %3 未消费累计 %4")
+                                  .arg(fetchCount)
+                                  .arg(receivedFramesSinceLast)
+                                  .arg(dispatchedFrames)
+                                  .arg(unconsumedFramesTotal));
+    }
 }
 
 void MainWindow::switchStyle()

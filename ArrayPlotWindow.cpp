@@ -21,6 +21,56 @@
 #include <cmath>
 #include <algorithm>
 
+namespace {
+
+constexpr int kArrayRenderPointCap = 3000;
+
+QVector<int> buildSampleIndices(int totalPoints, int targetPoints)
+{
+    QVector<int> indices;
+    if (totalPoints <= 0 || targetPoints <= 0) {
+        return indices;
+    }
+
+    if (totalPoints <= targetPoints) {
+        indices.reserve(totalPoints);
+        for (int i = 0; i < totalPoints; ++i) {
+            indices.append(i);
+        }
+        return indices;
+    }
+
+    indices.reserve(targetPoints);
+    const double step = static_cast<double>(totalPoints - 1) / static_cast<double>(targetPoints - 1);
+    int lastIndex = -1;
+    for (int i = 0; i < targetPoints; ++i) {
+        int idx = static_cast<int>(std::lround(i * step));
+        idx = qBound(0, idx, totalPoints - 1);
+        if (idx != lastIndex) {
+            indices.append(idx);
+            lastIndex = idx;
+        }
+    }
+    if (indices.isEmpty() || indices.last() != totalPoints - 1) {
+        indices.append(totalPoints - 1);
+    }
+    return indices;
+}
+
+QVector<double> sampleByIndices(const QVector<double>& source, const QVector<int>& indices)
+{
+    QVector<double> sampled;
+    sampled.reserve(indices.size());
+    for (int idx : indices) {
+        if (idx >= 0 && idx < source.size()) {
+            sampled.append(source.at(idx));
+        }
+    }
+    return sampled;
+}
+
+} // namespace
+
 ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     : PlotWindowBase(parent)
 {
@@ -728,8 +778,23 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
         return;
     }
 
+    const QVector<double>* timeForRender = &snapshot->timeMs;
+    QVector<int> sampledIndices;
+    QVector<double> sampledTime;
+    if (snapshot->timeMs.size() > kArrayRenderPointCap) {
+        sampledIndices = buildSampleIndices(snapshot->timeMs.size(), kArrayRenderPointCap);
+        sampledTime = sampleByIndices(snapshot->timeMs, sampledIndices);
+        if (!sampledTime.isEmpty()) {
+            timeForRender = &sampledTime;
+        }
+    }
+
     for (int i = 0; i < ch && i < m_plot->graphCount() && i < source->size(); ++i) {
-        m_plot->graph(i)->setData(snapshot->timeMs, source->at(i), true);
+        if (!sampledIndices.isEmpty()) {
+            m_plot->graph(i)->setData(*timeForRender, sampleByIndices(source->at(i), sampledIndices), true);
+        } else {
+            m_plot->graph(i)->setData(*timeForRender, source->at(i), true);
+        }
 
         QString yLabel;
         switch (m_rowLabelMode) {
@@ -757,7 +822,7 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
         }
     }
 
-    m_timeAxis = snapshot->timeMs;
+    m_timeAxis = *timeForRender;
     m_latestTime = m_timeAxis.last();
     applyChannelVisibility();
     updateUnifiedYAxisRange();

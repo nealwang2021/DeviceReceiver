@@ -11,6 +11,7 @@
 #include <QMdiArea>
 #include <QMdiSubWindow>
 #include <QDebug>
+#include <QDateTime>
 
 PlotWindowManager* PlotWindowManager::m_instance = nullptr;
 
@@ -85,6 +86,9 @@ void PlotWindowManager::cleanup()
     m_lastDispatchedSequence = 0;
     m_lastDispatchedTimestamp = 0;
     m_lastDispatchedFrameId = 0;
+    m_lastManagerTickMs = 0;
+    m_lastPolledTotalFrames = -1;
+    m_unconsumedFramesTotal = 0;
     PlotDataHub::instance()->reset();
     m_isInitialized = false;
 }
@@ -249,6 +253,9 @@ void PlotWindowManager::setUpdateInterval(int intervalMs)
 void PlotWindowManager::startUpdates()
 {
     if (m_updateTimer && !m_updateTimer->isActive()) {
+        m_lastManagerTickMs = 0;
+        m_lastPolledTotalFrames = -1;
+        m_unconsumedFramesTotal = 0;
         m_updateTimer->start();
         qInfo() << "PlotWindowManager 开始数据更新";
     }
@@ -273,6 +280,12 @@ QVector<FrameData> PlotWindowManager::getRecentFrames(int count)
 
 void PlotWindowManager::onUpdateTimer()
 {
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const int actualIntervalMs = (m_lastManagerTickMs > 0)
+        ? static_cast<int>(qBound<qint64>(0, nowMs - m_lastManagerTickMs, 60000))
+        : 0;
+    m_lastManagerTickMs = nowMs;
+
     int fetchCount = 5;
     if (m_windows.size() > 8) {
         fetchCount = 2;
@@ -280,8 +293,27 @@ void PlotWindowManager::onUpdateTimer()
         fetchCount = 3;
     }
 
+    qint64 receivedFramesSinceLast = 0;
+    if (DataCacheManager* cacheManager = DataCacheManager::instance()) {
+        const qint64 totalFrames = cacheManager->getTotalFrameCount();
+        if (m_lastPolledTotalFrames >= 0) {
+            receivedFramesSinceLast = qMax<qint64>(0, totalFrames - m_lastPolledTotalFrames);
+        }
+        m_lastPolledTotalFrames = totalFrames;
+    }
+
+    const qint64 unconsumedNow = qMax<qint64>(0, receivedFramesSinceLast - fetchCount);
+    m_unconsumedFramesTotal += unconsumedNow;
+
     QVector<FrameData> frames = getRecentFrames(fetchCount);
+    int dispatchedFrames = 0;
     if (frames.isEmpty()) {
+        emit telemetryUpdated(m_updateTimer ? m_updateTimer->interval() : m_baseUpdateIntervalMs,
+                              actualIntervalMs,
+                              fetchCount,
+                              receivedFramesSinceLast,
+                              dispatchedFrames,
+                              m_unconsumedFramesTotal);
         return;
     }
 
@@ -307,6 +339,12 @@ void PlotWindowManager::onUpdateTimer()
     }
 
     if (incrementalFrames.isEmpty()) {
+        emit telemetryUpdated(m_updateTimer ? m_updateTimer->interval() : m_baseUpdateIntervalMs,
+                              actualIntervalMs,
+                              fetchCount,
+                              receivedFramesSinceLast,
+                              dispatchedFrames,
+                              m_unconsumedFramesTotal);
         return;
     }
 
@@ -318,6 +356,7 @@ void PlotWindowManager::onUpdateTimer()
 
     emit dataUpdated(incrementalFrames);
     emit plotSnapshotUpdated(PlotDataHub::instance()->appendFrames(incrementalFrames));
+    dispatchedFrames = incrementalFrames.size();
 
     if (m_windows.size() > 5) {
         int recommendedInterval = m_baseUpdateIntervalMs + (m_windows.size() / 5) * 10;
@@ -327,4 +366,11 @@ void PlotWindowManager::onUpdateTimer()
     } else if (m_updateTimer->interval() != m_baseUpdateIntervalMs) {
         setUpdateInterval(m_baseUpdateIntervalMs);
     }
+
+    emit telemetryUpdated(m_updateTimer ? m_updateTimer->interval() : m_baseUpdateIntervalMs,
+                          actualIntervalMs,
+                          fetchCount,
+                          receivedFramesSinceLast,
+                          dispatchedFrames,
+                          m_unconsumedFramesTotal);
 }

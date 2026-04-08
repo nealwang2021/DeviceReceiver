@@ -23,6 +23,8 @@ public:
     QVector<FrameData> getFramesInTimeRange(qint64 startTimeMs, qint64 endTimeMs); // 时间范围帧
     QVector<FrameData> getAllFrames();               // 获取所有帧
     int getCacheSize();                              // 当前缓存帧数
+    qint64 getTotalFrameCount();                     // 累计接收帧数
+    int getMaxCacheSize();                           // 最大缓存帧数
 
     // ========== 缓存配置接口 ==========
     void setMaxCacheSize(int maxSize);               // 最大缓存帧数
@@ -49,6 +51,7 @@ private:
     qint64 m_expireTimeMs = 600000;                  // 默认10分钟过期
     int m_head = 0;                                  // 逻辑起点
     int m_size = 0;                                  // 当前有效帧数
+    qint64 m_totalFrameCount = 0;                    // 累计接收帧数
 };
 
 #endif // DATACACHEMANAGER_H

@@ -132,6 +132,12 @@ private slots:
     
     // 定时器槽函数
     void onUpdateTimer();
+    void onPlotManagerTelemetryUpdated(int configuredIntervalMs,
+                                       int actualIntervalMs,
+                                       int fetchCount,
+                                       qint64 receivedFramesSinceLast,
+                                       int dispatchedFrames,
+                                       qint64 unconsumedFramesTotal);
     void onStartGrpcTestServerClicked();
     void onStopGrpcTestServerClicked();
     void onRunGrpcSelfTestClicked();
@@ -366,6 +372,7 @@ private:
     // 数据监控组件
     QTextEdit* m_dataMonitor;
     QLabel* m_frameRateLabel;
+    QLabel* m_uiRefreshLabel;
     QLabel* m_dataCountLabel;
     QLabel* m_alarmCountLabel;
     

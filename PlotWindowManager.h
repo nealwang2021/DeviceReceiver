@@ -53,6 +53,12 @@ signals:
     void windowAdded(PlotWindowBase* window);
     void windowRemoved(PlotWindowBase* window);
     void criticalFrameReceived(const FrameData& frame);
+    void telemetryUpdated(int configuredIntervalMs,
+                          int actualIntervalMs,
+                          int fetchCount,
+                          qint64 receivedFramesSinceLast,
+                          int dispatchedFrames,
+                          qint64 unconsumedFramesTotal);
 
 private:
     explicit PlotWindowManager(QObject *parent = nullptr);
@@ -75,6 +81,9 @@ private:
     qint64 m_lastDispatchedTimestamp{0};
     uint16_t m_lastDispatchedFrameId{0};
     int m_baseUpdateIntervalMs{50};
+    qint64 m_lastManagerTickMs{0};
+    qint64 m_lastPolledTotalFrames{-1};
+    qint64 m_unconsumedFramesTotal{0};
 };
 
 #endif // PLOTWINDOWMANAGER_H
