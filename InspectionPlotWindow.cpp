@@ -32,11 +32,6 @@ constexpr int kMaxChannelsPerGroup   = 256;
 constexpr int kMinChannelsPerGroup   = 1;
 constexpr double kTimeWindowMs       = 10000.0;
 
-const QColor kPlotBg("#FFFFFF");
-const QColor kGridMajor("#E0E0E0");
-const QColor kGridMinor("#F0F0F0");
-const QColor kAxisLine("#999999");
-const QColor kAxisLabel("#555555");
 } // namespace
 
 // ============================================================================
@@ -326,18 +321,29 @@ QWidget* InspectionPlotWindow::buildImpedanceColumn()
 
 void InspectionPlotWindow::stylePlot(QCustomPlot* plot)
 {
-    plot->setBackground(kPlotBg);
+    if (!plot) {
+        return;
+    }
+
+    const bool dark = isDarkThemeActive();
+    const QColor plotBg = dark ? QColor(33, 36, 40) : QColor("#FFFFFF");
+    const QColor gridMajor = dark ? QColor(74, 82, 94) : QColor("#E0E0E0");
+    const QColor gridMinor = dark ? QColor(58, 64, 74) : QColor("#F0F0F0");
+    const QColor axisLine = dark ? QColor(152, 162, 176) : QColor("#999999");
+    const QColor axisLabel = dark ? QColor(222, 228, 236) : QColor("#555555");
+
+    plot->setBackground(plotBg);
     plot->setNotAntialiasedElements(QCP::aeAll);
     plot->setNoAntialiasingOnDrag(true);
 
     for (auto* axis : {plot->xAxis, plot->yAxis}) {
-        axis->setBasePen(QPen(kAxisLine, 1));
-        axis->setTickPen(QPen(kAxisLine, 1));
-        axis->setSubTickPen(QPen(kAxisLine, 1));
-        axis->setLabelColor(kAxisLabel);
-        axis->setTickLabelColor(kAxisLabel);
-        axis->grid()->setPen(QPen(kGridMajor, 1, Qt::DotLine));
-        axis->grid()->setSubGridPen(QPen(kGridMinor, 1, Qt::DotLine));
+        axis->setBasePen(QPen(axisLine, 1));
+        axis->setTickPen(QPen(axisLine, 1));
+        axis->setSubTickPen(QPen(axisLine, 1));
+        axis->setLabelColor(axisLabel);
+        axis->setTickLabelColor(axisLabel);
+        axis->grid()->setPen(QPen(gridMajor, 1, Qt::DotLine));
+        axis->grid()->setSubGridPen(QPen(gridMinor, 1, Qt::DotLine));
         axis->grid()->setSubGridVisible(true);
     }
 
@@ -345,8 +351,24 @@ void InspectionPlotWindow::stylePlot(QCustomPlot* plot)
         axis->setVisible(true);
         axis->setTicks(false);
         axis->setTickLabels(false);
-        axis->setBasePen(QPen(kAxisLine, 1));
+        axis->setBasePen(QPen(axisLine, 1));
     }
+
+    if (plot->legend) {
+        plot->legend->setBrush(QBrush(dark ? QColor(42, 46, 52, 220) : QColor(255, 255, 255, 220)));
+        plot->legend->setBorderPen(QPen(axisLine, 1));
+        plot->legend->setTextColor(axisLabel);
+    }
+}
+
+void InspectionPlotWindow::onThemeChanged()
+{
+    stylePlot(m_tbPlot1);
+    stylePlot(m_tbPlot2);
+    stylePlot(m_impedancePlot);
+    if (m_tbPlot1) m_tbPlot1->replot(QCustomPlot::rpQueuedReplot);
+    if (m_tbPlot2) m_tbPlot2->replot(QCustomPlot::rpQueuedReplot);
+    if (m_impedancePlot) m_impedancePlot->replot(QCustomPlot::rpQueuedReplot);
 }
 
 // ---- Signal/Slot connections (centralized) ----

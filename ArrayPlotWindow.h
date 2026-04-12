@@ -62,6 +62,7 @@ private:
     void renderSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot, bool forceRefresh);
     const QVector<QVector<double>>* resolveSnapshotSource(const QSharedPointer<const PlotSnapshot>& snapshot) const;
     int perRowHeightForDensity() const;
+    void onThemeChanged() override;
 
 private:
     QCustomPlot* m_plot{nullptr};

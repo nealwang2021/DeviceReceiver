@@ -116,12 +116,13 @@ void PlotWindow::initPlot()
     m_plot->setInteractions(QCP::iSelectLegend | QCP::iSelectPlottables | QCP::iRangeDrag | QCP::iRangeZoom);
 
     // 样式优化
-    m_plot->setBackground(Qt::white);
     // 关闭抗锯齿，显著提升实时曲线渲染性能
     m_plot->setNotAntialiasedElements(QCP::aeAll);
     m_plot->setNoAntialiasingOnDrag(true);
     m_plot->xAxis->setTickLabelFont(QFont("Microsoft YaHei", 8));
     m_plot->yAxis->setTickLabelFont(QFont("Microsoft YaHei", 8));
+
+    onThemeChanged();
 }
 
 void PlotWindow::onDataUpdated(const QVector<FrameData>& frames)
@@ -318,7 +319,13 @@ void PlotWindow::setupComplexLayout(int channelCount)
             }
         }
         m_complexTopLegend = topLegend;
+        const bool dark = isDarkThemeActive();
+        topLegend->setBrush(QBrush(dark ? QColor(42, 46, 52, 220) : QColor(255, 255, 255, 220)));
+        topLegend->setBorderPen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+        topLegend->setTextColor(dark ? QColor(222, 228, 236) : QColor(50, 58, 70));
         qDebug() << "[setupComplexLayout] 图例配置完成";
+
+        onThemeChanged();
 
         qDebug() << "[setupComplexLayout] 完成";
     } catch (const std::exception& e) {
@@ -374,10 +381,11 @@ void PlotWindow::onLegendClick(QCPLegend* legend, QCPAbstractLegendItem* item, Q
     qDebug() << "[PlotWindow::onLegendClick] Toggled visibility of" << plottable->name() << "to" << visible;
     
     // 更新图例项文本颜色以反映可见性
+    const bool dark = isDarkThemeActive();
     if (visible) {
-        plotItem->setTextColor(Qt::black);
+        plotItem->setTextColor(dark ? QColor(222, 228, 236) : QColor(50, 58, 70));
     } else {
-        plotItem->setTextColor(Qt::gray);
+        plotItem->setTextColor(dark ? QColor(130, 136, 146) : QColor(130, 130, 130));
     }
     
     // 触发重绘
@@ -400,7 +408,7 @@ void PlotWindow::onCriticalFrame(const FrameData& frame)
     // 报警视觉提示：背景变红，2秒恢复
     m_plot->setBackground(QColor(255, 204, 204));
     QTimer::singleShot(2000, [this]() {
-        m_plot->setBackground(Qt::white);
+        onThemeChanged();
     });
 
     // 打印报警日志
@@ -414,4 +422,18 @@ void PlotWindow::onCriticalFrame(const FrameData& frame)
     }
     
     qCritical() << alarmMsg;
+}
+
+void PlotWindow::onThemeChanged()
+{
+    applyThemeToPlot(m_plot, isDarkThemeActive());
+    if (m_complexTopLegend) {
+        const bool dark = isDarkThemeActive();
+        m_complexTopLegend->setBrush(QBrush(dark ? QColor(42, 46, 52, 220) : QColor(255, 255, 255, 220)));
+        m_complexTopLegend->setBorderPen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+        m_complexTopLegend->setTextColor(dark ? QColor(222, 228, 236) : QColor(50, 58, 70));
+    }
+    if (m_plot) {
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+    }
 }

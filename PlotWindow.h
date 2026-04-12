@@ -33,6 +33,7 @@ private:
     void initPlot();                // 初始化绘图配置
     void updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot);
     int effectiveMaxPlotPoints() const;
+    void onThemeChanged() override;
 
     // 辅助布局
     void setupComplexLayout(int channelCount);

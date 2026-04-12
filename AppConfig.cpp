@@ -454,6 +454,7 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_showStagePanel = settings.value("UI/ShowStagePanel", m_showStagePanel).toBool();
     m_mainWindowState = settings.value("UI/MainWindowState", m_mainWindowState).toByteArray();
     m_mainWindowGeometry = settings.value("UI/MainWindowGeometry", m_mainWindowGeometry).toByteArray();
+    m_savedPlotWindowTypes = settings.value("UI/SavedPlotWindowTypes", m_savedPlotWindowTypes).toStringList();
     if (settingsPath != filename) {
         qInfo() << "[AppConfig] UI/MainWindowState 已加载字节数:" << m_mainWindowState.size()
                 << "UI/MainWindowGeometry 字节数:" << m_mainWindowGeometry.size();
@@ -519,6 +520,7 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("UI/ShowStagePanel", m_showStagePanel);
     settings.setValue("UI/MainWindowState", m_mainWindowState);
     settings.setValue("UI/MainWindowGeometry", m_mainWindowGeometry);
+    settings.setValue("UI/SavedPlotWindowTypes", m_savedPlotWindowTypes);
 
     // 保存导出配置
     settings.setValue("Export/Directory", m_defaultExportDirectory);
@@ -566,6 +568,7 @@ void AppConfig::loadDefaults()
     m_showStagePanel = true;
     m_mainWindowState.clear();
     m_mainWindowGeometry.clear();
+    m_savedPlotWindowTypes.clear();
     m_logLevel = "INFO";
     m_currentStyle = LightStyle;  // 确保默认使用浅色主题
     m_defaultExportDirectory = "exports";

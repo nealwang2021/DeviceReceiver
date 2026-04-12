@@ -61,6 +61,7 @@ void PulsedDecayPlotWindow::rebuildPlotUi()
     m_decayPlot->yAxis->setLabel("幅值");
     m_decayPlot->legend->setVisible(true);
     m_decayPlot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignRight);
+    onThemeChanged();
 
     QWidget* side = new QWidget(root);
     QVBoxLayout* sideLay = new QVBoxLayout(side);
@@ -139,6 +140,14 @@ void PulsedDecayPlotWindow::rebuildPlotUi()
     m_mockTimer = new QTimer(this);
     m_mockTimer->setInterval(40);
     connect(m_mockTimer, &QTimer::timeout, this, &PulsedDecayPlotWindow::onMockTick);
+}
+
+void PulsedDecayPlotWindow::onThemeChanged()
+{
+    applyThemeToPlot(m_decayPlot, isDarkThemeActive());
+    if (m_decayPlot) {
+        m_decayPlot->replot(QCustomPlot::rpQueuedReplot);
+    }
 }
 
 void PulsedDecayPlotWindow::onAutoGapToggled(bool on)

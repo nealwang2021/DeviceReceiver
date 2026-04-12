@@ -329,7 +329,9 @@ class AcquisitionDeviceServicer(device_pb2_grpc.AcquisitionDeviceServicer):
 
 
 def parse_args():
-    default_csv = os.path.join(SCRIPT_DIR, "proto", "display_aligned_20260327_171739.csv")
+    preferred_csv = r"D:\WS\qtpro\DeviceReceiver\build_cmake\build\release\data\back0410采集\device_realtime_20260410_143418_aligned.csv"
+    fallback_csv = os.path.join(SCRIPT_DIR, "proto", "display_aligned_20260327_171739.csv")
+    default_csv = preferred_csv if os.path.isfile(preferred_csv) else fallback_csv
     parser = argparse.ArgumentParser(description="Mock gRPC server for device.proto AcquisitionDevice")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=50051)

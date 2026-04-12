@@ -65,6 +65,7 @@ private:
     QWidget* buildImpedanceColumn();
     void setupConnections();
     void stylePlot(QCustomPlot* plot);
+    void onThemeChanged() override;
 
     void applyTimeBaseModeLayout();
 

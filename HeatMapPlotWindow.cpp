@@ -234,6 +234,8 @@ void HeatMapPlotWindow::initHeatMap()
 {
     if (!m_plot) return;
 
+    const bool dark = isDarkThemeActive();
+
     m_plot->clearPlottables();
     m_plot->clearItems();
 
@@ -268,6 +270,11 @@ void HeatMapPlotWindow::initHeatMap()
     // 配置颜色标尺
     m_colorScale->setLabel("信号强度");
     m_colorScale->axis()->setLabel("强度");
+    m_colorScale->axis()->setLabelColor(dark ? QColor(222, 228, 236) : QColor(50, 58, 70));
+    m_colorScale->axis()->setTickLabelColor(dark ? QColor(200, 208, 220) : QColor(70, 78, 90));
+    m_colorScale->axis()->setBasePen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+    m_colorScale->axis()->setTickPen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+    m_colorScale->axis()->setSubTickPen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
     
     const double fillVal = m_useMockData ? 50.0 : m_displayMin;
     for (int x = 0; x < m_gridWidth; ++x) {
@@ -276,6 +283,7 @@ void HeatMapPlotWindow::initHeatMap()
         }
     }
     
+    onThemeChanged();
     m_plot->replot();
 }
 
@@ -287,6 +295,22 @@ void HeatMapPlotWindow::setColorGradient()
     QCPColorGradient gradient;
     gradient.loadPreset(QCPColorGradient::gpJet);
     m_colorMap->setGradient(gradient);
+}
+
+void HeatMapPlotWindow::onThemeChanged()
+{
+    applyThemeToPlot(m_plot, isDarkThemeActive());
+    if (m_colorScale) {
+        const bool dark = isDarkThemeActive();
+        m_colorScale->axis()->setLabelColor(dark ? QColor(222, 228, 236) : QColor(50, 58, 70));
+        m_colorScale->axis()->setTickLabelColor(dark ? QColor(200, 208, 220) : QColor(70, 78, 90));
+        m_colorScale->axis()->setBasePen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+        m_colorScale->axis()->setTickPen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+        m_colorScale->axis()->setSubTickPen(QPen(dark ? QColor(152, 162, 176) : QColor(138, 148, 160), 1));
+    }
+    if (m_plot) {
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+    }
 }
 
 void HeatMapPlotWindow::updateHeatMapDisplay()

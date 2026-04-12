@@ -174,6 +174,8 @@ private:
      * @brief 更新窗口列表
      */
     void updateWindowList();
+    void restoreSavedPlotWindowsFromConfig();
+    QStringList collectCurrentPlotWindowTypes() const;
     
     /**
      * @brief 添加指令到历史记录

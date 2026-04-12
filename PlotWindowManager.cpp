@@ -136,6 +136,7 @@ PlotWindowBase* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
         return nullptr;
     }
 
+    window->setProperty("plotType", static_cast<int>(type));
     window->setWindowTitle(title);
     registerWindow(window);
     return window;

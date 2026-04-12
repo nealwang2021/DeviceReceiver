@@ -265,6 +265,16 @@ ArrayPlotWindow::~ArrayPlotWindow()
 void ArrayPlotWindow::initArrayPlot()
 {
     if (!m_plot) return;
+
+    const bool dark = isDarkThemeActive();
+    m_plot->setBackground(QBrush(dark ? QColor(24, 26, 30) : QColor(255, 255, 255)));
+    const QColor rowBgEven = dark ? QColor(36, 40, 46) : QColor(248, 251, 255);
+    const QColor rowBgOdd = dark ? QColor(31, 35, 41) : QColor(241, 246, 252);
+    const QColor gridBottom = dark ? QColor(74, 82, 94) : QColor(210, 220, 232);
+    const QColor gridLeft = dark ? QColor(64, 72, 84) : QColor(198, 208, 220);
+    const QColor tickColor = dark ? QColor(200, 208, 220) : QColor(70, 78, 90);
+    const QColor labelColor = dark ? QColor(222, 228, 236) : QColor(50, 58, 70);
+    const QColor axisColor = dark ? QColor(152, 162, 176) : QColor(138, 148, 160);
     
     // 清除已有的布局和图
     m_plot->clearPlottables();
@@ -295,9 +305,7 @@ void ArrayPlotWindow::initArrayPlot()
 
         axisRect->setMinimumMargins(QMargins(48, 3, 8, 3));
         axisRect->setAutoMargins(QCP::msLeft | QCP::msBottom);
-        axisRect->setBackground((i % 2 == 0)
-                        ? QColor(248, 251, 255)
-                        : QColor(241, 246, 252));
+        axisRect->setBackground((i % 2 == 0) ? rowBgEven : rowBgOdd);
         
         // 为每个轴矩形创建图
         QCPGraph* graph = m_plot->addGraph(axisRect->axis(QCPAxis::atBottom), axisRect->axis(QCPAxis::atLeft));
@@ -308,14 +316,18 @@ void ArrayPlotWindow::initArrayPlot()
         graph->setVisible(i < m_channelVisible.size() ? m_channelVisible.at(i) : true);
 
         axisRect->axis(QCPAxis::atBottom)->grid()->setVisible(true);
-        axisRect->axis(QCPAxis::atBottom)->grid()->setPen(QPen(QColor(210, 220, 232), 1, Qt::DotLine));
+        axisRect->axis(QCPAxis::atBottom)->grid()->setPen(QPen(gridBottom, 1, Qt::DotLine));
         axisRect->axis(QCPAxis::atLeft)->grid()->setVisible(true);
-        axisRect->axis(QCPAxis::atLeft)->grid()->setPen(QPen(QColor(198, 208, 220), 1, Qt::DotLine));
-        axisRect->axis(QCPAxis::atBottom)->setTickLabelColor(QColor(70, 78, 90));
-        axisRect->axis(QCPAxis::atLeft)->setTickLabelColor(QColor(70, 78, 90));
-        axisRect->axis(QCPAxis::atLeft)->setLabelColor(QColor(50, 58, 70));
-        axisRect->axis(QCPAxis::atLeft)->setBasePen(QPen(QColor(138, 148, 160)));
-        axisRect->axis(QCPAxis::atBottom)->setBasePen(QPen(QColor(138, 148, 160)));
+        axisRect->axis(QCPAxis::atLeft)->grid()->setPen(QPen(gridLeft, 1, Qt::DotLine));
+        axisRect->axis(QCPAxis::atBottom)->setTickLabelColor(tickColor);
+        axisRect->axis(QCPAxis::atLeft)->setTickLabelColor(tickColor);
+        axisRect->axis(QCPAxis::atLeft)->setLabelColor(labelColor);
+        axisRect->axis(QCPAxis::atLeft)->setBasePen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atBottom)->setBasePen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atLeft)->setTickPen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atBottom)->setTickPen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atLeft)->setSubTickPen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atBottom)->setSubTickPen(QPen(axisColor));
         axisRect->axis(QCPAxis::atLeft)->setNumberFormat("f");
         axisRect->axis(QCPAxis::atLeft)->setNumberPrecision(0);
         axisRect->axis(QCPAxis::atLeft)->setSubTicks(false);
@@ -359,6 +371,16 @@ void ArrayPlotWindow::initArrayPlot()
     applyChannelVisibility();
     
     m_plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void ArrayPlotWindow::onThemeChanged()
+{
+    initArrayPlot();
+    if (m_cachedSnapshot) {
+        renderSnapshot(m_cachedSnapshot, true);
+    } else if (m_plot) {
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+    }
 }
 
 void ArrayPlotWindow::generateMockData()

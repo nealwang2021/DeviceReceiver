@@ -130,6 +130,9 @@ public:
     
     QByteArray mainWindowGeometry() const { return m_mainWindowGeometry; }
     void setMainWindowGeometry(const QByteArray& geometry) { m_mainWindowGeometry = geometry; }
+
+    QStringList savedPlotWindowTypes() const { return m_savedPlotWindowTypes; }
+    void setSavedPlotWindowTypes(const QStringList& types) { m_savedPlotWindowTypes = types; }
     
     // ========== 指令历史配置 ==========
     int maxCommandHistory() const { return m_maxCommandHistory; }
@@ -224,6 +227,7 @@ private:
     bool m_showStagePanel = true;
     QByteArray m_mainWindowState;
     QByteArray m_mainWindowGeometry;
+    QStringList m_savedPlotWindowTypes;
     
     // 指令历史配置
     int m_maxCommandHistory = 20;

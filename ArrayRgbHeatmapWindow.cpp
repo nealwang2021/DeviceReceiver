@@ -84,7 +84,6 @@ void ArrayRgbHeatmapWindow::initUi()
 
         plot = new QCustomPlot(group);
         plot->setMinimumHeight(300);
-        plot->setBackground(QBrush(Qt::white));
         plot->axisRect()->setupFullAxesBox(true);
         plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
         plot->xAxis->setLabel(QStringLiteral("帧号"));
@@ -125,6 +124,7 @@ void ArrayRgbHeatmapWindow::initUi()
             this, &ArrayRgbHeatmapWindow::onExportClicked);
 
     m_channelCount = displayChannelCount();
+    onThemeChanged();
 }
 
 int ArrayRgbHeatmapWindow::displayChannelCount() const
@@ -139,6 +139,59 @@ int ArrayRgbHeatmapWindow::maximumBufferedFrames() const
         maxFrames = qBound(50, config->maxPlotPoints(), 2000);
     }
     return maxFrames;
+}
+
+void ArrayRgbHeatmapWindow::loadSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot)
+{
+    if (!snapshot || snapshot->timeMs.isEmpty() || snapshot->channelCount <= 0) {
+        return;
+    }
+
+    clearFrames();
+    m_channelCount = qMin(displayChannelCount(), snapshot->channelCount);
+
+    const int frameCount = snapshot->timeMs.size();
+    for (int fi = 0; fi < frameCount; ++fi) {
+        FrameRecord record;
+        record.sequence = fi + 1;
+        record.timestampMs = static_cast<qint64>(snapshot->timeMs.at(fi));
+        record.amp = makeNaNVector(m_channelCount);
+        record.phase = makeNaNVector(m_channelCount);
+        record.x = makeNaNVector(m_channelCount);
+        record.y = makeNaNVector(m_channelCount);
+
+        if (snapshot->mode == FrameData::MultiChannelReal) {
+            for (int ch = 0; ch < m_channelCount && ch < snapshot->realAmp.size(); ++ch) {
+                if (fi < snapshot->realAmp[ch].size()) {
+                    record.amp[ch] = snapshot->realAmp[ch].at(fi);
+                }
+            }
+        } else if (snapshot->mode == FrameData::MultiChannelComplex) {
+            for (int ch = 0; ch < m_channelCount && ch < snapshot->complexMag.size(); ++ch) {
+                if (fi < snapshot->complexMag[ch].size()) {
+                    record.amp[ch] = snapshot->complexMag[ch].at(fi);
+                }
+                if (ch < snapshot->complexPhase.size() && fi < snapshot->complexPhase[ch].size()) {
+                    record.phase[ch] = snapshot->complexPhase[ch].at(fi) * 180.0 / M_PI;
+                }
+                if (ch < snapshot->complexReal.size() && fi < snapshot->complexReal[ch].size()) {
+                    record.x[ch] = snapshot->complexReal[ch].at(fi);
+                }
+                if (ch < snapshot->complexImag.size() && fi < snapshot->complexImag[ch].size()) {
+                    record.y[ch] = snapshot->complexImag[ch].at(fi);
+                }
+            }
+        }
+
+        m_frames.append(record);
+        m_lastSequence = record.sequence;
+        m_lastTimestamp = record.timestampMs;
+    }
+
+    const int cap = maximumBufferedFrames();
+    while (m_frames.size() > cap) {
+        m_frames.removeFirst();
+    }
 }
 
 QString ArrayRgbHeatmapWindow::currentXAxisLabel() const
@@ -173,10 +226,10 @@ bool ArrayRgbHeatmapWindow::isNewFrame(const FrameData& frame) const
     return true;
 }
 
-void ArrayRgbHeatmapWindow::appendFrame(const FrameData& frame)
+bool ArrayRgbHeatmapWindow::appendFrame(const FrameData& frame)
 {
     if (!isNewFrame(frame)) {
-        return;
+        return false;
     }
 
     FrameRecord record;
@@ -227,6 +280,8 @@ void ArrayRgbHeatmapWindow::appendFrame(const FrameData& frame)
     while (m_frames.size() > cap) {
         m_frames.removeFirst();
     }
+
+    return true;
 }
 
 void ArrayRgbHeatmapWindow::clearFrames()
@@ -363,9 +418,7 @@ void ArrayRgbHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames)
         if (m_frames.isEmpty()) {
             m_channelCount = displayChannelCount();
         }
-        const int previousSize = m_frames.size();
-        appendFrame(frame);
-        changed = changed || (m_frames.size() != previousSize);
+        changed = appendFrame(frame) || changed;
     }
 
     if (changed) {
@@ -375,16 +428,20 @@ void ArrayRgbHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames)
 
 void ArrayRgbHeatmapWindow::onCriticalFrame(const FrameData& frame)
 {
-    const int previousSize = m_frames.size();
-    appendFrame(frame);
-    if (m_frames.size() != previousSize) {
+    if (appendFrame(frame)) {
         rebuildPlots();
     }
 }
 
 void ArrayRgbHeatmapWindow::onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot)
 {
-    Q_UNUSED(snapshot)
+    if (!m_frames.isEmpty()) {
+        return;
+    }
+    loadSnapshot(snapshot);
+    if (!m_frames.isEmpty()) {
+        rebuildPlots();
+    }
 }
 
 void ArrayRgbHeatmapWindow::onXAxisModeChanged(int index)

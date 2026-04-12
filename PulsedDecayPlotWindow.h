@@ -79,6 +79,7 @@ private:
     void bumpRefGraphToFront();
     void buildReferenceFromSelection();
     static double interpY(const QVector<double>& t, const QVector<double>& y, double tt);
+    void onThemeChanged() override;
 
     QCustomPlot* m_decayPlot = nullptr;
     QListWidget* m_curveList = nullptr;

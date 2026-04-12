@@ -166,6 +166,9 @@ void MainWindow::initialize()
         qDebug() << "[MainWindow::initialize] 加载指令历史...";
         loadCommandHistory();
         qDebug() << "[MainWindow::initialize] 指令历史加载完成";
+
+        // 恢复上次打开的 MDI 绘图窗口（QMainWindow::restoreState 不会自动重建 MDI 子窗口）
+        restoreSavedPlotWindowsFromConfig();
         
         // 更新窗口列表
         qDebug() << "[MainWindow::initialize] 更新窗口列表...";
@@ -1697,6 +1700,102 @@ void MainWindow::saveConfigFromUI()
     }
     config->setMainWindowState(saveState());
     config->setMainWindowGeometry(saveGeometry());
+    config->setSavedPlotWindowTypes(collectCurrentPlotWindowTypes());
+}
+
+QStringList MainWindow::collectCurrentPlotWindowTypes() const
+{
+    QStringList types;
+    if (!m_mdiArea) {
+        return types;
+    }
+
+    const QList<QMdiSubWindow*> subWindows = m_mdiArea->subWindowList();
+    for (QMdiSubWindow* sub : subWindows) {
+        if (!sub) {
+            continue;
+        }
+        QWidget* widget = sub->widget();
+        if (!widget) {
+            continue;
+        }
+
+        QVariant v = widget->property("plotType");
+        if (v.isValid()) {
+            types.append(QString::number(v.toInt()));
+            continue;
+        }
+
+        const QString title = widget->windowTitle();
+        if (title.contains(QStringLiteral("阵列热力图"))) {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::ArrayHeatmapPlot)));
+        } else if (title.contains(QStringLiteral("检测分析"))) {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::InspectionPlot)));
+        } else if (title.contains(QStringLiteral("脉冲"))) {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::PulsedDecayPlot)));
+        } else if (title.contains(QStringLiteral("阵列"))) {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::ArrayPlot)));
+        } else if (title.contains(QStringLiteral("热力图"))) {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::HeatmapPlot)));
+        } else {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::CombinedPlot)));
+        }
+    }
+
+    return types;
+}
+
+void MainWindow::restoreSavedPlotWindowsFromConfig()
+{
+    if (!m_plotWindowManager || !m_mdiArea) {
+        return;
+    }
+
+    AppConfig* config = AppConfig::instance();
+    if (!config) {
+        return;
+    }
+
+    if (!m_mdiArea->subWindowList().isEmpty()) {
+        return;
+    }
+
+    const QStringList savedTypes = config->savedPlotWindowTypes();
+    if (savedTypes.isEmpty()) {
+        return;
+    }
+
+    auto normalizeType = [](int v) -> PlotWindowManager::PlotType {
+        switch (v) {
+        case 5: return PlotWindowManager::HeatmapPlot;
+        case 6: return PlotWindowManager::ArrayPlot;
+        case 7: return PlotWindowManager::PulsedDecayPlot;
+        case 8: return PlotWindowManager::InspectionPlot;
+        case 9: return PlotWindowManager::ArrayHeatmapPlot;
+        default: break;
+        }
+        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::ArrayHeatmapPlot)) {
+            return static_cast<PlotWindowManager::PlotType>(v);
+        }
+        return PlotWindowManager::CombinedPlot;
+    };
+
+    int created = 0;
+    for (const QString& item : savedTypes) {
+        bool ok = false;
+        const int rawType = item.toInt(&ok);
+        if (!ok) {
+            continue;
+        }
+        PlotWindowBase* w = m_plotWindowManager->createWindowInMdiArea(m_mdiArea, normalizeType(rawType));
+        if (w) {
+            ++created;
+        }
+    }
+
+    if (created > 0) {
+        qInfo() << "MainWindow: 已恢复绘图窗口数量" << created;
+    }
 }
 
 void MainWindow::updateSerialPortList()

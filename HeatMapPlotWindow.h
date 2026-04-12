@@ -59,6 +59,7 @@ private:
     void refreshLiveHeatMapPlot();
     void scheduleThrottledReplot();
     void clearHeatMapData();
+    void onThemeChanged() override;
 
 private:
     QCustomPlot* m_plot{nullptr};

@@ -47,7 +47,8 @@ private:
     };
 
     void initUi();
-    void appendFrame(const FrameData& frame);
+    void loadSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot);
+    bool appendFrame(const FrameData& frame);
     bool isNewFrame(const FrameData& frame) const;
     void clearFrames();
     void rebuildPlots();
