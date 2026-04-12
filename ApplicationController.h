@@ -30,7 +30,8 @@ public:
         HeatmapPlot,
         ArrayPlot,
         PulsedDecayPlot,
-        InspectionPlot
+        InspectionPlot,
+        ArrayHeatmapPlot = 9
     };
 
     /**

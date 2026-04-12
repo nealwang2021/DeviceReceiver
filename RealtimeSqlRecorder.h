@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QMutex>
+#include <QSqlQuery>
 #include <atomic>
 
 #include "FrameData.h"
@@ -38,6 +39,8 @@ signals:
 
 private:
     friend class RealtimeSqlRecorderWorker;
+
+    static constexpr int kSqlAlignedChannelCount = 40;
 
     mutable QMutex m_queueMutex;
     QQueue<FrameData> m_queue;

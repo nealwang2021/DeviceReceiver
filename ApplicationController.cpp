@@ -31,9 +31,10 @@ PlotWindowManager::PlotType normalizeStoredPlotType(int v)
     case 6: return PlotWindowManager::ArrayPlot;
     case 7: return PlotWindowManager::PulsedDecayPlot;
     case 8: return PlotWindowManager::InspectionPlot;
+    case 9: return PlotWindowManager::ArrayHeatmapPlot;
     default: break;
     }
-    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::InspectionPlot)) {
+    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::ArrayHeatmapPlot)) {
         return static_cast<PlotWindowManager::PlotType>(v);
     }
     qWarning() << "ApplicationController: 无效的绘图类型序号" << v << "，回退为组合图";
@@ -407,12 +408,12 @@ bool ApplicationController::initReceiverBackend()
                          if (!m_cacheManager) {
                              return;
                          }
+                         if (m_realtimeRecorder) {
+                             m_realtimeRecorder->enqueueFrame(frame);
+                         }
                          FrameData copy = frame;
                          // 附加最近一次三轴台位（mm + pulse）；与 DUT 时间戳可能不同，见 FrameData 注释
                          m_stagePoseLatch.applyToFrame(copy);
-                         if (m_realtimeRecorder) {
-                             m_realtimeRecorder->enqueueFrame(copy);
-                         }
                          m_cacheManager->addFrame(copy);
                      }, Qt::DirectConnection);
 

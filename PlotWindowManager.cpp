@@ -3,6 +3,7 @@
 #include "PlotWindow.h"
 #include "HeatMapPlotWindow.h"
 #include "ArrayPlotWindow.h"
+#include "ArrayRgbHeatmapWindow.h"
 #include "PulsedDecayPlotWindow.h"
 #include "InspectionPlotWindow.h"
 #include "DataCacheManager.h"
@@ -118,6 +119,10 @@ PlotWindowBase* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
     case InspectionPlot:
         window = new InspectionPlotWindow(parent);
         title = QStringLiteral("检测分析");
+        break;
+    case ArrayHeatmapPlot:
+        window = new ArrayRgbHeatmapWindow(parent);
+        title = QStringLiteral("阵列热力图");
         break;
     default:
         qWarning() << "PlotWindowManager::createWindow 未知类型，回退组合图, type=" << static_cast<int>(type);

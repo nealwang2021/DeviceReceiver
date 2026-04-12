@@ -505,12 +505,6 @@ maxHistory=20
 ```powershell
 # 方法一：设置编码
 [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding(936)
-.\build_and_run_fixed_cn.bat
-
-# 方法二：使用cmd运行
-cmd /c "build_and_run_fixed_cn.bat -Help"
-```
-
 #### 2. **窗口布局 / MDI 绘图区不恢复（config.ini 使用 UTF-8 BOM）**
 **原因**: 带 **UTF-8 BOM** 的 `config.ini` 在部分环境下会导致 Qt `QSettings` 解析不完整，`UI/MainWindowState` 读为空，表现为不恢复停靠布局与 MDI 子窗口。
 **说明**: 程序在加载配置时会**自动去掉 BOM 再交给 QSettings**（见日志 `[AppConfig] 检测到 UTF-8 BOM`），一般无需改文件。若仍异常，查看日志中 `UI/MainWindowState 已加载字节数` 是否为 0。
@@ -580,16 +574,8 @@ cmd /c "build_and_run_fixed_cn.bat -Help"
 
 4. **配置 GitHub Pages**
    - 进入 GitHub 仓库 **Settings → Pages**
-   - Source 选择 **Deploy from a branch**
-   - Branch 选择 `main`，Folder 选择 `/docs`
-   - 保存后等待几分钟，即可通过 `https://<用户名>.github.io/<仓库名>/` 访问
 
 ### 注意事项
-
-| 项目 | 说明 |
-|------|------|
-| **文件大小** | `.wasm` 约 23MB（含嵌入字体），在 GitHub 100MB 单文件限制内 |
-| **首次加载** | 浏览器首次加载较慢，后续会使用缓存 |
 | **COOP/COEP** | Qt 5.15.2 wasm_32 为单线程模式，不需要特殊 HTTP 头 |
 | **浏览器兼容** | 支持 Chrome、Firefox、Edge 等现代浏览器 |
 | **串口功能** | WASM 模式下仅支持模拟数据，不支持真实串口 |
@@ -669,7 +655,6 @@ DataCacheManager::frameAdded → PlotWindow::updatePlot (绘图)
 MainWindow::connectClicked → ApplicationController::start
 ApplicationController::started → MainWindow::updateConnectionStatus
 ```
-
 ## 🔄 版本历史
 
 ### v1.0 - 基础版本

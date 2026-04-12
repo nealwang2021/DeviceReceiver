@@ -9,6 +9,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
+#include <QVariant>
 
 class RealtimeSqlRecorderWorker : public QObject
 {
@@ -201,32 +202,57 @@ private:
         QSqlQuery q(m_db);
         const QStringList ddl {
             QStringLiteral(
-                "CREATE TABLE IF NOT EXISTS frames ("
+                "CREATE TABLE IF NOT EXISTS aligned_frames ("
                 "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "timestamp_ms INTEGER NOT NULL,"
-                "sequence INTEGER NOT NULL,"
-                "frame_id INTEGER NOT NULL,"
-                "detect_mode INTEGER NOT NULL,"
-                "channel_count INTEGER NOT NULL,"
-                "has_stage INTEGER NOT NULL,"
-                "stage_timestamp_ms INTEGER,"
-                "stage_x_mm REAL, stage_y_mm REAL, stage_z_mm REAL,"
-                "stage_x_pulse INTEGER, stage_y_pulse INTEGER, stage_z_pulse INTEGER"
+                "frame_sequence INTEGER NOT NULL,"
+                "timestamp_unix_ms INTEGER NOT NULL,"
+                "cell_count INTEGER NOT NULL,"
+                "detect_mode INTEGER NOT NULL DEFAULT 0,"
+                "source_tag TEXT DEFAULT '',"
+                "created_at_ms INTEGER NOT NULL DEFAULT 0,"
+                "pos00_amp REAL, pos00_phase REAL, pos00_x REAL, pos00_y REAL, pos00_source_channel INTEGER,"
+                "pos01_amp REAL, pos01_phase REAL, pos01_x REAL, pos01_y REAL, pos01_source_channel INTEGER,"
+                "pos02_amp REAL, pos02_phase REAL, pos02_x REAL, pos02_y REAL, pos02_source_channel INTEGER,"
+                "pos03_amp REAL, pos03_phase REAL, pos03_x REAL, pos03_y REAL, pos03_source_channel INTEGER,"
+                "pos04_amp REAL, pos04_phase REAL, pos04_x REAL, pos04_y REAL, pos04_source_channel INTEGER,"
+                "pos05_amp REAL, pos05_phase REAL, pos05_x REAL, pos05_y REAL, pos05_source_channel INTEGER,"
+                "pos06_amp REAL, pos06_phase REAL, pos06_x REAL, pos06_y REAL, pos06_source_channel INTEGER,"
+                "pos07_amp REAL, pos07_phase REAL, pos07_x REAL, pos07_y REAL, pos07_source_channel INTEGER,"
+                "pos08_amp REAL, pos08_phase REAL, pos08_x REAL, pos08_y REAL, pos08_source_channel INTEGER,"
+                "pos09_amp REAL, pos09_phase REAL, pos09_x REAL, pos09_y REAL, pos09_source_channel INTEGER,"
+                "pos10_amp REAL, pos10_phase REAL, pos10_x REAL, pos10_y REAL, pos10_source_channel INTEGER,"
+                "pos11_amp REAL, pos11_phase REAL, pos11_x REAL, pos11_y REAL, pos11_source_channel INTEGER,"
+                "pos12_amp REAL, pos12_phase REAL, pos12_x REAL, pos12_y REAL, pos12_source_channel INTEGER,"
+                "pos13_amp REAL, pos13_phase REAL, pos13_x REAL, pos13_y REAL, pos13_source_channel INTEGER,"
+                "pos14_amp REAL, pos14_phase REAL, pos14_x REAL, pos14_y REAL, pos14_source_channel INTEGER,"
+                "pos15_amp REAL, pos15_phase REAL, pos15_x REAL, pos15_y REAL, pos15_source_channel INTEGER,"
+                "pos16_amp REAL, pos16_phase REAL, pos16_x REAL, pos16_y REAL, pos16_source_channel INTEGER,"
+                "pos17_amp REAL, pos17_phase REAL, pos17_x REAL, pos17_y REAL, pos17_source_channel INTEGER,"
+                "pos18_amp REAL, pos18_phase REAL, pos18_x REAL, pos18_y REAL, pos18_source_channel INTEGER,"
+                "pos19_amp REAL, pos19_phase REAL, pos19_x REAL, pos19_y REAL, pos19_source_channel INTEGER,"
+                "pos20_amp REAL, pos20_phase REAL, pos20_x REAL, pos20_y REAL, pos20_source_channel INTEGER,"
+                "pos21_amp REAL, pos21_phase REAL, pos21_x REAL, pos21_y REAL, pos21_source_channel INTEGER,"
+                "pos22_amp REAL, pos22_phase REAL, pos22_x REAL, pos22_y REAL, pos22_source_channel INTEGER,"
+                "pos23_amp REAL, pos23_phase REAL, pos23_x REAL, pos23_y REAL, pos23_source_channel INTEGER,"
+                "pos24_amp REAL, pos24_phase REAL, pos24_x REAL, pos24_y REAL, pos24_source_channel INTEGER,"
+                "pos25_amp REAL, pos25_phase REAL, pos25_x REAL, pos25_y REAL, pos25_source_channel INTEGER,"
+                "pos26_amp REAL, pos26_phase REAL, pos26_x REAL, pos26_y REAL, pos26_source_channel INTEGER,"
+                "pos27_amp REAL, pos27_phase REAL, pos27_x REAL, pos27_y REAL, pos27_source_channel INTEGER,"
+                "pos28_amp REAL, pos28_phase REAL, pos28_x REAL, pos28_y REAL, pos28_source_channel INTEGER,"
+                "pos29_amp REAL, pos29_phase REAL, pos29_x REAL, pos29_y REAL, pos29_source_channel INTEGER,"
+                "pos30_amp REAL, pos30_phase REAL, pos30_x REAL, pos30_y REAL, pos30_source_channel INTEGER,"
+                "pos31_amp REAL, pos31_phase REAL, pos31_x REAL, pos31_y REAL, pos31_source_channel INTEGER,"
+                "pos32_amp REAL, pos32_phase REAL, pos32_x REAL, pos32_y REAL, pos32_source_channel INTEGER,"
+                "pos33_amp REAL, pos33_phase REAL, pos33_x REAL, pos33_y REAL, pos33_source_channel INTEGER,"
+                "pos34_amp REAL, pos34_phase REAL, pos34_x REAL, pos34_y REAL, pos34_source_channel INTEGER,"
+                "pos35_amp REAL, pos35_phase REAL, pos35_x REAL, pos35_y REAL, pos35_source_channel INTEGER,"
+                "pos36_amp REAL, pos36_phase REAL, pos36_x REAL, pos36_y REAL, pos36_source_channel INTEGER,"
+                "pos37_amp REAL, pos37_phase REAL, pos37_x REAL, pos37_y REAL, pos37_source_channel INTEGER,"
+                "pos38_amp REAL, pos38_phase REAL, pos38_x REAL, pos38_y REAL, pos38_source_channel INTEGER,"
+                "pos39_amp REAL, pos39_phase REAL, pos39_x REAL, pos39_y REAL, pos39_source_channel INTEGER"
                 ")"),
-            QStringLiteral(
-                "CREATE TABLE IF NOT EXISTS frame_samples ("
-                "frame_row_id INTEGER NOT NULL,"
-                "timestamp_ms INTEGER NOT NULL,"
-                "channel_index INTEGER NOT NULL,"
-                "source_channel INTEGER NOT NULL,"
-                "amp REAL, phase REAL, x REAL, y REAL,"
-                "comp0 REAL, comp1 REAL,"
-                "PRIMARY KEY(frame_row_id, channel_index)"
-                ")"),
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frames_timestamp ON frames(timestamp_ms)"),
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_frames_sequence ON frames(sequence)"),
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_samples_channel_time ON frame_samples(channel_index, timestamp_ms)"),
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_samples_time ON frame_samples(timestamp_ms)")
+            QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_aligned_frames_sequence ON aligned_frames(frame_sequence)"),
+            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_timestamp ON aligned_frames(timestamp_unix_ms)")
         };
         for (const QString& sql : ddl) {
             if (!q.exec(sql)) {
@@ -239,26 +265,27 @@ private:
 
     bool prepareStatements()
     {
-        m_insertFrame = QSqlQuery(m_db);
-        if (!m_insertFrame.prepare(
-                QStringLiteral(
-                    "INSERT INTO frames("
-                    "timestamp_ms, sequence, frame_id, detect_mode, channel_count,"
-                    "has_stage, stage_timestamp_ms, stage_x_mm, stage_y_mm, stage_z_mm,"
-                    "stage_x_pulse, stage_y_pulse, stage_z_pulse"
-                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))) {
-            qWarning() << "RealtimeSqlRecorder: prepare insert frames failed" << m_insertFrame.lastError();
-            return false;
-        }
+        m_insertAlignedFrame = QSqlQuery(m_db);
 
-        m_insertSample = QSqlQuery(m_db);
-        if (!m_insertSample.prepare(
-                QStringLiteral(
-                    "INSERT INTO frame_samples("
-                    "frame_row_id, timestamp_ms, channel_index, source_channel,"
-                    "amp, phase, x, y, comp0, comp1"
-                    ") VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))) {
-            qWarning() << "RealtimeSqlRecorder: prepare insert samples failed" << m_insertSample.lastError();
+        QString sql = QStringLiteral("INSERT INTO aligned_frames(");
+        sql += QStringLiteral("frame_sequence,timestamp_unix_ms,cell_count,detect_mode,source_tag,created_at_ms");
+        for (int pos = 0; pos < RealtimeSqlRecorder::kSqlAlignedChannelCount; ++pos) {
+            const QString prefix = QStringLiteral(",pos%1_amp,pos%1_phase,pos%1_x,pos%1_y,pos%1_source_channel")
+                                       .arg(pos, 2, 10, QLatin1Char('0'));
+            sql += prefix;
+        }
+        sql += QStringLiteral(") VALUES(");
+        const int totalParams = 6 + RealtimeSqlRecorder::kSqlAlignedChannelCount * 5;
+        for (int i = 0; i < totalParams; ++i) {
+            if (i > 0) {
+                sql += QLatin1Char(',');
+            }
+            sql += QLatin1Char('?');
+        }
+        sql += QLatin1Char(')');
+
+        if (!m_insertAlignedFrame.prepare(sql)) {
+            qWarning() << "RealtimeSqlRecorder: prepare insert aligned_frames failed" << m_insertAlignedFrame.lastError();
             return false;
         }
 
@@ -267,64 +294,50 @@ private:
 
     bool insertFrame(const FrameData& frame)
     {
-        m_insertFrame.bindValue(0, static_cast<qint64>(frame.timestamp));
-        m_insertFrame.bindValue(1, static_cast<qulonglong>(frame.sequence));
-        m_insertFrame.bindValue(2, static_cast<int>(frame.frameId));
-        m_insertFrame.bindValue(3, static_cast<int>(frame.detectMode));
-        m_insertFrame.bindValue(4, static_cast<int>(frame.channelCount));
-        m_insertFrame.bindValue(5, frame.hasStagePose ? 1 : 0);
-        m_insertFrame.bindValue(6, frame.hasStagePose ? frame.stageTimestampMs : QVariant(QVariant::LongLong));
-        m_insertFrame.bindValue(7, frame.hasStagePose ? frame.stageXMm : QVariant(QVariant::Double));
-        m_insertFrame.bindValue(8, frame.hasStagePose ? frame.stageYMm : QVariant(QVariant::Double));
-        m_insertFrame.bindValue(9, frame.hasStagePose ? frame.stageZMm : QVariant(QVariant::Double));
-        m_insertFrame.bindValue(10, frame.hasStagePose ? frame.stageXPulse : QVariant(QVariant::Int));
-        m_insertFrame.bindValue(11, frame.hasStagePose ? frame.stageYPulse : QVariant(QVariant::Int));
-        m_insertFrame.bindValue(12, frame.hasStagePose ? frame.stageZPulse : QVariant(QVariant::Int));
+        m_insertAlignedFrame.bindValue(0, static_cast<qulonglong>(frame.sequence));
+        m_insertAlignedFrame.bindValue(1, static_cast<qint64>(frame.timestamp));
+        m_insertAlignedFrame.bindValue(2, static_cast<int>(frame.channelCount));
+        m_insertAlignedFrame.bindValue(3, static_cast<int>(frame.detectMode));
+        m_insertAlignedFrame.bindValue(4, QStringLiteral("device"));
+        m_insertAlignedFrame.bindValue(5, QDateTime::currentMSecsSinceEpoch());
 
-        if (!m_insertFrame.exec()) {
-            qWarning() << "RealtimeSqlRecorder: insert frame failed" << m_insertFrame.lastError();
-            return false;
+        for (int pos = 0; pos < RealtimeSqlRecorder::kSqlAlignedChannelCount; ++pos) {
+            const int base = 6 + pos * 5;
+            m_insertAlignedFrame.bindValue(base + 0, QVariant());
+            m_insertAlignedFrame.bindValue(base + 1, QVariant());
+            m_insertAlignedFrame.bindValue(base + 2, QVariant());
+            m_insertAlignedFrame.bindValue(base + 3, QVariant());
+            m_insertAlignedFrame.bindValue(base + 4, QVariant());
         }
 
-        const qint64 frameRowId = m_insertFrame.lastInsertId().toLongLong();
-        if (frameRowId <= 0) {
-            qWarning() << "RealtimeSqlRecorder: invalid frame row id" << frameRowId;
-            return false;
-        }
-
-        const int channelCount = qMax<int>(
-            static_cast<int>(frame.channelCount),
-            qMax(
-                qMax(frame.channels_amp.size(), frame.channels_x.size()),
-                qMax(frame.channels_comp0.size(), frame.channels_comp1.size())));
-
-        for (int i = 0; i < channelCount; ++i) {
-            const double amp = (i < frame.channels_amp.size()) ? frame.channels_amp.at(i)
-                : ((i < frame.channels_comp0.size()) ? frame.channels_comp0.at(i) : qQNaN());
-            const double phase = (i < frame.channels_phase.size()) ? frame.channels_phase.at(i)
-                : ((i < frame.channels_comp1.size()) ? frame.channels_comp1.at(i) : qQNaN());
-            const double x = (i < frame.channels_x.size()) ? frame.channels_x.at(i)
-                : ((i < frame.channels_comp0.size()) ? frame.channels_comp0.at(i) : qQNaN());
-            const double y = (i < frame.channels_y.size()) ? frame.channels_y.at(i)
-                : ((i < frame.channels_comp1.size()) ? frame.channels_comp1.at(i) : qQNaN());
-            const double comp0 = (i < frame.channels_comp0.size()) ? frame.channels_comp0.at(i) : qQNaN();
-            const double comp1 = (i < frame.channels_comp1.size()) ? frame.channels_comp1.at(i) : qQNaN();
-
-            m_insertSample.bindValue(0, frameRowId);
-            m_insertSample.bindValue(1, static_cast<qint64>(frame.timestamp));
-            m_insertSample.bindValue(2, i);
-            m_insertSample.bindValue(3, i);
-            m_insertSample.bindValue(4, amp);
-            m_insertSample.bindValue(5, phase);
-            m_insertSample.bindValue(6, x);
-            m_insertSample.bindValue(7, y);
-            m_insertSample.bindValue(8, comp0);
-            m_insertSample.bindValue(9, comp1);
-
-            if (!m_insertSample.exec()) {
-                qWarning() << "RealtimeSqlRecorder: insert sample failed" << m_insertSample.lastError();
-                return false;
+        const int sampleCount = qMax(qMax(frame.channels_amp.size(), frame.channels_phase.size()),
+                                     qMax(frame.channels_x.size(), frame.channels_y.size()));
+        for (int i = 0; i < sampleCount; ++i) {
+            int pos = i;
+            if (i < frame.channels_display_index.size()) {
+                pos = frame.channels_display_index.at(i);
             }
+            if (pos < 0 || pos >= RealtimeSqlRecorder::kSqlAlignedChannelCount) {
+                continue;
+            }
+
+            const double amp = (i < frame.channels_amp.size()) ? frame.channels_amp.at(i) : qQNaN();
+            const double phase = (i < frame.channels_phase.size()) ? frame.channels_phase.at(i) : qQNaN();
+            const double x = (i < frame.channels_x.size()) ? frame.channels_x.at(i) : qQNaN();
+            const double y = (i < frame.channels_y.size()) ? frame.channels_y.at(i) : qQNaN();
+            const int sourceChannel = (i < frame.channels_source_channel.size()) ? frame.channels_source_channel.at(i) : i;
+
+            const int base = 6 + pos * 5;
+            m_insertAlignedFrame.bindValue(base + 0, amp);
+            m_insertAlignedFrame.bindValue(base + 1, phase);
+            m_insertAlignedFrame.bindValue(base + 2, x);
+            m_insertAlignedFrame.bindValue(base + 3, y);
+            m_insertAlignedFrame.bindValue(base + 4, sourceChannel);
+        }
+
+        if (!m_insertAlignedFrame.exec()) {
+            qWarning() << "RealtimeSqlRecorder: insert aligned frame failed" << m_insertAlignedFrame.lastError();
+            return false;
         }
 
         return true;
@@ -344,14 +357,11 @@ private:
 
         const qint64 cutoff = nowMs - m_owner->m_retentionMs;
         if (m_owner->m_retentionMs > 0) {
-            QSqlQuery delSamples(m_db);
             QSqlQuery delFrames(m_db);
             if (m_db.transaction()) {
-                delSamples.prepare(QStringLiteral("DELETE FROM frame_samples WHERE timestamp_ms < ?"));
-                delSamples.addBindValue(cutoff);
-                delFrames.prepare(QStringLiteral("DELETE FROM frames WHERE timestamp_ms < ?"));
+                delFrames.prepare(QStringLiteral("DELETE FROM aligned_frames WHERE timestamp_unix_ms < ?"));
                 delFrames.addBindValue(cutoff);
-                const bool ok = delSamples.exec() && delFrames.exec();
+                const bool ok = delFrames.exec();
                 if (ok) {
                     m_db.commit();
                 } else {
@@ -367,15 +377,12 @@ private:
                 if (!m_db.transaction()) {
                     break;
                 }
-                QSqlQuery delSamples(m_db);
                 QSqlQuery delFrames(m_db);
                 const QString deleteOldFrameIds = QStringLiteral(
-                    "SELECT id FROM frames ORDER BY timestamp_ms ASC LIMIT 2000");
+                    "SELECT id FROM aligned_frames ORDER BY timestamp_unix_ms ASC LIMIT 2000");
 
-                const bool ok = delSamples.exec(
-                    QStringLiteral("DELETE FROM frame_samples WHERE frame_row_id IN (%1)").arg(deleteOldFrameIds))
-                    && delFrames.exec(
-                        QStringLiteral("DELETE FROM frames WHERE id IN (%1)").arg(deleteOldFrameIds));
+                const bool ok = delFrames.exec(
+                    QStringLiteral("DELETE FROM aligned_frames WHERE id IN (%1)").arg(deleteOldFrameIds));
 
                 if (ok) {
                     m_db.commit();
@@ -406,8 +413,7 @@ private:
     QTimer* m_flushTimer = nullptr;
     QSqlDatabase m_db;
     QString m_connectionName;
-    QSqlQuery m_insertFrame;
-    QSqlQuery m_insertSample;
+    QSqlQuery m_insertAlignedFrame;
     qint64 m_lastPruneMs = 0;
 };
 
