@@ -53,6 +53,7 @@ private:
     void setColorGradient();
     // 仅使用第 0 通道：实数取 comp0[0]，复数取 hypot(comp0[0], comp1[0])
     bool tryScalarValueForHeatmap(const FrameData& frame, double* out) const;
+    bool updateFromFrameInternal(const FrameData& frame, bool triggerReplot);
     void updateStageBoundsFromPoint(double vx, double vy);
     void mapMmToCell(double vx, double vy, int* ix, int* iy) const;
     void applyStageAxisRange();
@@ -110,6 +111,9 @@ private:
     QElapsedTimer m_replotThrottle;
     QTimer* m_replotCoalesceTimer{nullptr};
     int m_replotMinIntervalMs{25};
+    QElapsedTimer m_perfLogTimer;
+    qint64 m_perfFrameUpdateCount{0};
+    qint64 m_perfFrameUpdateCostMs{0};
 };
 
 #endif // HEATMAPPLOTWINDOW_H

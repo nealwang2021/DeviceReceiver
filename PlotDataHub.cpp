@@ -19,6 +19,16 @@ static void trimFrontMatrix(QVector<QVector<double>>& matrix, int maxPoints)
         trimFront(row, maxPoints);
     }
 }
+
+static void reserveMatrixTail(QVector<QVector<double>>& matrix, int extraPoints)
+{
+    if (extraPoints <= 0) {
+        return;
+    }
+    for (QVector<double>& row : matrix) {
+        row.reserve(row.size() + extraPoints);
+    }
+}
 } // namespace
 
 PlotDataHub* PlotDataHub::instance()
@@ -51,6 +61,12 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
     QSharedPointer<PlotSnapshot> next =
         m_snapshot ? QSharedPointer<PlotSnapshot>::create(*m_snapshot)
                    : QSharedPointer<PlotSnapshot>::create();
+    next->timeMs.reserve(next->timeMs.size() + frames.size());
+    reserveMatrixTail(next->realAmp, frames.size());
+    reserveMatrixTail(next->complexReal, frames.size());
+    reserveMatrixTail(next->complexImag, frames.size());
+    reserveMatrixTail(next->complexMag, frames.size());
+    reserveMatrixTail(next->complexPhase, frames.size());
 
     for (const FrameData& frame : frames) {
         if (frame.detectMode == FrameData::Legacy) {
@@ -78,11 +94,16 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
 
             if (frame.detectMode == FrameData::MultiChannelReal) {
                 next->realAmp.resize(ch);
+                reserveMatrixTail(next->realAmp, frames.size());
             } else if (frame.detectMode == FrameData::MultiChannelComplex) {
                 next->complexReal.resize(ch);
                 next->complexImag.resize(ch);
                 next->complexMag.resize(ch);
                 next->complexPhase.resize(ch);
+                reserveMatrixTail(next->complexReal, frames.size());
+                reserveMatrixTail(next->complexImag, frames.size());
+                reserveMatrixTail(next->complexMag, frames.size());
+                reserveMatrixTail(next->complexPhase, frames.size());
             }
 
             next->rowDisplayIndex.resize(ch);

@@ -33,6 +33,12 @@ static bool minMaxFinite(const QVector<double>& data, double* minV, double* maxV
     }
     return any;
 }
+
+bool perfLogEnabled()
+{
+    static const bool enabled = qEnvironmentVariableIntValue("DEVICE_RECEIVER_PERF_LOG") > 0;
+    return enabled;
+}
 } // namespace
 
 HeatMapPlotWindow::HeatMapPlotWindow(QWidget *parent)
@@ -206,6 +212,7 @@ HeatMapPlotWindow::HeatMapPlotWindow(QWidget *parent)
         refreshLiveHeatMapPlot();
     });
     m_replotThrottle.start();
+    m_perfLogTimer.start();
 
     // 定时器用于更新模拟数据
     m_mockDataTimer = new QTimer(this);
@@ -636,14 +643,14 @@ void HeatMapPlotWindow::clearHeatMapData()
     refreshLiveHeatMapPlot();
 }
 
-void HeatMapPlotWindow::updateFromFrame(const FrameData& frame)
+bool HeatMapPlotWindow::updateFromFrameInternal(const FrameData& frame, bool triggerReplot)
 {
     if (!m_colorMap || !frame.hasStagePose) {
-        return;
+        return false;
     }
     double val = 0.0;
     if (!tryScalarValueForHeatmap(frame, &val)) {
-        return;
+        return false;
     }
     const double vx = frame.stageXMm;
     const double vy = frame.stageYMm;
@@ -655,7 +662,7 @@ void HeatMapPlotWindow::updateFromFrame(const FrameData& frame)
     mapMmToCell(vx, vy, &ix, &iy);
     const int idx = iy * m_gridWidth + ix;
     if (idx < 0 || idx >= m_gridData.size()) {
-        return;
+        return false;
     }
     m_gridData[idx] = val;
     m_colorMap->data()->setCell(ix, iy, val);
@@ -667,7 +674,15 @@ void HeatMapPlotWindow::updateFromFrame(const FrameData& frame)
         m_liveScalarMax = std::max(m_liveScalarMax, val);
     }
     ++m_liveFrameCount;
-    scheduleThrottledReplot();
+    if (triggerReplot) {
+        scheduleThrottledReplot();
+    }
+    return true;
+}
+
+void HeatMapPlotWindow::updateFromFrame(const FrameData& frame)
+{
+    updateFromFrameInternal(frame, true);
 }
 
 void HeatMapPlotWindow::exportImage(const QString& filename)
@@ -751,7 +766,9 @@ void HeatMapPlotWindow::onStartMockDataClicked()
     m_frameCount = 0;
     m_liveFrameCount = 0;
     m_liveScalarRangeValid = false;
-    m_mockDataTimer->setInterval(50);  // 50ms 更新一次（20 FPS）
+    const int cells = m_gridWidth * m_gridHeight;
+    const int intervalMs = (cells > 120000) ? 120 : 60;
+    m_mockDataTimer->setInterval(intervalMs);
     m_mockDataTimer->start();
     m_startButton->setEnabled(false);
     m_stopButton->setEnabled(true);
@@ -782,8 +799,30 @@ void HeatMapPlotWindow::onDataUpdated(const QVector<FrameData>& frames)
     if (m_useMockData) {
         return;
     }
+    QElapsedTimer timer;
+    timer.start();
+
+    bool changed = false;
     for (const auto& frame : frames) {
-        updateFromFrame(frame);
+        changed = updateFromFrameInternal(frame, false) || changed;
+    }
+    if (changed) {
+        scheduleThrottledReplot();
+    }
+
+    m_perfFrameUpdateCount += 1;
+    m_perfFrameUpdateCostMs += timer.elapsed();
+    if (perfLogEnabled() && m_perfLogTimer.elapsed() >= 5000) {
+        const double avgMs = (m_perfFrameUpdateCount > 0)
+            ? static_cast<double>(m_perfFrameUpdateCostMs) / static_cast<double>(m_perfFrameUpdateCount)
+            : 0.0;
+        qInfo().nospace()
+            << "[Perf][HeatMapPlotWindow] avgBatchUpdateMs=" << QString::number(avgMs, 'f', 2)
+            << " batchFrames=" << frames.size()
+            << " grid=" << m_gridWidth << "x" << m_gridHeight;
+        m_perfLogTimer.restart();
+        m_perfFrameUpdateCount = 0;
+        m_perfFrameUpdateCostMs = 0;
     }
 }
 

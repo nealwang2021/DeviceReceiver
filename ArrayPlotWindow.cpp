@@ -17,9 +17,11 @@
 #include <QCoreApplication>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QtGlobal>
 #include <set>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 namespace {
 
@@ -67,6 +69,12 @@ QVector<double> sampleByIndices(const QVector<double>& source, const QVector<int
         }
     }
     return sampled;
+}
+
+bool perfLogEnabled()
+{
+    static const bool enabled = qEnvironmentVariableIntValue("DEVICE_RECEIVER_PERF_LOG") > 0;
+    return enabled;
 }
 
 } // namespace
@@ -252,6 +260,8 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
 
     connect(m_exportButton, &QPushButton::clicked,
             this, &ArrayPlotWindow::onExportClicked);
+
+    m_perfLogTimer.start();
 }
 
 ArrayPlotWindow::~ArrayPlotWindow()
@@ -296,6 +306,8 @@ void ArrayPlotWindow::initArrayPlot()
     m_timeAxis.clear();
     m_latestTime = 0.0;
     m_axisUpdateCounter = 0;
+    m_channelDataMin.clear();
+    m_channelDataMax.clear();
     
     // 创建通道轴矩形（垂直堆叠）
     for (int i = 0; i < m_currentChannelCount; i++) {
@@ -434,8 +446,8 @@ void ArrayPlotWindow::updateArrayData()
         axisRect->axis(QCPAxis::atBottom)->setRange(lower, upper);
     }
 
+    applyChannelVisibility();
     updateUnifiedYAxisRange();
-
     m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
@@ -482,6 +494,8 @@ void ArrayPlotWindow::rebuildChannelSelector()
                 m_channelVisible[i] = enabled;
             }
             applyChannelVisibility();
+            updateUnifiedYAxisRange();
+            m_plot->replot(QCustomPlot::rpQueuedReplot);
         });
     }
     selectorLayout->addStretch();
@@ -598,24 +612,23 @@ void ArrayPlotWindow::updateUnifiedYAxisRange()
     double minY = 0.0;
     double maxY = 0.0;
 
-    for (int i = 0; i < m_plot->graphCount(); ++i) {
-        if (i >= m_channelVisible.size() || !m_channelVisible.at(i)) {
-            continue;
-        }
-
-        QCPGraph* graph = m_plot->graph(i);
-        if (!graph || !graph->data()) {
-            continue;
-        }
-
-        for (auto it = graph->data()->constBegin(); it != graph->data()->constEnd(); ++it) {
-            const double value = it->value;
+    if (m_channelDataMin.size() == m_plot->graphCount() && m_channelDataMax.size() == m_plot->graphCount()) {
+        for (int i = 0; i < m_plot->graphCount(); ++i) {
+            if (i >= m_channelVisible.size() || !m_channelVisible.at(i)) {
+                continue;
+            }
+            const double vMin = m_channelDataMin.at(i);
+            const double vMax = m_channelDataMax.at(i);
+            if (!std::isfinite(vMin) || !std::isfinite(vMax)) {
+                continue;
+            }
             if (!hasData) {
-                minY = maxY = value;
+                minY = vMin;
+                maxY = vMax;
                 hasData = true;
             } else {
-                minY = std::min(minY, value);
-                maxY = std::max(maxY, value);
+                minY = std::min(minY, vMin);
+                maxY = std::max(maxY, vMax);
             }
         }
     }
@@ -729,7 +742,6 @@ void ArrayPlotWindow::applyChannelVisibility()
         }
     }
 
-    m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
 const QVector<QVector<double>>* ArrayPlotWindow::resolveSnapshotSource(const QSharedPointer<const PlotSnapshot>& snapshot) const
@@ -761,6 +773,9 @@ const QVector<QVector<double>>* ArrayPlotWindow::resolveSnapshotSource(const QSh
 
 void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot, bool forceRefresh)
 {
+    QElapsedTimer timer;
+    timer.start();
+
     if (m_useMockData || !snapshot || !m_plot) {
         return;
     }
@@ -811,11 +826,36 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
         }
     }
 
+    m_channelDataMin.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
+    m_channelDataMax.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
+
     for (int i = 0; i < ch && i < m_plot->graphCount() && i < source->size(); ++i) {
+        QVector<double> sampledValues;
         if (!sampledIndices.isEmpty()) {
-            m_plot->graph(i)->setData(*timeForRender, sampleByIndices(source->at(i), sampledIndices), true);
+            sampledValues = sampleByIndices(source->at(i), sampledIndices);
+            m_plot->graph(i)->setData(*timeForRender, sampledValues, true);
         } else {
             m_plot->graph(i)->setData(*timeForRender, source->at(i), true);
+            sampledValues = source->at(i);
+        }
+
+        double localMin = std::numeric_limits<double>::quiet_NaN();
+        double localMax = std::numeric_limits<double>::quiet_NaN();
+        for (double value : sampledValues) {
+            if (!std::isfinite(value)) {
+                continue;
+            }
+            if (!std::isfinite(localMin) || !std::isfinite(localMax)) {
+                localMin = value;
+                localMax = value;
+            } else {
+                localMin = std::min(localMin, value);
+                localMax = std::max(localMax, value);
+            }
+        }
+        if (i < m_channelDataMin.size()) {
+            m_channelDataMin[i] = localMin;
+            m_channelDataMax[i] = localMax;
         }
 
         QString yLabel;
@@ -846,9 +886,23 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
 
     m_timeAxis = *timeForRender;
     m_latestTime = m_timeAxis.last();
-    applyChannelVisibility();
-    updateUnifiedYAxisRange();
     updateArrayData();
+
+    const qint64 costMs = timer.elapsed();
+    m_perfRenderCount += 1;
+    m_perfRenderCostMs += costMs;
+    if (perfLogEnabled() && m_perfLogTimer.elapsed() >= 5000) {
+        const double avgMs = (m_perfRenderCount > 0)
+            ? static_cast<double>(m_perfRenderCostMs) / static_cast<double>(m_perfRenderCount)
+            : 0.0;
+        qInfo().nospace()
+            << "[Perf][ArrayPlotWindow] avgRenderMs=" << QString::number(avgMs, 'f', 2)
+            << " channels=" << ch
+            << " points=" << m_timeAxis.size();
+        m_perfLogTimer.restart();
+        m_perfRenderCount = 0;
+        m_perfRenderCostMs = 0;
+    }
 }
 
 void ArrayPlotWindow::onCriticalFrame(const FrameData& frame)

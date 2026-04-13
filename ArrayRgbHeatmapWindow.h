@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QImage>
 #include <QColor>
+#include <QElapsedTimer>
 
 class QComboBox;
 class QPushButton;
@@ -62,6 +63,7 @@ private:
     double currentXAxisMax() const;
     int displayChannelCount() const;
     int maximumBufferedFrames() const;
+    void scheduleRebuild();
 
 private:
     QCustomPlot* m_ampPhasePlot{nullptr};
@@ -79,6 +81,13 @@ private:
     qint64 m_lastSequence{-1};
     qint64 m_lastTimestamp{-1};
     int m_channelCount{40};
+    QTimer* m_rebuildTimer{nullptr};
+    int m_rebuildMinIntervalMs{80};
+    QElapsedTimer m_rebuildThrottle;
+    QElapsedTimer m_perfLogTimer;
+    qint64 m_perfRebuildCount{0};
+    qint64 m_perfRebuildCostMs{0};
+    bool m_rebuildPending{false};
 };
 
 #endif // ARRAYRGBHEATMAPWINDOW_H

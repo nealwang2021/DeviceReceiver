@@ -5,6 +5,7 @@
 #include <QVector>
 #include <QLabel>
 #include <QTimer>
+#include <QElapsedTimer>
 
 class QCustomPlot;
 class QCPAxisRect;
@@ -101,6 +102,11 @@ private:
     double m_yAxisLower{0.0};
     double m_yAxisUpper{0.0};
     QSharedPointer<const PlotSnapshot> m_cachedSnapshot;
+    QVector<double> m_channelDataMin;
+    QVector<double> m_channelDataMax;
+    QElapsedTimer m_perfLogTimer;
+    qint64 m_perfRenderCount{0};
+    qint64 m_perfRenderCostMs{0};
 };
 
 #endif // ARRAYPLOTWINDOW_H

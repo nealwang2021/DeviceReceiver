@@ -40,6 +40,12 @@ QVector<double> makeNaNVector(int count)
     return values;
 }
 
+bool perfLogEnabled()
+{
+    static const bool enabled = qEnvironmentVariableIntValue("DEVICE_RECEIVER_PERF_LOG") > 0;
+    return enabled;
+}
+
 } // namespace
 
 ArrayRgbHeatmapWindow::ArrayRgbHeatmapWindow(QWidget* parent)
@@ -124,6 +130,15 @@ void ArrayRgbHeatmapWindow::initUi()
             this, &ArrayRgbHeatmapWindow::onExportClicked);
 
     m_channelCount = displayChannelCount();
+    m_rebuildTimer = new QTimer(this);
+    m_rebuildTimer->setSingleShot(true);
+    connect(m_rebuildTimer, &QTimer::timeout, this, [this]() {
+        m_rebuildThrottle.restart();
+        m_rebuildPending = false;
+        rebuildPlots();
+    });
+    m_rebuildThrottle.start();
+    m_perfLogTimer.start();
     onThemeChanged();
 }
 
@@ -189,8 +204,8 @@ void ArrayRgbHeatmapWindow::loadSnapshot(const QSharedPointer<const PlotSnapshot
     }
 
     const int cap = maximumBufferedFrames();
-    while (m_frames.size() > cap) {
-        m_frames.removeFirst();
+    if (m_frames.size() > cap) {
+        m_frames.remove(0, m_frames.size() - cap);
     }
 }
 
@@ -277,8 +292,8 @@ bool ArrayRgbHeatmapWindow::appendFrame(const FrameData& frame)
     m_lastTimestamp = record.timestampMs;
 
     const int cap = maximumBufferedFrames();
-    while (m_frames.size() > cap) {
-        m_frames.removeFirst();
+    if (m_frames.size() > cap) {
+        m_frames.remove(0, m_frames.size() - cap);
     }
 
     return true;
@@ -286,6 +301,10 @@ bool ArrayRgbHeatmapWindow::appendFrame(const FrameData& frame)
 
 void ArrayRgbHeatmapWindow::clearFrames()
 {
+    if (m_rebuildTimer) {
+        m_rebuildTimer->stop();
+    }
+    m_rebuildPending = false;
     m_frames.clear();
     m_lastSequence = -1;
     m_lastTimestamp = -1;
@@ -392,6 +411,9 @@ void ArrayRgbHeatmapWindow::configurePlot(QCustomPlot* plot,
 
 void ArrayRgbHeatmapWindow::rebuildPlots()
 {
+    QElapsedTimer timer;
+    timer.start();
+
     const QImage ampPhase = buildHeatmapImage(true);
     const QImage realImag = buildHeatmapImage(false);
     configurePlot(m_ampPhasePlot, m_ampPhasePixmap, ampPhase, currentXAxisLabel());
@@ -409,6 +431,43 @@ void ArrayRgbHeatmapWindow::rebuildPlots()
                                    .arg(currentXAxisLabel()));
         }
     }
+
+    m_perfRebuildCount += 1;
+    m_perfRebuildCostMs += timer.elapsed();
+    if (perfLogEnabled() && m_perfLogTimer.elapsed() >= 5000) {
+        const double avgMs = (m_perfRebuildCount > 0)
+            ? static_cast<double>(m_perfRebuildCostMs) / static_cast<double>(m_perfRebuildCount)
+            : 0.0;
+        qInfo().nospace()
+            << "[Perf][ArrayRgbHeatmapWindow] avgRebuildMs=" << QString::number(avgMs, 'f', 2)
+            << " bufferedFrames=" << m_frames.size()
+            << " channels=" << m_channelCount;
+        m_perfLogTimer.restart();
+        m_perfRebuildCount = 0;
+        m_perfRebuildCostMs = 0;
+    }
+}
+
+void ArrayRgbHeatmapWindow::scheduleRebuild()
+{
+    if (!m_rebuildTimer) {
+        rebuildPlots();
+        return;
+    }
+    if (m_rebuildTimer->isActive()) {
+        m_rebuildPending = true;
+        return;
+    }
+    const qint64 elapsed = m_rebuildThrottle.elapsed();
+    if (elapsed >= m_rebuildMinIntervalMs) {
+        m_rebuildThrottle.restart();
+        m_rebuildPending = false;
+        rebuildPlots();
+        return;
+    }
+    m_rebuildPending = true;
+    const int waitMs = qMax(1, m_rebuildMinIntervalMs - static_cast<int>(elapsed));
+    m_rebuildTimer->start(waitMs);
 }
 
 void ArrayRgbHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames)
@@ -422,14 +481,14 @@ void ArrayRgbHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames)
     }
 
     if (changed) {
-        rebuildPlots();
+        scheduleRebuild();
     }
 }
 
 void ArrayRgbHeatmapWindow::onCriticalFrame(const FrameData& frame)
 {
     if (appendFrame(frame)) {
-        rebuildPlots();
+        scheduleRebuild();
     }
 }
 
@@ -440,14 +499,14 @@ void ArrayRgbHeatmapWindow::onPlotSnapshotUpdated(const QSharedPointer<const Plo
     }
     loadSnapshot(snapshot);
     if (!m_frames.isEmpty()) {
-        rebuildPlots();
+        scheduleRebuild();
     }
 }
 
 void ArrayRgbHeatmapWindow::onXAxisModeChanged(int index)
 {
     m_xAxisMode = (index == 1) ? XAxisMode::TimeSeconds : XAxisMode::FrameNumber;
-    rebuildPlots();
+    scheduleRebuild();
 }
 
 void ArrayRgbHeatmapWindow::onClearClicked()

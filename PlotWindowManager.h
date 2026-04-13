@@ -85,6 +85,13 @@ private:
     qint64 m_lastManagerTickMs{0};
     qint64 m_lastPolledTotalFrames{-1};
     qint64 m_unconsumedFramesTotal{0};
+    qint64 m_lastSnapshotEmitMs{0};
+    int m_snapshotEmitMinIntervalMs{150};
+    qint64 m_perfLastLogMs{0};
+    qint64 m_perfTickCount{0};
+    qint64 m_perfTickTotalMs{0};
+    qint64 m_perfDataEmitCount{0};
+    qint64 m_perfSnapshotEmitCount{0};
 };
 
 #endif // PLOTWINDOWMANAGER_H

@@ -13,6 +13,15 @@
 #include <QMdiSubWindow>
 #include <QDebug>
 #include <QDateTime>
+#include <QElapsedTimer>
+
+namespace {
+bool perfLogEnabled()
+{
+    static const bool enabled = qEnvironmentVariableIntValue("DEVICE_RECEIVER_PERF_LOG") > 0;
+    return enabled;
+}
+} // namespace
 
 PlotWindowManager* PlotWindowManager::m_instance = nullptr;
 
@@ -90,6 +99,12 @@ void PlotWindowManager::cleanup()
     m_lastManagerTickMs = 0;
     m_lastPolledTotalFrames = -1;
     m_unconsumedFramesTotal = 0;
+    m_lastSnapshotEmitMs = 0;
+    m_perfLastLogMs = 0;
+    m_perfTickCount = 0;
+    m_perfTickTotalMs = 0;
+    m_perfDataEmitCount = 0;
+    m_perfSnapshotEmitCount = 0;
     PlotDataHub::instance()->reset();
     m_isInitialized = false;
 }
@@ -239,6 +254,8 @@ void PlotWindowManager::updateAllWindows()
     if (!frames.isEmpty()) {
         emit dataUpdated(frames);
         emit plotSnapshotUpdated(PlotDataHub::instance()->appendFrames(frames));
+        m_perfDataEmitCount += 1;
+        m_perfSnapshotEmitCount += 1;
     }
 }
 
@@ -259,9 +276,16 @@ void PlotWindowManager::setUpdateInterval(int intervalMs)
 void PlotWindowManager::startUpdates()
 {
     if (m_updateTimer && !m_updateTimer->isActive()) {
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         m_lastManagerTickMs = 0;
         m_lastPolledTotalFrames = -1;
         m_unconsumedFramesTotal = 0;
+        m_lastSnapshotEmitMs = 0;
+        m_perfLastLogMs = nowMs;
+        m_perfTickCount = 0;
+        m_perfTickTotalMs = 0;
+        m_perfDataEmitCount = 0;
+        m_perfSnapshotEmitCount = 0;
         m_updateTimer->start();
         qInfo() << "PlotWindowManager 开始数据更新";
     }
@@ -286,6 +310,9 @@ QVector<FrameData> PlotWindowManager::getRecentFrames(int count)
 
 void PlotWindowManager::onUpdateTimer()
 {
+    QElapsedTimer tickTimer;
+    tickTimer.start();
+
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const int actualIntervalMs = (m_lastManagerTickMs > 0)
         ? static_cast<int>(qBound<qint64>(0, nowMs - m_lastManagerTickMs, 60000))
@@ -361,7 +388,18 @@ void PlotWindowManager::onUpdateTimer()
     m_lastDispatchedFrameId = lastFrame.frameId;
 
     emit dataUpdated(incrementalFrames);
-    emit plotSnapshotUpdated(PlotDataHub::instance()->appendFrames(incrementalFrames));
+    m_perfDataEmitCount += 1;
+
+    // Decouple heavy snapshot generation from per-tick frame dispatch.
+    const bool shouldEmitSnapshot =
+        (m_lastSnapshotEmitMs <= 0)
+        || (nowMs - m_lastSnapshotEmitMs >= m_snapshotEmitMinIntervalMs)
+        || (incrementalFrames.size() >= fetchCount);
+    if (shouldEmitSnapshot) {
+        emit plotSnapshotUpdated(PlotDataHub::instance()->appendFrames(incrementalFrames));
+        m_lastSnapshotEmitMs = nowMs;
+        m_perfSnapshotEmitCount += 1;
+    }
     dispatchedFrames = incrementalFrames.size();
 
     if (m_windows.size() > 5) {
@@ -379,4 +417,25 @@ void PlotWindowManager::onUpdateTimer()
                           receivedFramesSinceLast,
                           dispatchedFrames,
                           m_unconsumedFramesTotal);
+
+    const qint64 tickCostMs = tickTimer.elapsed();
+    m_perfTickCount += 1;
+    m_perfTickTotalMs += tickCostMs;
+    if (perfLogEnabled() && (nowMs - m_perfLastLogMs >= 5000)) {
+        const double avgTickMs = (m_perfTickCount > 0)
+            ? static_cast<double>(m_perfTickTotalMs) / static_cast<double>(m_perfTickCount)
+            : 0.0;
+        qInfo().nospace()
+            << "[Perf][PlotWindowManager] avgTickMs=" << QString::number(avgTickMs, 'f', 2)
+            << " windows=" << m_windows.size()
+            << " timerIntervalMs=" << (m_updateTimer ? m_updateTimer->interval() : m_baseUpdateIntervalMs)
+            << " dataEmit=" << m_perfDataEmitCount
+            << " snapshotEmit=" << m_perfSnapshotEmitCount
+            << " unconsumedTotal=" << m_unconsumedFramesTotal;
+        m_perfLastLogMs = nowMs;
+        m_perfTickCount = 0;
+        m_perfTickTotalMs = 0;
+        m_perfDataEmitCount = 0;
+        m_perfSnapshotEmitCount = 0;
+    }
 }
