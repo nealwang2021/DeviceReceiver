@@ -553,7 +553,7 @@ void AppConfig::loadDefaults()
     m_stageGrpcEndpoint = defaultGrpcEndpoint(50052);
     m_useMockData = false;
     m_mockDataIntervalMs = 100;
-    m_maxPlotPoints = 200;
+    m_maxPlotPoints = 2000;
     m_plotRefreshIntervalMs = 50;
     m_arrayPlotRowHeightPx = 0;
     m_inspectionChannelsPerGroup = 8;

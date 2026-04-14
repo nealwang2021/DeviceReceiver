@@ -82,6 +82,10 @@ bool perfLogEnabled()
 ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     : PlotWindowBase(parent)
 {
+    if (AppConfig* config = AppConfig::instance()) {
+        m_maxDataPoints = qMax(100, config->maxPlotPoints());
+    }
+
     setWindowTitle(QStringLiteral("多通道阵列图窗口"));
     resize(1200, 700);
 

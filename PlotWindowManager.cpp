@@ -276,6 +276,9 @@ void PlotWindowManager::setUpdateInterval(int intervalMs)
 void PlotWindowManager::startUpdates()
 {
     if (m_updateTimer && !m_updateTimer->isActive()) {
+        if (AppConfig* config = AppConfig::instance()) {
+            PlotDataHub::instance()->setMaxPoints(config->maxPlotPoints());
+        }
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
         m_lastManagerTickMs = 0;
         m_lastPolledTotalFrames = -1;

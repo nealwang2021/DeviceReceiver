@@ -204,7 +204,7 @@ private:
 #endif
     
     // 绘图配置
-    int m_maxPlotPoints = 200;         // 最大绘图点数
+    int m_maxPlotPoints = 2000;        // 最大绘图点数
     int m_plotRefreshIntervalMs = 50;  // 绘图刷新间隔（毫秒）
     int m_arrayPlotRowHeightPx = 0;    // 阵列图每通道高度（像素，0=使用密度默认值）
     int m_inspectionChannelsPerGroup = 8; // 检测分析窗口每组通道数
