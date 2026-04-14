@@ -123,7 +123,7 @@
 本项目桌面端统一使用 `build_cmake.bat` 作为构建入口。
 
 #### 🚀 **`build_cmake.bat` - 标准构建脚本（唯一推荐）**
-用于 Windows + MSVC2019 + Qt 5.15.2 的标准 CMake 构建流程。
+用于 Windows + MSVC2019 + Qt 5.15.2 的标准 CMake 构建流程（默认快速模式）。
 
 **基本用法:**
 ```cmd
@@ -132,7 +132,26 @@ build_cmake.bat
 
 **说明:**
 - 默认构建产物位于 `build_cmake/`（含 `build/release/realtime_data.exe`）
+- 无参数默认等价于 `-Fast`（仅构建主程序，跳过测试目标与部署步骤）
+- `-All` / `-Full` 为全量模式（构建全部目标并执行部署步骤）
+- `-Rebuild` 为清理后全量重建（等价 `-Clean -All`）
 - 该脚本会按仓库预设处理依赖与配置，适合日常开发与联调
+
+**常用参数:**
+```cmd
+# 默认快速构建（推荐日常开发）
+build_cmake.bat
+
+# 显式快速构建（与默认相同）
+build_cmake.bat -Fast
+
+# 全量构建（包含测试目标与部署步骤）
+build_cmake.bat -All
+build_cmake.bat -Full
+
+# 清理后全量重建
+build_cmake.bat -Rebuild
+```
 
 **组合使用示例:**
 ```cmd
@@ -522,7 +541,7 @@ maxHistory=20
 #### 4. **构建失败**
 **症状**: 编译过程中出现错误
 **解决步骤**:
-1. **清理项目**: `build_and_run_fixed_cn.bat -Clean`
+1. **清理重建**: `build_cmake.bat -Rebuild`（或 `build_cmake.bat -Clean -All`）
 2. **检查依赖**: 确认Qt和VS环境正确配置
 3. **检查源文件**: 确认所有源文件完整无损坏
 

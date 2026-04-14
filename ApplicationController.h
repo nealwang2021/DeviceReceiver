@@ -122,6 +122,8 @@ signals:
      */
     void stopped();
     void paused(bool paused);
+    /// 主采集连接进行中状态（用于 UI 显示“连接中”并防重入）
+    void connectionInProgressChanged(bool inProgress);
     /// 三轴台 gRPC 连接状态（与主窗口 m_isConnected 无关）
     void stageConnectionStateChanged(bool connected);
 
@@ -162,6 +164,8 @@ private:
      */
     bool initMainWindow();
     void connectReceiverToMainWindow();
+    void startGrpcBackendConnectAsync(const QString& endpoint);
+    void handleGrpcConnectAttemptFinished(bool connected, const QString& detail);
     void connectStageReceiverToMainWindow();
     void disconnectStageReceiverFromMainWindow();
     
@@ -173,6 +177,7 @@ private:
 private:
     bool m_isRunning = false;
     bool m_isPaused = false;
+    bool m_connectInProgress = false;
     
     // 核心模块实例
     DataCacheManager* m_cacheManager = nullptr;

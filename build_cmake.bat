@@ -27,7 +27,7 @@ set "RUN_AFTER=0"
 set "ENABLE_HDF5=1"
 set "ENABLE_GRPC=1"
 set "ENABLE_WASM=0"
-set "FAST_BUILD=0"
+set "FAST_BUILD=1"
 set "HDF5_ROOT="
 set "GRPC_ROOT="
 REM 保留环境变量中的 VCPKG_ROOT（全功能构建常用）
@@ -100,6 +100,22 @@ if /I "%~1"=="-Fast" (
     shift
     goto :parse_args
 )
+if /I "%~1"=="-All" (
+    set "FAST_BUILD=0"
+    shift
+    goto :parse_args
+)
+if /I "%~1"=="-Full" (
+    set "FAST_BUILD=0"
+    shift
+    goto :parse_args
+)
+if /I "%~1"=="-Rebuild" (
+    set "CLEAN_BUILD=1"
+    set "FAST_BUILD=0"
+    shift
+    goto :parse_args
+)
 if /I "%~1"=="-Hdf5Root" (
     shift
     if "%~1"=="" (
@@ -159,7 +175,7 @@ goto :show_help
 
 :show_help
 echo(
-echo 用法: build_cmake.bat [-Debug ^| -Release] [-Clean] [-Run] [-NoHdf5] [-NoGrpc] [-Wasm] [-Fast] [-Hdf5Root 路径] [-GrpcRoot 路径] [-VcpkgRoot 路径] [-VSVersion 版本] [-Help]
+echo 用法: build_cmake.bat [-Debug ^| -Release] [-Clean] [-Run] [-NoHdf5] [-NoGrpc] [-Wasm] [-Fast ^| -All ^| -Full ^| -Rebuild] [-Hdf5Root 路径] [-GrpcRoot 路径] [-VcpkgRoot 路径] [-VSVersion 版本] [-Help]
 echo(
 echo 参数:
 echo  -Debug     构建调试版本 (默认: 发布版本)
@@ -169,17 +185,25 @@ echo  -Run       构建成功后运行程序
 echo  -NoHdf5    禁用 HDF5 导出功能构建
 echo  -NoGrpc    禁用 gRPC Client 支持构建
 echo  -Wasm      启用 WebAssembly 构建 (WASM)
-echo  -Fast      快速模式：仅构建主程序，跳过测试目标和部署步骤
+echo  -Fast      快速模式：仅构建主程序，跳过测试目标和部署步骤（默认）
+echo  -All       全量模式：构建全部目标并执行部署步骤
+echo  -Full      全量模式别名（等价 -All）
+echo  -Rebuild   全量清理重建（等价 -Clean -All）
 echo  -Hdf5Root  指定 HDF5 根目录
 echo  -GrpcRoot  指定 gRPC 根目录
 echo  -VcpkgRoot 指定 vcpkg 根目录
 echo  -VSVersion 指定 Visual Studio 版本 (2017, 2019, 2022)
 echo  -Help      显示帮助信息
 echo(
-echo 默认无参为全功能构建 ^(gRPC+HDF5^)，需 vcpkg 在 D:\vcpkg 或 C:\vcpkg，或已设置环境变量 VCPKG_ROOT
+echo 默认无参为快速构建（等价 -Fast，启用 gRPC+HDF5，跳过测试与部署）
+echo 全量构建请显式传入 -All（会额外构建测试目标并执行 windeployqt / DLL 复制）
+echo 依赖要求：需 vcpkg 在 D:\vcpkg 或 C:\vcpkg，或已设置环境变量 VCPKG_ROOT
 echo(
 echo 示例:
 echo  build_cmake.bat
+echo  build_cmake.bat -All
+echo  build_cmake.bat -Full
+echo  build_cmake.bat -Rebuild
 echo  build_cmake.bat -Debug -Run
 echo  build_cmake.bat -Clean -NoHdf5
 echo  build_cmake.bat -Fast

@@ -42,22 +42,29 @@ GrpcReceiverBackend::~GrpcReceiverBackend()
 
 bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 {
+    const auto finishConnect = [this](bool connected, const QString& detail) {
+        emit connectAttemptFinished(connected, detail);
+        return connected;
+    };
+
     QString grpcTarget;
     bool useTls = false;
     QString parsedHost;
     int parsedPort = 0;
     if (!GrpcEndpointUtils::parseChannelEndpoint(endpoint, &grpcTarget, &useTls, &parsedHost, &parsedPort)) {
-        emit commandError(QStringLiteral(
-            "gRPC 地址格式无效。示例: 127.0.0.1:50051、[::1]:50051、或 https://example.ngrok-free.dev"));
-        return false;
+        const QString error = QStringLiteral(
+            "gRPC 地址格式无效。示例: 127.0.0.1:50051、[::1]:50051、或 https://example.ngrok-free.dev");
+        emit commandError(error);
+        return finishConnect(false, error);
     }
     m_endpoint = grpcTarget;
 
     // ---- Mock 模式：直接标记已连接，无需网络 ----
     if (m_mockMode.load()) {
         setConnected(true);
-        emitBackendStatus("connected", "gRPC Mock 模式已就绪");
-        return true;
+        const QString detail = QStringLiteral("gRPC Mock 模式已就绪");
+        emitBackendStatus("connected", detail);
+        return finishConnect(true, detail);
     }
 
 #ifdef HAS_GRPC
@@ -182,9 +189,10 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
     }
 
     if (!connected) {
-        emit commandError(QString("连接 gRPC 服务端失败: %1；详情: %2")
-                              .arg(m_endpoint, failureReasons.join(QStringLiteral(" | "))));
-        return false;
+        const QString error = QString("连接 gRPC 服务端失败: %1；详情: %2")
+                                  .arg(m_endpoint, failureReasons.join(QStringLiteral(" | ")));
+        emit commandError(error);
+        return finishConnect(false, error);
     }
 
     // 创建强类型 Stub（每次连接时重建）
@@ -221,14 +229,15 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
     }
 
     setConnected(true);
-    emitBackendStatus("connected",
-                      QString("已连接 gRPC 服务端: %1（%2）")
-                          .arg(m_endpoint)
-                          .arg(useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")));
-    return true;
+    const QString detail = QString("已连接 gRPC 服务端: %1（%2）")
+                               .arg(m_endpoint)
+                               .arg(useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure"));
+    emitBackendStatus("connected", detail);
+    return finishConnect(true, detail);
 #else
-    emit commandError("当前构建未启用 gRPC 支持（请以 CONFIG+=grpc_client 重新编译）");
-    return false;
+    const QString error = QStringLiteral("当前构建未启用 gRPC 支持（请以 CONFIG+=grpc_client 重新编译）");
+    emit commandError(error);
+    return finishConnect(false, error);
 #endif
 }
 

@@ -48,6 +48,10 @@ public slots:
     /// 切换 mock / real 模式（切换后需重新 connectBackend）
     void setMockMode(bool enabled);
 
+signals:
+    /// connectBackend 完成后发射，用于 UI 线程异步衔接后续流程
+    void connectAttemptFinished(bool connected, const QString& detail);
+
 private slots:
     void onMockTick();          ///< Mock 模式：定时生成帧
     void onReconnectCheck();    ///< Real 模式：检查 Channel 状态并按需重连

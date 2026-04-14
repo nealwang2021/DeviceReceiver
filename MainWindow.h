@@ -88,6 +88,7 @@ public slots:
     void onStageCommandError(const QString& error);
     void onStageConnectionStateChanged(bool connected);
     void onRecorderDropAlert(const QString& message);
+    void onConnectionProgressChanged(bool inProgress);
 
 protected:
     /**
@@ -396,6 +397,7 @@ private:
     
     // 状态变量
     bool m_isConnected;
+    bool m_connectionInProgress;
     bool m_screenGeometryScreenHooked = false;
     int m_frameCount;
     int m_alarmCount;

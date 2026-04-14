@@ -67,6 +67,7 @@ MainWindow::MainWindow(ApplicationController* controller, QWidget* parent)
     , m_currentStyle(AppConfig::LightStyle) // 默认浅色样式
     , m_mdiArea(nullptr)
     , m_isConnected(false)
+    , m_connectionInProgress(false)
     , m_frameCount(0)
     , m_alarmCount(0)
     , m_lastUpdateTime(0)
@@ -204,6 +205,7 @@ void MainWindow::initialize()
 void MainWindow::updateConnectionStatus(bool connected)
 {
     m_isConnected = connected;
+    m_connectionInProgress = false;
     
     if (connected) {
         m_connectionStatusLabel->setText("已连接");
@@ -254,6 +256,26 @@ void MainWindow::updateConnectionStatus(bool connected)
     // 当前 device.proto 协议未提供通用 SendCommand，自动 selftest 会产生误导性错误日志，默认关闭。
 
     updateStagePanelUiState();
+    updateGrpcTestUiState();
+}
+
+void MainWindow::onConnectionProgressChanged(bool inProgress)
+{
+    m_connectionInProgress = inProgress;
+    if (!inProgress) {
+        if (!m_isConnected) {
+            updateConnectionStatus(false);
+        }
+        return;
+    }
+
+    m_connectionStatusLabel->setText(QStringLiteral("连接中..."));
+    m_connectionStatusLabel->setStyleSheet(QStringLiteral("color: #d97706;"));
+    m_connectButton->setEnabled(false);
+    m_disconnectButton->setEnabled(false);
+    m_pauseButton->setEnabled(false);
+    m_resumeButton->setEnabled(false);
+    m_exportButton->setEnabled(true);
     updateGrpcTestUiState();
 }
 
@@ -2738,6 +2760,9 @@ void MainWindow::appendMonitorLog(const QString& text, const QString& color)
 void MainWindow::onConnectClicked()
 {
     if (m_appController) {
+        if (m_connectionInProgress) {
+            return;
+        }
         const bool isGrpcBackend = (m_backendTypeCombo &&
                                     m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
         if (isGrpcBackend) {
@@ -2751,8 +2776,8 @@ void MainWindow::onConnectClicked()
             config->saveToFile(AppConfig::defaultConfigFilePath());
         }
         m_appController->reloadRuntimeConfig();
+        onConnectionProgressChanged(isGrpcBackend);
         m_appController->start();
-        updateConnectionStatus(m_appController->isRunning());
     }
 }
 
