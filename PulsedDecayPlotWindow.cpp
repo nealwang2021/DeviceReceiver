@@ -56,6 +56,9 @@ void PulsedDecayPlotWindow::rebuildPlotUi()
     outer->setContentsMargins(6, 6, 6, 6);
 
     m_decayPlot = new QCustomPlot(root);
+#ifdef QCUSTOMPLOT_USE_OPENGL
+    m_decayPlot->setOpenGl(true);
+#endif
     m_decayPlot->setMinimumWidth(480);
     m_decayPlot->xAxis->setLabel("时间 (ms, 相对脉冲起点)");
     m_decayPlot->yAxis->setLabel("幅值");

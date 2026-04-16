@@ -338,7 +338,18 @@ void MainWindow::applyScreenGeometryConstraints()
     }
 
     const QRect available = scr->availableGeometry();
-    setMaximumSize(available.size());
+    const QRect current = geometry();
+    const bool exceedsScreen =
+        (current.width() > available.width())
+        || (current.height() > available.height());
+
+    // Only constrain maximum size when current window exceeds the screen.
+    // Otherwise keep QWIDGETSIZE_MAX to not block maximize button behavior.
+    if (exceedsScreen) {
+        setMaximumSize(available.size());
+    } else {
+        setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
+    }
 
     if (isMaximized()) {
         return;
@@ -366,6 +377,9 @@ void MainWindow::applyScreenGeometryConstraints()
     }
 
     setGeometry(geo);
+
+    // Restore unconstrained maximum size so the window remains maximizable.
+    setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
 }
 
 void MainWindow::initUI()
@@ -2115,13 +2129,13 @@ void MainWindow::handleGrpcBackendPacket(const QJsonObject& packet)
             setGrpcLabelState(m_grpcPeriodicDataState, QStringLiteral("已接收首条周期数据"), GrpcLabelTone::Warning);
         }
 
-        logGrpcInteraction(
-            "stream",
-            QString("frameId=%1 timestamp=%2 channelCount=%3 mode=%4")
-                .arg(frameId)
-                .arg(payloadTimestamp)
-                .arg(channelCount)
-                .arg(mode));
+        // logGrpcInteraction(
+        //     "stream",
+        //     QString("frameId=%1 timestamp=%2 channelCount=%3 mode=%4")
+        //         .arg(frameId)
+        //         .arg(payloadTimestamp)
+        //         .arg(channelCount)
+        //         .arg(mode));
 
         if (m_grpcSelfTestPending) {
             m_grpcSelfTestStreamReceived = true;

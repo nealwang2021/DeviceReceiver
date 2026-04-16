@@ -135,8 +135,12 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
             for (int i = 0; i < ch; ++i) {
                 const double re = (i < frame.channels_comp0.size()) ? frame.channels_comp0.at(i) : qQNaN();
                 const double im = (i < frame.channels_comp1.size()) ? frame.channels_comp1.at(i) : qQNaN();
-                const double mag = std::hypot(re, im);
-                const double phase = std::atan2(im, re);
+                // Prefer raw protocol semantics in complex mode:
+                // amp/phase/x/y -> magnitude/phase/real/imag.
+                const double magRaw = (i < frame.channels_amp.size()) ? frame.channels_amp.at(i) : qQNaN();
+                const double phaseRaw = (i < frame.channels_phase.size()) ? frame.channels_phase.at(i) : qQNaN();
+                const double mag = std::isfinite(magRaw) ? magRaw : std::hypot(re, im);
+                const double phase = std::isfinite(phaseRaw) ? phaseRaw : std::atan2(im, re);
                 next->complexReal[i].append(re);
                 next->complexImag[i].append(im);
                 next->complexMag[i].append(mag);

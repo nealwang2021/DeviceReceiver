@@ -77,6 +77,27 @@ bool perfLogEnabled()
     return enabled;
 }
 
+bool arrayYAxisDebugEnabled()
+{
+    return false;
+}
+
+const char* componentModeName(int mode)
+{
+    switch (mode) {
+    case 0:
+        return "Amplitude";
+    case 1:
+        return "Phase";
+    case 2:
+        return "Real";
+    case 3:
+        return "Imag";
+    default:
+        return "Unknown";
+    }
+}
+
 } // namespace
 
 ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
@@ -154,6 +175,9 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     
     // 创建QCustomPlot实例
     m_plot = new QCustomPlot(this);
+#ifdef QCUSTOMPLOT_USE_OPENGL
+    m_plot->setOpenGl(true);
+#endif
     m_plot->plotLayout()->setRowSpacing(1);
 
     m_plotScrollArea = new QScrollArea(this);
@@ -198,6 +222,12 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
                 default:
                     m_componentMode = ArrayComponent::Amplitude;
                     break;
+                }
+
+                if (arrayYAxisDebugEnabled()) {
+                    qWarning().nospace()
+                        << "[ArrayY] component changed -> " << componentModeName(static_cast<int>(m_componentMode))
+                        << ", hasSnapshot=" << (m_cachedSnapshot ? 1 : 0);
                 }
 
                 if (m_cachedSnapshot) {
@@ -319,8 +349,11 @@ void ArrayPlotWindow::initArrayPlot()
         m_plot->plotLayout()->addElement(i, 0, axisRect);
         m_channelAxisRects.append(axisRect);
 
-        axisRect->setMinimumMargins(QMargins(48, 3, 8, 3));
-        axisRect->setAutoMargins(QCP::msLeft | QCP::msBottom);
+        // Use fixed margins for all rows so the last row (with X labels)
+        // keeps the same waveform drawing height as other rows.
+        axisRect->setAutoMargins(QCP::msNone);
+        axisRect->setMargins(QMargins(48, 3, 8, 18));
+        axisRect->setMinimumMargins(QMargins(48, 3, 8, 18));
         axisRect->setBackground((i % 2 == 0) ? rowBgEven : rowBgOdd);
         
         // 为每个轴矩形创建图
@@ -616,7 +649,36 @@ void ArrayPlotWindow::updateUnifiedYAxisRange()
     double minY = 0.0;
     double maxY = 0.0;
 
-    if (m_channelDataMin.size() == m_plot->graphCount() && m_channelDataMax.size() == m_plot->graphCount()) {
+    // In auto mode, use currently displayed graph data as source of truth to
+    // avoid stale cached range when component is switched.
+    if (!useFixedRange) {
+        for (int i = 0; i < m_plot->graphCount(); ++i) {
+            if (i >= m_channelVisible.size() || !m_channelVisible.at(i)) {
+                continue;
+            }
+            QCPGraph* graph = m_plot->graph(i);
+            if (!graph || !graph->data()) {
+                continue;
+            }
+            for (auto it = graph->data()->constBegin(); it != graph->data()->constEnd(); ++it) {
+                const double value = it->value;
+                if (!std::isfinite(value)) {
+                    continue;
+                }
+                if (!hasData) {
+                    minY = maxY = value;
+                    hasData = true;
+                } else {
+                    minY = std::min(minY, value);
+                    maxY = std::max(maxY, value);
+                }
+            }
+        }
+    }
+
+    if (!hasData
+        && m_channelDataMin.size() == m_plot->graphCount()
+        && m_channelDataMax.size() == m_plot->graphCount()) {
         for (int i = 0; i < m_plot->graphCount(); ++i) {
             if (i >= m_channelVisible.size() || !m_channelVisible.at(i)) {
                 continue;
@@ -666,12 +728,49 @@ void ArrayPlotWindow::updateUnifiedYAxisRange()
             return;
         }
 
-        double padding = (maxY - minY) * 0.08;
-        if (padding < 1.0) {
-            padding = 1.0;
+        const double span = maxY - minY;
+        double padding = span * 0.08;
+        if (padding <= 0.0 || !std::isfinite(padding)) {
+            const double scale = std::max(std::abs(minY), std::abs(maxY));
+            padding = std::max(1e-3, scale * 0.05);
+        } else {
+            const double scale = std::max(std::abs(minY), std::abs(maxY));
+            const double minPadding = std::max(1e-3, scale * 0.02);
+            if (padding < minPadding) {
+                padding = minPadding;
+            }
         }
         lower = minY - padding;
         upper = maxY + padding;
+
+        // If the phase component is expected to be bounded (e.g. degrees in [-180, 180]),
+        // clamp the auto range so axis labels don't drift beyond physical limits due to padding.
+        if (m_componentMode == ArrayComponent::Phase) {
+            const double extrema = std::max(std::abs(minY), std::abs(maxY));
+            if (extrema > 10.0) {
+                // Assume degrees.
+                lower = std::max(lower, -180.0);
+                upper = std::min(upper, 180.0);
+            } else {
+                // Assume radians.
+                constexpr double kPi = 3.14159265358979323846;
+                lower = std::max(lower, -kPi);
+                upper = std::min(upper, kPi);
+            }
+            if (upper <= lower) {
+                upper = lower + 0.1;
+            }
+        }
+
+        // For tiny ranges (< 1 in absolute value), snap bounds outward to
+        // one decimal place so min/max ticks are cleaner and stable.
+        if (std::abs(lower) < 1.0 && std::abs(upper) < 1.0) {
+            lower = std::floor(lower * 10.0) / 10.0;
+            upper = std::ceil(upper * 10.0) / 10.0;
+            if (upper <= lower) {
+                upper = lower + 0.1;
+            }
+        }
 
         if (m_yAxisMode == YAxisMode::Fixed) {
             m_yAxisLower = lower;
@@ -681,36 +780,53 @@ void ArrayPlotWindow::updateUnifiedYAxisRange()
         }
     }
 
+    if (arrayYAxisDebugEnabled()) {
+        static qint64 s_lastLogMs = 0;
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        if (nowMs - s_lastLogMs >= 300) {
+            s_lastLogMs = nowMs;
+            qWarning().nospace()
+                << "[ArrayY] applyRange mode=" << (m_yAxisMode == YAxisMode::Auto ? "Auto" : "Fixed")
+                << " component=" << componentModeName(static_cast<int>(m_componentMode))
+                << " hasData=" << (hasData ? 1 : 0)
+                << " minY=" << minY
+                << " maxY=" << maxY
+                << " lower=" << lower
+                << " upper=" << upper
+                << " visibleCh=" << m_channelVisible.count(true)
+                << " graphCount=" << m_plot->graphCount();
+        }
+        if (m_statsLabel) {
+            m_statsLabel->setText(
+                QStringLiteral("ArrayY %1 [%2, %3]")
+                    .arg(QString::fromLatin1(componentModeName(static_cast<int>(m_componentMode))))
+                    .arg(lower, 0, 'f', 3)
+                    .arg(upper, 0, 'f', 3));
+        }
+    }
+
     for (auto axisRect : m_channelAxisRects) {
         QCPAxis* yAxis = axisRect->axis(QCPAxis::atLeft);
         yAxis->setSubTicks(false);
         yAxis->setRange(lower, upper);
 
-        const int minInt = static_cast<int>(std::floor(lower));
-        const int maxInt = static_cast<int>(std::ceil(upper));
+        auto textTicker = QSharedPointer<QCPAxisTickerText>(new QCPAxisTickerText);
+        textTicker->addTick(lower, QString::number(lower, 'f', 1));
 
-        QVector<int> tickInts;
-        tickInts.append(minInt);
-        const bool hasZeroTick = (minInt <= 0 && maxInt >= 0 && minInt != 0 && maxInt != 0);
-        if (hasZeroTick) {
-            const double minPx = yAxis->coordToPixel(static_cast<double>(minInt));
+        const bool crossZero = (lower < 0.0 && upper > 0.0);
+        if (crossZero) {
+            const double lowerPx = yAxis->coordToPixel(lower);
             const double zeroPx = yAxis->coordToPixel(0.0);
-            const double maxPx = yAxis->coordToPixel(static_cast<double>(maxInt));
+            const double upperPx = yAxis->coordToPixel(upper);
             const double minPixelGap = 10.0;
-            if (std::abs(zeroPx - minPx) >= minPixelGap && std::abs(maxPx - zeroPx) >= minPixelGap) {
-                tickInts.append(0);
+            if (std::abs(zeroPx - lowerPx) >= minPixelGap
+                && std::abs(upperPx - zeroPx) >= minPixelGap) {
+                textTicker->addTick(0.0, QStringLiteral("0.0"));
             }
         }
-        if (maxInt != minInt) {
-            tickInts.append(maxInt);
-        }
 
-        std::sort(tickInts.begin(), tickInts.end());
-        tickInts.erase(std::unique(tickInts.begin(), tickInts.end()), tickInts.end());
-
-        auto textTicker = QSharedPointer<QCPAxisTickerText>(new QCPAxisTickerText);
-        for (int value : tickInts) {
-            textTicker->addTick(static_cast<double>(value), QString::number(value));
+        if (upper != lower) {
+            textTicker->addTick(upper, QString::number(upper, 'f', 1));
         }
         yAxis->setTicker(textTicker);
     }
@@ -886,6 +1002,40 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
         if (i < m_channelAxisRects.size()) {
             m_channelAxisRects[i]->axis(QCPAxis::atLeft)->setLabel(yLabel);
         }
+    }
+
+    if (arrayYAxisDebugEnabled()) {
+        double snapshotMin = 0.0;
+        double snapshotMax = 0.0;
+        bool snapshotHasData = false;
+        for (int i = 0; i < m_channelDataMin.size() && i < m_channelDataMax.size(); ++i) {
+            if (i >= m_channelVisible.size() || !m_channelVisible.at(i)) {
+                continue;
+            }
+            const double vMin = m_channelDataMin.at(i);
+            const double vMax = m_channelDataMax.at(i);
+            if (!std::isfinite(vMin) || !std::isfinite(vMax)) {
+                continue;
+            }
+            if (!snapshotHasData) {
+                snapshotMin = vMin;
+                snapshotMax = vMax;
+                snapshotHasData = true;
+            } else {
+                snapshotMin = std::min(snapshotMin, vMin);
+                snapshotMax = std::max(snapshotMax, vMax);
+            }
+        }
+
+        qWarning().nospace()
+            << "[ArrayY] snapshot mode=" << static_cast<int>(snapshot->mode)
+            << " component=" << componentModeName(static_cast<int>(m_componentMode))
+            << " version=" << snapshot->version
+            << " ch=" << ch
+            << " points=" << timeForRender->size()
+            << " hasData=" << (snapshotHasData ? 1 : 0)
+            << " min=" << snapshotMin
+            << " max=" << snapshotMax;
     }
 
     m_timeAxis = *timeForRender;
