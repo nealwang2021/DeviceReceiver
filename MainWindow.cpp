@@ -5,6 +5,7 @@
 #include "AppConfig.h"
 #include "SerialReceiver.h"
 #include "DataCacheManager.h"
+#include "HistoryOverviewWindow.h"
 
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -405,19 +406,23 @@ void MainWindow::initUI()
         QAction* showPlotAction = viewMenu->addAction("绘图面板(&P)");
         QAction* showStageAction = viewMenu->addAction(QStringLiteral("三轴台测试装置(&S)"));
         QAction* showMonitorAction = viewMenu->addAction("监控面板(&M)");
+        QAction* showOverviewAction = viewMenu->addAction(QStringLiteral("历史总览(&O)"));
         
         showDeviceAction->setCheckable(true);
         showCommandAction->setCheckable(true);
         showPlotAction->setCheckable(true);
         showStageAction->setCheckable(true);
         showMonitorAction->setCheckable(true);
+        showOverviewAction->setCheckable(true);
         
         connect(showDeviceAction, &QAction::toggled, this, &MainWindow::onShowDevicePanelChanged);
         connect(showCommandAction, &QAction::toggled, this, &MainWindow::onShowCommandPanelChanged);
         connect(showPlotAction, &QAction::toggled, this, &MainWindow::onShowPlotPanelChanged);
         connect(showStageAction, &QAction::toggled, this, &MainWindow::onShowStagePanelChanged);
         connect(showMonitorAction, &QAction::toggled, this, &MainWindow::onShowMonitorPanelChanged);
+        connect(showOverviewAction, &QAction::toggled, this, &MainWindow::onShowOverviewPanelChanged);
         m_showStagePanelAction = showStageAction;
+        m_showOverviewPanelAction = showOverviewAction;
         
         // 窗口菜单
         QMenu* windowMenu = menuBar->addMenu("窗口(&W)");
@@ -1222,7 +1227,16 @@ void MainWindow::initUI()
         m_monitorPanel->setWidget(monitorWidget);
         addDockWidget(Qt::BottomDockWidgetArea, m_monitorPanel);
         qDebug() << "[MainWindow::initUI] monitorPanel添加完成";
-        
+
+        // 6. 历史总览面板（与数据监控同区域，tab 并列）
+        m_overviewPanel = new QDockWidget(QStringLiteral("历史总览"), this);
+        m_overviewPanel->setAllowedAreas(Qt::BottomDockWidgetArea);
+        m_overviewWindow = new HistoryOverviewWindow(this);
+        m_overviewPanel->setWidget(m_overviewWindow);
+        addDockWidget(Qt::BottomDockWidgetArea, m_overviewPanel);
+        tabifyDockWidget(m_monitorPanel, m_overviewPanel);
+        m_monitorPanel->raise();
+
         // 创建状态栏
         qDebug() << "[MainWindow::initUI] 创建状态栏...";
         QStatusBar* statusBar = new QStatusBar(this);
@@ -1254,6 +1268,7 @@ void MainWindow::initUI()
             showPlotAction->setChecked(config->showPlotPanel());
             showStageAction->setChecked(config->showStagePanel());
             showMonitorAction->setChecked(config->showMonitorPanel());
+            showOverviewAction->setChecked(config->showOverviewPanel());
             
             m_devicePanel->setVisible(config->showDevicePanel());
             m_commandPanel->setVisible(config->showCommandPanel());
@@ -1262,6 +1277,9 @@ void MainWindow::initUI()
                 m_stagePanel->setVisible(config->showStagePanel());
             }
             m_monitorPanel->setVisible(config->showMonitorPanel());
+            if (m_overviewPanel) {
+                m_overviewPanel->setVisible(config->showOverviewPanel());
+            }
 
             if (m_devicePanel->isVisible()) {
                 m_devicePanel->raise();
@@ -1728,6 +1746,9 @@ void MainWindow::saveConfigFromUI()
         config->setShowStagePanel(m_stagePanel->isVisible());
     }
     config->setShowMonitorPanel(m_monitorPanel->isVisible());
+    if (m_overviewPanel) {
+        config->setShowOverviewPanel(m_overviewPanel->isVisible());
+    }
     
     // 保存窗口状态
     const QSize windowSize = (isMaximized() || isFullScreen()) ? normalGeometry().size() : size();
@@ -3330,6 +3351,13 @@ void MainWindow::onShowStagePanelChanged(bool show)
 {
     if (m_stagePanel) {
         m_stagePanel->setVisible(show);
+    }
+}
+
+void MainWindow::onShowOverviewPanelChanged(bool show)
+{
+    if (m_overviewPanel) {
+        m_overviewPanel->setVisible(show);
     }
 }
 

@@ -1,6 +1,8 @@
 #include "ArrayPlotWindow.h"
 #include "AppConfig.h"
 #include "FrameData.h"
+#include "HistoryDataProvider.h"
+#include "SelectionState.h"
 #include "qcustomplot.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -26,6 +28,8 @@
 namespace {
 
 constexpr int kArrayRenderPointCap = 3000;
+/// 与 HistoryOverviewWindow 一致：会话实时 + Live 阵列仅保留最近 1h
+constexpr qint64 kRealtimeLiveWindowMs = 3600LL * 1000LL;
 
 QVector<int> buildSampleIndices(int totalPoints, int targetPoints)
 {
@@ -230,7 +234,9 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
                         << ", hasSnapshot=" << (m_cachedSnapshot ? 1 : 0);
                 }
 
-                if (m_cachedSnapshot) {
+                if (m_reviewMode) {
+                    renderReviewRange();
+                } else if (m_cachedSnapshot) {
                     renderSnapshot(m_cachedSnapshot, true);
                 }
             });
@@ -294,6 +300,17 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
 
     connect(m_exportButton, &QPushButton::clicked,
             this, &ArrayPlotWindow::onExportClicked);
+
+    // 全局选择状态：响应历史总览 brush 的范围变更
+    auto* sel = SelectionState::instance();
+    connect(sel, &SelectionState::selectionChanged,
+            this, &ArrayPlotWindow::onSelectionChanged);
+    if (sel->hasRange()) {
+        // 启动即同步一次当前状态
+        m_reviewStartMs = sel->startMs();
+        m_reviewEndMs = sel->endMs();
+        m_reviewMode = (sel->mode() == SelectionState::Review);
+    }
 
     m_perfLogTimer.start();
 }
@@ -473,8 +490,13 @@ void ArrayPlotWindow::updateArrayData()
 {
     if (!m_plot || m_channelAxisRects.isEmpty() || m_timeAxis.isEmpty()) return;
 
-    const double lower = m_timeAxis.first();
+    double lower = m_timeAxis.first();
     double upper = m_timeAxis.last();
+    // Review 模式下 X 轴严格遵循 SelectionState 范围，不被实时数据拉回
+    if (m_reviewMode && m_reviewEndMs > m_reviewStartMs) {
+        lower = static_cast<double>(m_reviewStartMs);
+        upper = static_cast<double>(m_reviewEndMs);
+    }
     if (upper <= lower) {
         upper = lower + 100.0;
     }
@@ -495,7 +517,114 @@ void ArrayPlotWindow::onDataUpdated(const QVector<FrameData>& frames)
 
 void ArrayPlotWindow::onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot)
 {
+    if (m_reviewMode) {
+        // 回放模式下缓存最新快照但不重绘，避免被实时数据覆盖
+        m_cachedSnapshot = snapshot;
+        if (snapshot) {
+            m_lastSnapshotVersion = snapshot->version;
+        }
+        return;
+    }
     renderSnapshot(snapshot, false);
+}
+
+void ArrayPlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
+{
+    const bool nowReview = (mode == 1); // SelectionState::Review
+    m_reviewStartMs = startMs;
+    m_reviewEndMs = endMs;
+    const bool wasReview = m_reviewMode;
+    m_reviewMode = nowReview;
+
+    if (nowReview) {
+        // 切到回放：按当前范围从 DB 拉取每通道数据
+        renderReviewRange();
+    } else {
+        // 切回 Live：恢复使用缓存快照的实时渲染路径
+        if (m_cachedSnapshot) {
+            renderSnapshot(m_cachedSnapshot, true);
+        }
+    }
+    Q_UNUSED(wasReview);
+}
+
+void ArrayPlotWindow::renderReviewRange()
+{
+    if (!m_plot || m_channelAxisRects.isEmpty()) {
+        return;
+    }
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp->isDatabaseOpen()) {
+        return;
+    }
+    if (m_reviewEndMs <= m_reviewStartMs) {
+        return;
+    }
+
+    // 分量映射到 SQL 列（当前为幅值/相位/实部/虚部 ↔ amp/phase/x/y）
+    SqlHistoryQuery::Component comp = SqlHistoryQuery::Component::Amplitude;
+    switch (m_componentMode) {
+    case ArrayComponent::Phase: comp = SqlHistoryQuery::Component::Phase; break;
+    case ArrayComponent::Real:  comp = SqlHistoryQuery::Component::Real;  break;
+    case ArrayComponent::Imag:  comp = SqlHistoryQuery::Component::Imag;  break;
+    case ArrayComponent::Amplitude:
+    default: comp = SqlHistoryQuery::Component::Amplitude; break;
+    }
+
+    // 目标点数：按绘图宽像素估算，桶点 = ~像素数
+    const int pixelWidth = std::max(320, m_plot->axisRect() ? m_plot->axisRect()->rect().width() : m_plot->width());
+    const int targetBuckets = std::max(200, std::min(2000, pixelWidth));
+    const qint64 bucketMs = HistoryDataProvider::suggestBucketMs(m_reviewStartMs, m_reviewEndMs, targetBuckets);
+
+    const int channelCount = std::min(m_plot->graphCount(), 40);
+    m_channelDataMin.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
+    m_channelDataMax.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
+    m_timeAxis.clear();
+
+    for (int i = 0; i < channelCount; ++i) {
+        QVector<SqlHistoryQuery::BucketRow> buckets;
+        if (!hdp->queryChannelEnvelope(m_reviewStartMs, m_reviewEndMs, bucketMs, i, comp, &buckets)) {
+            continue;
+        }
+        // 每桶展平为 2 个点（min/max），保留时间顺序
+        QVector<double> keys;
+        QVector<double> vals;
+        keys.reserve(buckets.size() * 2);
+        vals.reserve(buckets.size() * 2);
+        double chMin = std::numeric_limits<double>::quiet_NaN();
+        double chMax = std::numeric_limits<double>::quiet_NaN();
+        for (const auto& row : buckets) {
+            if (!row.hasData) continue;
+            const double tLeft = static_cast<double>(row.bucketStartMs);
+            const double tRight = tLeft + static_cast<double>(bucketMs) * 0.5;
+            keys.append(tLeft);
+            vals.append(row.minValue);
+            keys.append(tRight);
+            vals.append(row.maxValue);
+            if (!std::isfinite(chMin) || row.minValue < chMin) chMin = row.minValue;
+            if (!std::isfinite(chMax) || row.maxValue > chMax) chMax = row.maxValue;
+        }
+        if (i < m_plot->graphCount()) {
+            m_plot->graph(i)->setData(keys, vals, true);
+        }
+        if (i < m_channelDataMin.size()) {
+            m_channelDataMin[i] = chMin;
+            m_channelDataMax[i] = chMax;
+        }
+        // 时间轴以第 0 通道为代表（用于 updateArrayData 的判空/共享范围）
+        if (i == 0) {
+            m_timeAxis = keys;
+        }
+    }
+
+    // 当前 X 范围固定为 [m_reviewStartMs, m_reviewEndMs]
+    for (auto axisRect : m_channelAxisRects) {
+        axisRect->axis(QCPAxis::atBottom)
+            ->setRange(static_cast<double>(m_reviewStartMs), static_cast<double>(m_reviewEndMs));
+    }
+    applyChannelVisibility();
+    updateUnifiedYAxisRange();
+    m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
 void ArrayPlotWindow::rebuildChannelSelector()
@@ -935,12 +1064,30 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
         return;
     }
 
-    const QVector<double>* timeForRender = &snapshot->timeMs;
+    int sliceStart = 0;
+    if (!m_reviewMode
+        && HistoryDataProvider::instance()->sourceMode() == HistoryDataProvider::HistorySourceMode::SessionRealtime
+        && !snapshot->timeMs.isEmpty()) {
+        const double lastT = snapshot->timeMs.last();
+        const double cutoff = lastT - static_cast<double>(kRealtimeLiveWindowMs);
+        while (sliceStart < snapshot->timeMs.size() && snapshot->timeMs.at(sliceStart) < cutoff) {
+            ++sliceStart;
+        }
+    }
+
+    QVector<double> timeSlicedStorage;
+    const QVector<double>* timeVec = &snapshot->timeMs;
+    if (sliceStart > 0) {
+        timeSlicedStorage = snapshot->timeMs.mid(sliceStart);
+        timeVec = &timeSlicedStorage;
+    }
+
+    const QVector<double>* timeForRender = timeVec;
     QVector<int> sampledIndices;
     QVector<double> sampledTime;
-    if (snapshot->timeMs.size() > kArrayRenderPointCap) {
-        sampledIndices = buildSampleIndices(snapshot->timeMs.size(), kArrayRenderPointCap);
-        sampledTime = sampleByIndices(snapshot->timeMs, sampledIndices);
+    if (timeVec->size() > kArrayRenderPointCap) {
+        sampledIndices = buildSampleIndices(timeVec->size(), kArrayRenderPointCap);
+        sampledTime = sampleByIndices(*timeVec, sampledIndices);
         if (!sampledTime.isEmpty()) {
             timeForRender = &sampledTime;
         }
@@ -950,13 +1097,19 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
     m_channelDataMax.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
 
     for (int i = 0; i < ch && i < m_plot->graphCount() && i < source->size(); ++i) {
+        QVector<double> chSlicedStorage;
+        const QVector<double>* chVec = &source->at(i);
+        if (sliceStart > 0) {
+            chSlicedStorage = source->at(i).mid(sliceStart);
+            chVec = &chSlicedStorage;
+        }
         QVector<double> sampledValues;
         if (!sampledIndices.isEmpty()) {
-            sampledValues = sampleByIndices(source->at(i), sampledIndices);
+            sampledValues = sampleByIndices(*chVec, sampledIndices);
             m_plot->graph(i)->setData(*timeForRender, sampledValues, true);
         } else {
-            m_plot->graph(i)->setData(*timeForRender, source->at(i), true);
-            sampledValues = source->at(i);
+            m_plot->graph(i)->setData(*timeForRender, *chVec, true);
+            sampledValues = *chVec;
         }
 
         double localMin = std::numeric_limits<double>::quiet_NaN();

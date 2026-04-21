@@ -25,6 +25,9 @@ public:
     void stop();
     void enqueueFrame(const FrameData& frame);
 
+    /// 当前会话写入的 SQLite 文件路径；未 start 时返回空串。
+    QString currentDatabasePath() const { return m_databaseFilePath; }
+
     quint64 droppedFrameCount() const { return m_droppedFrames.load(); }
     quint64 droppedByQueueCount() const { return m_droppedByQueue.load(); }
     quint64 droppedByDatabaseCount() const { return m_droppedByDatabase.load(); }

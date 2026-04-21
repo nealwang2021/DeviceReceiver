@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDebug>
 #include "FrameData.h"
 #include "PlotWindowBase.h"
@@ -48,6 +49,8 @@ static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &con
 int main(int argc, char *argv[])
 {
     try {
+        // QCustomPlot 多窗口 OpenGL：共享组 + FBO toImage 前绑定本 buffer 的 context（见 qcustomplot.cpp QCPPaintBufferGlFbo::draw）
+        QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
         QApplication app(argc, argv);
         
         // 注册FrameData类型用于跨线程信号槽

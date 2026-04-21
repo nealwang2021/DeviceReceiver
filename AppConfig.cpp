@@ -452,6 +452,7 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_showPlotPanel = settings.value("UI/ShowPlotPanel", m_showPlotPanel).toBool();
     m_showMonitorPanel = settings.value("UI/ShowMonitorPanel", m_showMonitorPanel).toBool();
     m_showStagePanel = settings.value("UI/ShowStagePanel", m_showStagePanel).toBool();
+    m_showOverviewPanel = settings.value("UI/ShowOverviewPanel", m_showOverviewPanel).toBool();
     m_mainWindowState = settings.value("UI/MainWindowState", m_mainWindowState).toByteArray();
     m_mainWindowGeometry = settings.value("UI/MainWindowGeometry", m_mainWindowGeometry).toByteArray();
     m_savedPlotWindowTypes = settings.value("UI/SavedPlotWindowTypes", m_savedPlotWindowTypes).toStringList();
@@ -518,6 +519,7 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("UI/ShowPlotPanel", m_showPlotPanel);
     settings.setValue("UI/ShowMonitorPanel", m_showMonitorPanel);
     settings.setValue("UI/ShowStagePanel", m_showStagePanel);
+    settings.setValue("UI/ShowOverviewPanel", m_showOverviewPanel);
     settings.setValue("UI/MainWindowState", m_mainWindowState);
     settings.setValue("UI/MainWindowGeometry", m_mainWindowGeometry);
     settings.setValue("UI/SavedPlotWindowTypes", m_savedPlotWindowTypes);

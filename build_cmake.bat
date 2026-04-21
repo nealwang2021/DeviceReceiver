@@ -3,6 +3,7 @@ REM ============================================================================
 REM  build_cmake.bat — CMake 一键配置/编译 DeviceReceiver（推荐主构建入口）
 REM ----------------------------------------------------------------------------
 REM  功能概要:
+REM    - 构建前自动 taskkill realtime_data.exe，避免 exe 占用导致 LNK1104
 REM    - 自动探测 VS / vcpkg / Qt，调用 CMake 生成 NMake 或 Ninja 工程
 REM    - 可选启用 HDF5、gRPC、WASM；默认 BUILD_TESTS=ON 时顺带编译三轴台 Qt Test
 REM    - Release 成功后可 windeployqt，复制 HDF5/gRPC DLL 到 exe 目录
@@ -216,6 +217,10 @@ if "%ARG_PARSE_ERROR%"=="1" (
 exit /b 0
 
 :args_done
+
+REM --- 结束可能正在运行的主程序（避免 LNK1104 无法覆盖 exe，或 -Clean 时目录被占用）---
+taskkill /IM realtime_data.exe /F >nul 2>&1
+if not errorlevel 1 echo [INFO] 已结束运行中的 realtime_data.exe
 
 REM --- 检查构建目录 ---
 if "%CLEAN_BUILD%"=="1" (
@@ -450,6 +455,10 @@ if "%FAST_BUILD%"=="1" echo [INFO]   FAST_BUILD=ON (skip tests/deploy)
 if defined GRPC_ROOT echo [INFO]   GRPC_ROOT=!GRPC_ROOT!
 if defined HDF5_ROOT echo [INFO]   HDF5_ROOT=!HDF5_ROOT!
 if defined VCPKG_ROOT echo [INFO]   VCPKG_ROOT=!VCPKG_ROOT!
+
+REM --- 链接前再次确保 exe 未被占用（configure 到 build 之间用户可能已启动程序）---
+taskkill /IM realtime_data.exe /F >nul 2>&1
+if not errorlevel 1 echo [INFO] 已结束运行中的 realtime_data.exe（链接前）
 
 REM --- 构建项目 ---
 echo [INFO] 构建项目 (%BUILD_TYPE%)...

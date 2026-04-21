@@ -1,6 +1,8 @@
 #include "ArrayRgbHeatmapWindow.h"
 
 #include "AppConfig.h"
+#include "HistoryDataProvider.h"
+#include "SelectionState.h"
 #include "qcustomplot.h"
 
 #include <QComboBox>
@@ -23,6 +25,9 @@
 namespace {
 
 constexpr int kDisplayChannels = 40;
+constexpr qint64 kRealtimeLiveWindowMs = 3600LL * 1000LL;
+/// 热力图横向像素列数硬顶，避免超大 visible 列表时 QImage/QPainter 过慢
+constexpr int kHeatmapMaxVisibleColumns = 12000;
 constexpr double kAmpMin = 0.05;
 constexpr double kAmpMax = 0.3;
 constexpr double kVerySmallValue = 1e-12;
@@ -54,6 +59,15 @@ ArrayRgbHeatmapWindow::ArrayRgbHeatmapWindow(QWidget* parent)
     setWindowTitle(QStringLiteral("阵列热力图"));
     resize(1400, 900);
     initUi();
+
+    auto* sel = SelectionState::instance();
+    connect(sel, &SelectionState::selectionChanged,
+            this, &ArrayRgbHeatmapWindow::onSelectionChanged);
+    if (sel->hasRange()) {
+        m_reviewStartMs = sel->startMs();
+        m_reviewEndMs = sel->endMs();
+        m_reviewMode = (sel->mode() == SelectionState::Review);
+    }
 }
 
 ArrayRgbHeatmapWindow::~ArrayRgbHeatmapWindow() = default;
@@ -210,6 +224,7 @@ void ArrayRgbHeatmapWindow::loadSnapshot(const QSharedPointer<const PlotSnapshot
     if (m_frames.size() > cap) {
         m_frames.remove(0, m_frames.size() - cap);
     }
+    trimFramesToRealtimeLiveWindow();
 }
 
 QString ArrayRgbHeatmapWindow::currentXAxisLabel() const
@@ -221,16 +236,19 @@ QString ArrayRgbHeatmapWindow::currentXAxisLabel() const
 
 double ArrayRgbHeatmapWindow::currentXAxisMax() const
 {
-    if (m_frames.isEmpty()) {
+    const QVector<int> visible = collectVisibleFrameIndices();
+    if (visible.isEmpty()) {
         return 1.0;
     }
 
     if (m_xAxisMode == XAxisMode::TimeSeconds) {
-        const double duration = (m_frames.last().timestampMs - m_frames.first().timestampMs) / 1000.0;
+        const qint64 t0 = m_frames.at(visible.first()).timestampMs;
+        const qint64 t1 = m_frames.at(visible.last()).timestampMs;
+        const double duration = (t1 - t0) / 1000.0;
         return (duration > 0.0) ? duration : 1.0;
     }
 
-    return qMax(1.0, static_cast<double>(m_frames.size() - 1));
+    return qMax(1.0, static_cast<double>(visible.size() - 1));
 }
 
 bool ArrayRgbHeatmapWindow::isNewFrame(const FrameData& frame) const
@@ -298,6 +316,7 @@ bool ArrayRgbHeatmapWindow::appendFrame(const FrameData& frame)
     if (m_frames.size() > cap) {
         m_frames.remove(0, m_frames.size() - cap);
     }
+    trimFramesToRealtimeLiveWindow();
 
     return true;
 }
@@ -351,13 +370,16 @@ QColor ArrayRgbHeatmapWindow::colorFromAmpPhase(double amp, double phaseDeg) con
 
 QImage ArrayRgbHeatmapWindow::buildHeatmapImage(bool useAmpPhase) const
 {
-    const int width = qMax(1, m_frames.size());
+    const QVector<int> visible = collectVisibleFrameIndices();
+    const int width = qMax(1, visible.size());
     const int height = qMax(1, m_channelCount);
     QImage image(width, height, QImage::Format_RGB32);
     image.fill(QColor(24, 24, 24));
 
-    for (int x = 0; x < m_frames.size(); ++x) {
-        const FrameRecord& record = m_frames[x];
+    for (int x = 0; x < visible.size(); ++x) {
+        const int frameIdx = visible.at(x);
+        if (frameIdx < 0 || frameIdx >= m_frames.size()) continue;
+        const FrameRecord& record = m_frames[frameIdx];
         for (int pos = 0; pos < m_channelCount; ++pos) {
             const int row = (m_channelCount - 1) - pos;
             QColor color(24, 24, 24);
@@ -381,6 +403,60 @@ QImage ArrayRgbHeatmapWindow::buildHeatmapImage(bool useAmpPhase) const
     }
 
     return image;
+}
+
+QVector<int> ArrayRgbHeatmapWindow::collectVisibleFrameIndices() const
+{
+    QVector<int> out;
+    out.reserve(m_frames.size());
+    if (!m_reviewMode || m_reviewEndMs <= m_reviewStartMs) {
+        for (int i = 0; i < m_frames.size(); ++i) {
+            out.append(i);
+        }
+    } else {
+        for (int i = 0; i < m_frames.size(); ++i) {
+            const qint64 ts = m_frames.at(i).timestampMs;
+            if (ts >= m_reviewStartMs && ts <= m_reviewEndMs) {
+                out.append(i);
+            }
+        }
+    }
+    if (out.size() > kHeatmapMaxVisibleColumns) {
+        const int stride = (out.size() + kHeatmapMaxVisibleColumns - 1) / kHeatmapMaxVisibleColumns;
+        QVector<int> sub;
+        sub.reserve((out.size() + stride - 1) / stride);
+        for (int i = 0; i < out.size(); i += stride) {
+            sub.append(out.at(i));
+        }
+        return sub;
+    }
+    return out;
+}
+
+void ArrayRgbHeatmapWindow::trimFramesToRealtimeLiveWindow()
+{
+    if (m_reviewMode) {
+        return;
+    }
+    if (HistoryDataProvider::instance()->sourceMode() != HistoryDataProvider::HistorySourceMode::SessionRealtime) {
+        return;
+    }
+    if (m_frames.isEmpty()) {
+        return;
+    }
+    const qint64 lastTs = m_frames.last().timestampMs;
+    const qint64 cutoff = lastTs - kRealtimeLiveWindowMs;
+    while (!m_frames.isEmpty() && m_frames.first().timestampMs < cutoff) {
+        m_frames.removeFirst();
+    }
+}
+
+void ArrayRgbHeatmapWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
+{
+    m_reviewStartMs = startMs;
+    m_reviewEndMs = endMs;
+    m_reviewMode = (mode == 1);
+    scheduleRebuild();
 }
 
 void ArrayRgbHeatmapWindow::configurePlot(QCustomPlot* plot,

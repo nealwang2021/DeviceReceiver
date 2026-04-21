@@ -30,6 +30,7 @@ private slots:
     void onXAxisModeChanged(int index);
     void onClearClicked();
     void onExportClicked();
+    void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
 
 private:
     enum class XAxisMode {
@@ -65,6 +66,11 @@ private:
     int maximumBufferedFrames() const;
     void scheduleRebuild();
 
+    /// 返回当前用于渲染的帧索引列表：Live 下为全部；Review 下为时间段内帧。
+    QVector<int> collectVisibleFrameIndices() const;
+
+    void trimFramesToRealtimeLiveWindow();
+
 private:
     QCustomPlot* m_ampPhasePlot{nullptr};
     QCustomPlot* m_realImagPlot{nullptr};
@@ -88,6 +94,10 @@ private:
     qint64 m_perfRebuildCount{0};
     qint64 m_perfRebuildCostMs{0};
     bool m_rebuildPending{false};
+
+    bool m_reviewMode{false};
+    qint64 m_reviewStartMs{0};
+    qint64 m_reviewEndMs{0};
 };
 
 #endif // ARRAYRGBHEATMAPWINDOW_H

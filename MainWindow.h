@@ -32,6 +32,7 @@ class QJsonObject;
 class QDoubleSpinBox;
 class QGroupBox;
 class QShowEvent;
+class HistoryOverviewWindow;
 
 /**
  * @brief 主界面窗口类，提供设备配置、控制、指令发送和窗口管理功能
@@ -128,6 +129,7 @@ private slots:
     void onShowPlotPanelChanged(bool show);
     void onShowMonitorPanelChanged(bool show);
     void onShowStagePanelChanged(bool show);
+    void onShowOverviewPanelChanged(bool show);
     
     // （这些槽已移至 public slots）
     
@@ -385,9 +387,13 @@ private:
     QDockWidget* m_commandPanel;
     QDockWidget* m_plotPanel;
     QDockWidget* m_monitorPanel;
+    QDockWidget* m_overviewPanel = nullptr;
+    HistoryOverviewWindow* m_overviewWindow = nullptr;
 
     /// 视图菜单「三轴台测试装置」项，用于与停靠栏关闭按钮同步勾选状态
     QAction* m_showStagePanelAction = nullptr;
+    /// 视图菜单「历史总览」项
+    QAction* m_showOverviewPanelAction = nullptr;
 
     QGroupBox* m_grpcTestGroup = nullptr;
     

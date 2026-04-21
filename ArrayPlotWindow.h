@@ -27,6 +27,9 @@ public slots:
     void onCriticalFrame(const FrameData& frame) override;
     void onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot) override;
 
+private slots:
+    void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
+
 private:
     enum class ArrayComponent {
         Amplitude,
@@ -64,6 +67,9 @@ private:
     const QVector<QVector<double>>* resolveSnapshotSource(const QSharedPointer<const PlotSnapshot>& snapshot) const;
     int perRowHeightForDensity() const;
     void onThemeChanged() override;
+
+    /// 回放模式下按 SelectionState 范围从 DB 重建 40 通道数据
+    void renderReviewRange();
 
 private:
     QCustomPlot* m_plot{nullptr};
@@ -107,6 +113,11 @@ private:
     QElapsedTimer m_perfLogTimer;
     qint64 m_perfRenderCount{0};
     qint64 m_perfRenderCostMs{0};
+
+    /// true：由 SelectionState 指示处于 Review（历史回放）模式，实时快照不覆盖 X 轴
+    bool m_reviewMode{false};
+    qint64 m_reviewStartMs{0};
+    qint64 m_reviewEndMs{0};
 };
 
 #endif // ARRAYPLOTWINDOW_H

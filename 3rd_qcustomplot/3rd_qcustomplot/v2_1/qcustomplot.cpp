@@ -913,7 +913,27 @@ void QCPPaintBufferGlFbo::draw(QCPPainter *painter) const
         qDebug() << Q_FUNC_INFO << "OpenGL frame buffer object doesn't exist, reallocateBuffer was not called?";
         return;
     }
-    painter->drawImage(0, 0, mGlFrameBuffer->toImage());
+    QSharedPointer<QOpenGLContext> context = mGlContext.toStrongRef();
+    if (!context) {
+        qDebug() << Q_FUNC_INFO << "OpenGL context doesn't exist";
+        return;
+    }
+    // toImage() 必须在创建该 FBO 的 context 上执行；多窗口时否则可能仍绑定其它 QCustomPlot 的 context 导致串图
+    QOpenGLContext *const prevCtx = QOpenGLContext::currentContext();
+    QSurface *const prevSurf = prevCtx ? prevCtx->surface() : nullptr;
+    const bool sameCtx = (prevCtx == context.data());
+    if (!sameCtx && !context->makeCurrent(context->surface())) {
+        qDebug() << Q_FUNC_INFO << "Failed to make OpenGL context current for framebuffer readback";
+        return;
+    }
+    const QImage fboImage = mGlFrameBuffer->toImage();
+    if (!sameCtx) {
+        if (prevCtx)
+            prevCtx->makeCurrent(prevSurf);
+        else
+            context->doneCurrent();
+    }
+    painter->drawImage(0, 0, fboImage);
 }
 
 /* inherits documentation from base class */

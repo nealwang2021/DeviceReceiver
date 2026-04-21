@@ -12,6 +12,7 @@
 #include "AppConfig.h"
 #include "MainWindow.h"
 #include "RealtimeSqlRecorder.h"
+#include "HistoryDataProvider.h"
 #include <QThread>
 #include <QMetaObject>
 #include <QApplication>
@@ -128,6 +129,13 @@ bool ApplicationController::initialize()
         qWarning() << "实时SQLite记录器启动失败:" << recorderDbPath;
     } else {
         qInfo() << "实时SQLite记录器文件:" << recorderDbPath;
+        // 同步只读打开到 HistoryDataProvider，供历史总览/范围查询使用
+        HistoryDataProvider* hdp = HistoryDataProvider::instance();
+        hdp->setSessionDatabasePath(recorderDbPath);
+        hdp->setSourceMode(HistoryDataProvider::HistorySourceMode::SessionRealtime);
+        if (!hdp->openDatabase(recorderDbPath)) {
+            qWarning() << "HistoryDataProvider 打开只读连接失败:" << recorderDbPath;
+        }
     }
     
     // 按照依赖顺序初始化各模块

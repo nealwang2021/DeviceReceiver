@@ -81,6 +81,10 @@ set(SOURCE_FILES
     RealtimeSqlRecorder.cpp
     PlotWindowManager.cpp
     MainWindow.cpp
+    SqlHistoryQuery.cpp
+    SelectionState.cpp
+    HistoryDataProvider.cpp
+    HistoryOverviewWindow.cpp
 )
 
 # 头文件列表
@@ -108,6 +112,11 @@ set(HEADER_FILES
     RealtimeSqlRecorder.h
     PlotWindowManager.h
     MainWindow.h
+    SqlHistoryQuery.h
+    SelectionState.h
+    HistoryDataProvider.h
+    HistoryOverviewWindow.h
+    MinMaxBucketSampler.h
 )
 
 # UI文件
