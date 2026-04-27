@@ -13,11 +13,14 @@
 #include "FrameData.h"
 
 class RealtimeSqlRecorderWorker;
+class QSqlDatabase;
 
 class RealtimeSqlRecorder : public QObject
 {
     Q_OBJECT
 public:
+    static constexpr int kSqlAlignedChannelCount = 40;
+
     explicit RealtimeSqlRecorder(QObject* parent = nullptr);
     ~RealtimeSqlRecorder() override;
 
@@ -32,6 +35,13 @@ public:
     quint64 droppedByQueueCount() const { return m_droppedByQueue.load(); }
     quint64 droppedByDatabaseCount() const { return m_droppedByDatabase.load(); }
 
+    /// 导入模块复用：创建 aligned_frames 表与索引（与记录器写入 schema 保持一致）。
+    static bool ensureAlignedFramesSchema(QSqlDatabase& db, QString* errorMessage = nullptr);
+    /// 导入模块复用：aligned_frames 的 INSERT 语句（占位符顺序与记录器 bind 完全一致）。
+    static QString alignedFramesInsertSql();
+    /// 导入模块复用：INSERT 占位符总数（6 + 40*5）。
+    static int alignedFramesBoundParamCount();
+
 private:
     QVector<FrameData> takeBatch(int maxBatchSize);
     bool hasPendingFrames() const;
@@ -42,8 +52,6 @@ signals:
 
 private:
     friend class RealtimeSqlRecorderWorker;
-
-    static constexpr int kSqlAlignedChannelCount = 40;
 
     mutable QMutex m_queueMutex;
     QQueue<FrameData> m_queue;

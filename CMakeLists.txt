@@ -85,6 +85,8 @@ set(SOURCE_FILES
     SelectionState.cpp
     HistoryDataProvider.cpp
     HistoryOverviewWindow.cpp
+    HistoryExportService.cpp
+    HistoryImportService.cpp
 )
 
 # 头文件列表
@@ -116,6 +118,8 @@ set(HEADER_FILES
     SelectionState.h
     HistoryDataProvider.h
     HistoryOverviewWindow.h
+    HistoryExportService.h
+    HistoryImportService.h
     MinMaxBucketSampler.h
 )
 

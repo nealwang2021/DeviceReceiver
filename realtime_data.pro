@@ -239,7 +239,13 @@ SOURCES += main.cpp \
            StagePoseLatch.cpp \
            RealtimeSqlRecorder.cpp \
            PlotWindowManager.cpp \
-           MainWindow.cpp
+           MainWindow.cpp \
+           SqlHistoryQuery.cpp \
+           SelectionState.cpp \
+           HistoryDataProvider.cpp \
+           HistoryOverviewWindow.cpp \
+           HistoryExportService.cpp \
+           HistoryImportService.cpp
 
 # 头文件列表
 HEADERS += FrameData.h \
@@ -264,7 +270,13 @@ HEADERS += FrameData.h \
            StagePoseLatch.h \
            RealtimeSqlRecorder.h \
            PlotWindowManager.h \
-           MainWindow.h
+           MainWindow.h \
+           SqlHistoryQuery.h \
+           SelectionState.h \
+           HistoryDataProvider.h \
+           HistoryOverviewWindow.h \
+           HistoryExportService.h \
+           HistoryImportService.h
 
 # UI文件列表
 FORMS += MainWindow.ui

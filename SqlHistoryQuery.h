@@ -3,7 +3,9 @@
 
 #include <QObject>
 #include <QString>
+#include <QVariant>
 #include <QVector>
+#include <array>
 
 /**
  * 只读 SQLite 历史查询（针对 `aligned_frames` 表）。
@@ -28,6 +30,23 @@ public:
         double minValue = 0.0;    // 聚合后的最小值
         double maxValue = 0.0;    // 聚合后的最大值
         bool hasData = false;     // 桶内是否有有效数据
+    };
+
+    /// 固定 40 槽位与 aligned_frames 表保持一致
+    static constexpr int kAlignedChannelCount = 40;
+
+    /// 原始行（用于整库/时段导出）。QVariant 为 null 表示 DB 中对应槽位为 NULL。
+    struct AlignedFrameRow {
+        qint64 timestampMs = 0;
+        qint64 frameSequence = 0;
+        int detectMode = 0;
+        int cellCount = 0;
+        QString sourceTag;
+        std::array<QVariant, kAlignedChannelCount> amp;
+        std::array<QVariant, kAlignedChannelCount> phase;
+        std::array<QVariant, kAlignedChannelCount> x;
+        std::array<QVariant, kAlignedChannelCount> y;
+        std::array<QVariant, kAlignedChannelCount> sourceChannel;
     };
 
     explicit SqlHistoryQuery(QObject* parent = nullptr);
@@ -67,6 +86,26 @@ public:
                               int channelIndex,
                               Component component,
                               QVector<BucketRow>* outBuckets) const;
+
+    /**
+     * 估算时段内行数。时段 <= 1 小时时直接走 COUNT(*)；更长时按 [min,max] + 经验帧率（100fps）
+     * 粗估，避免大库全表扫描。估算仅用于进度条 maximum，允许偏差。
+     */
+    qint64 estimateRowCount(qint64 startMs, qint64 endMs) const;
+
+    /**
+     * 分块读取原始行（用于导出）。
+     * 游标以 (timestampMs, frameSequence) 严格递增推进；首个 chunk 传 lastTimestampMs=startMs-1,
+     * lastFrameSequence=std::numeric_limits<qint64>::min()，或传入上一批最后一行的值。
+     * 返回 false 表示出错；outRows 为空表示已到末尾。
+     */
+    bool fetchRawChunk(qint64 startMs,
+                       qint64 endMs,
+                       qint64 lastTimestampMs,
+                       qint64 lastFrameSequence,
+                       int chunkSize,
+                       QVector<AlignedFrameRow>* outRows,
+                       QString* errorMessage = nullptr) const;
 
 private:
     static QString componentColumnSuffix(Component c);

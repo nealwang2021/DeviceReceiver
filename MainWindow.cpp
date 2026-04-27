@@ -215,7 +215,6 @@ void MainWindow::updateConnectionStatus(bool connected)
         m_disconnectButton->setEnabled(true);
         m_pauseButton->setEnabled(true);
         m_resumeButton->setEnabled(false);
-        m_exportButton->setEnabled(true);
     } else {
         m_connectionStatusLabel->setText("未连接");
         m_connectionStatusLabel->setStyleSheet("color: red;");
@@ -223,7 +222,6 @@ void MainWindow::updateConnectionStatus(bool connected)
         m_disconnectButton->setEnabled(false);
         m_pauseButton->setEnabled(false);
         m_resumeButton->setEnabled(false);
-        m_exportButton->setEnabled(true);
 
         const bool interruptedSelfTest = m_grpcSelfTestPending;
         m_autoSelfTestTriggeredForConnection = false;
@@ -276,7 +274,6 @@ void MainWindow::onConnectionProgressChanged(bool inProgress)
     m_disconnectButton->setEnabled(false);
     m_pauseButton->setEnabled(false);
     m_resumeButton->setEnabled(false);
-    m_exportButton->setEnabled(true);
     updateGrpcTestUiState();
 }
 
@@ -550,14 +547,13 @@ void MainWindow::initUI()
         m_disconnectButton = new QPushButton("断开");
         m_pauseButton = new QPushButton("暂停采集");
         m_resumeButton = new QPushButton("恢复采集");
-        m_exportButton = new QPushButton("导出缓存");
         m_disconnectButton->setEnabled(false);
         m_pauseButton->setEnabled(false);
         m_resumeButton->setEnabled(false);
         m_connectionStatusLabel = new QLabel("未连接");
         m_connectionStatusLabel->setStyleSheet("color: red;");
 
-        for (QPushButton* button : {m_connectButton, m_disconnectButton, m_pauseButton, m_resumeButton, m_exportButton}) {
+        for (QPushButton* button : {m_connectButton, m_disconnectButton, m_pauseButton, m_resumeButton}) {
             button->setMinimumWidth(0);
             button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         }
@@ -567,7 +563,6 @@ void MainWindow::initUI()
         controlRow1Layout->addWidget(m_pauseButton);
 
         controlRow2Layout->addWidget(m_resumeButton);
-        controlRow2Layout->addWidget(m_exportButton);
         controlRow2Layout->addStretch();
 
         controlStatusLayout->addWidget(m_connectionStatusLabel);
@@ -1311,7 +1306,6 @@ void MainWindow::initConnections()
     connect(m_disconnectButton, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
     connect(m_pauseButton, &QPushButton::clicked, this, &MainWindow::onPauseClicked);
     connect(m_resumeButton, &QPushButton::clicked, this, &MainWindow::onResumeClicked);
-    connect(m_exportButton, &QPushButton::clicked, this, &MainWindow::onExportClicked);
     connect(m_useMockDataCheck, &QCheckBox::toggled, this, &MainWindow::onUseMockDataChanged);
         connect(m_backendTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onBackendTypeChanged);
@@ -2853,96 +2847,6 @@ void MainWindow::onResumeClicked()
     m_connectionStatusLabel->setStyleSheet("color: green;");
     m_pauseButton->setEnabled(true);
     m_resumeButton->setEnabled(false);
-}
-
-void MainWindow::onExportClicked()
-{
-    if (!m_appController) {
-        QMessageBox::warning(this, "导出失败", "应用控制器未初始化");
-        return;
-    }
-
-    QString selectedFilter;
-    const QString defaultPath = QDir::currentPath() + "/exports/cache_export_" +
-                                QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".h5";
-    const QString filePath = QFileDialog::getSaveFileName(
-        this,
-        "导出缓存数据",
-        defaultPath,
-        "HDF5 文件 (*.h5 *.hdf5);;CSV 文件 (*.csv)",
-        &selectedFilter
-    );
-
-    if (filePath.isEmpty()) {
-        return;
-    }
-
-    qint64 startTimeMs = -1;
-    qint64 endTimeMs = -1;
-    const auto rangeChoice = QMessageBox::question(
-        this,
-        "导出范围",
-        "是否按时间范围导出？\n选择“否”将导出全部缓存。",
-        QMessageBox::Yes | QMessageBox::No,
-        QMessageBox::No
-    );
-
-    if (rangeChoice == QMessageBox::Yes) {
-        const QVector<FrameData> allFrames = DataCacheManager::instance()->getAllFrames();
-        if (allFrames.isEmpty()) {
-            QMessageBox::information(this, "提示", "当前没有可导出的缓存数据");
-            return;
-        }
-
-        const qint64 minTs = allFrames.first().timestamp;
-        const qint64 maxTs = allFrames.last().timestamp;
-
-        QDialog dialog(this);
-        dialog.setWindowTitle("选择时间范围");
-        QFormLayout* formLayout = new QFormLayout(&dialog);
-
-        QDateTimeEdit* startEdit = new QDateTimeEdit(QDateTime::fromMSecsSinceEpoch(minTs), &dialog);
-        QDateTimeEdit* endEdit = new QDateTimeEdit(QDateTime::fromMSecsSinceEpoch(maxTs), &dialog);
-        startEdit->setDisplayFormat("yyyy-MM-dd HH:mm:ss.zzz");
-        endEdit->setDisplayFormat("yyyy-MM-dd HH:mm:ss.zzz");
-        startEdit->setCalendarPopup(true);
-        endEdit->setCalendarPopup(true);
-
-        formLayout->addRow("开始时间", startEdit);
-        formLayout->addRow("结束时间", endEdit);
-
-        QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-        formLayout->addWidget(buttons);
-        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-        if (dialog.exec() != QDialog::Accepted) {
-            return;
-        }
-
-        startTimeMs = startEdit->dateTime().toMSecsSinceEpoch();
-        endTimeMs = endEdit->dateTime().toMSecsSinceEpoch();
-        if (endTimeMs < startTimeMs) {
-            QMessageBox::warning(this, "导出失败", "结束时间不能早于开始时间");
-            return;
-        }
-    }
-
-    QString format = "csv";
-    if (selectedFilter.contains("HDF5", Qt::CaseInsensitive) ||
-        filePath.endsWith(".h5", Qt::CaseInsensitive) ||
-        filePath.endsWith(".hdf5", Qt::CaseInsensitive)) {
-        format = "hdf5";
-    }
-
-    QString error;
-    const bool ok = m_appController->exportCacheToFile(filePath, format, startTimeMs, endTimeMs, &error);
-    if (!ok) {
-        QMessageBox::warning(this, "导出失败", error);
-        return;
-    }
-
-    QMessageBox::information(this, "导出成功", QString("已导出到：\n%1").arg(filePath));
 }
 
 void MainWindow::onUseMockDataChanged(bool use)

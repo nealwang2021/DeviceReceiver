@@ -11,6 +11,29 @@
 #include <QUuid>
 #include <QVariant>
 
+namespace {
+QString buildAlignedFramesInsertSql()
+{
+    QString sql = QStringLiteral("INSERT INTO aligned_frames(");
+    sql += QStringLiteral("frame_sequence,timestamp_unix_ms,cell_count,detect_mode,source_tag,created_at_ms");
+    for (int pos = 0; pos < RealtimeSqlRecorder::kSqlAlignedChannelCount; ++pos) {
+        const QString prefix = QStringLiteral(",pos%1_amp,pos%1_phase,pos%1_x,pos%1_y,pos%1_source_channel")
+                                   .arg(pos, 2, 10, QLatin1Char('0'));
+        sql += prefix;
+    }
+    sql += QStringLiteral(") VALUES(");
+    const int totalParams = RealtimeSqlRecorder::alignedFramesBoundParamCount();
+    for (int i = 0; i < totalParams; ++i) {
+        if (i > 0) {
+            sql += QLatin1Char(',');
+        }
+        sql += QLatin1Char('?');
+    }
+    sql += QLatin1Char(')');
+    return sql;
+}
+} // namespace
+
 class RealtimeSqlRecorderWorker : public QObject
 {
 public:
@@ -199,90 +222,18 @@ private:
 
     bool ensureSchema()
     {
-        QSqlQuery q(m_db);
-        const QStringList ddl {
-            QStringLiteral(
-                "CREATE TABLE IF NOT EXISTS aligned_frames ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-                "frame_sequence INTEGER NOT NULL,"
-                "timestamp_unix_ms INTEGER NOT NULL,"
-                "cell_count INTEGER NOT NULL,"
-                "detect_mode INTEGER NOT NULL DEFAULT 0,"
-                "source_tag TEXT DEFAULT '',"
-                "created_at_ms INTEGER NOT NULL DEFAULT 0,"
-                "pos00_amp REAL, pos00_phase REAL, pos00_x REAL, pos00_y REAL, pos00_source_channel INTEGER,"
-                "pos01_amp REAL, pos01_phase REAL, pos01_x REAL, pos01_y REAL, pos01_source_channel INTEGER,"
-                "pos02_amp REAL, pos02_phase REAL, pos02_x REAL, pos02_y REAL, pos02_source_channel INTEGER,"
-                "pos03_amp REAL, pos03_phase REAL, pos03_x REAL, pos03_y REAL, pos03_source_channel INTEGER,"
-                "pos04_amp REAL, pos04_phase REAL, pos04_x REAL, pos04_y REAL, pos04_source_channel INTEGER,"
-                "pos05_amp REAL, pos05_phase REAL, pos05_x REAL, pos05_y REAL, pos05_source_channel INTEGER,"
-                "pos06_amp REAL, pos06_phase REAL, pos06_x REAL, pos06_y REAL, pos06_source_channel INTEGER,"
-                "pos07_amp REAL, pos07_phase REAL, pos07_x REAL, pos07_y REAL, pos07_source_channel INTEGER,"
-                "pos08_amp REAL, pos08_phase REAL, pos08_x REAL, pos08_y REAL, pos08_source_channel INTEGER,"
-                "pos09_amp REAL, pos09_phase REAL, pos09_x REAL, pos09_y REAL, pos09_source_channel INTEGER,"
-                "pos10_amp REAL, pos10_phase REAL, pos10_x REAL, pos10_y REAL, pos10_source_channel INTEGER,"
-                "pos11_amp REAL, pos11_phase REAL, pos11_x REAL, pos11_y REAL, pos11_source_channel INTEGER,"
-                "pos12_amp REAL, pos12_phase REAL, pos12_x REAL, pos12_y REAL, pos12_source_channel INTEGER,"
-                "pos13_amp REAL, pos13_phase REAL, pos13_x REAL, pos13_y REAL, pos13_source_channel INTEGER,"
-                "pos14_amp REAL, pos14_phase REAL, pos14_x REAL, pos14_y REAL, pos14_source_channel INTEGER,"
-                "pos15_amp REAL, pos15_phase REAL, pos15_x REAL, pos15_y REAL, pos15_source_channel INTEGER,"
-                "pos16_amp REAL, pos16_phase REAL, pos16_x REAL, pos16_y REAL, pos16_source_channel INTEGER,"
-                "pos17_amp REAL, pos17_phase REAL, pos17_x REAL, pos17_y REAL, pos17_source_channel INTEGER,"
-                "pos18_amp REAL, pos18_phase REAL, pos18_x REAL, pos18_y REAL, pos18_source_channel INTEGER,"
-                "pos19_amp REAL, pos19_phase REAL, pos19_x REAL, pos19_y REAL, pos19_source_channel INTEGER,"
-                "pos20_amp REAL, pos20_phase REAL, pos20_x REAL, pos20_y REAL, pos20_source_channel INTEGER,"
-                "pos21_amp REAL, pos21_phase REAL, pos21_x REAL, pos21_y REAL, pos21_source_channel INTEGER,"
-                "pos22_amp REAL, pos22_phase REAL, pos22_x REAL, pos22_y REAL, pos22_source_channel INTEGER,"
-                "pos23_amp REAL, pos23_phase REAL, pos23_x REAL, pos23_y REAL, pos23_source_channel INTEGER,"
-                "pos24_amp REAL, pos24_phase REAL, pos24_x REAL, pos24_y REAL, pos24_source_channel INTEGER,"
-                "pos25_amp REAL, pos25_phase REAL, pos25_x REAL, pos25_y REAL, pos25_source_channel INTEGER,"
-                "pos26_amp REAL, pos26_phase REAL, pos26_x REAL, pos26_y REAL, pos26_source_channel INTEGER,"
-                "pos27_amp REAL, pos27_phase REAL, pos27_x REAL, pos27_y REAL, pos27_source_channel INTEGER,"
-                "pos28_amp REAL, pos28_phase REAL, pos28_x REAL, pos28_y REAL, pos28_source_channel INTEGER,"
-                "pos29_amp REAL, pos29_phase REAL, pos29_x REAL, pos29_y REAL, pos29_source_channel INTEGER,"
-                "pos30_amp REAL, pos30_phase REAL, pos30_x REAL, pos30_y REAL, pos30_source_channel INTEGER,"
-                "pos31_amp REAL, pos31_phase REAL, pos31_x REAL, pos31_y REAL, pos31_source_channel INTEGER,"
-                "pos32_amp REAL, pos32_phase REAL, pos32_x REAL, pos32_y REAL, pos32_source_channel INTEGER,"
-                "pos33_amp REAL, pos33_phase REAL, pos33_x REAL, pos33_y REAL, pos33_source_channel INTEGER,"
-                "pos34_amp REAL, pos34_phase REAL, pos34_x REAL, pos34_y REAL, pos34_source_channel INTEGER,"
-                "pos35_amp REAL, pos35_phase REAL, pos35_x REAL, pos35_y REAL, pos35_source_channel INTEGER,"
-                "pos36_amp REAL, pos36_phase REAL, pos36_x REAL, pos36_y REAL, pos36_source_channel INTEGER,"
-                "pos37_amp REAL, pos37_phase REAL, pos37_x REAL, pos37_y REAL, pos37_source_channel INTEGER,"
-                "pos38_amp REAL, pos38_phase REAL, pos38_x REAL, pos38_y REAL, pos38_source_channel INTEGER,"
-                "pos39_amp REAL, pos39_phase REAL, pos39_x REAL, pos39_y REAL, pos39_source_channel INTEGER"
-                ")"),
-            QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_aligned_frames_sequence ON aligned_frames(frame_sequence)"),
-            QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_timestamp ON aligned_frames(timestamp_unix_ms)")
-        };
-        for (const QString& sql : ddl) {
-            if (!q.exec(sql)) {
-                qWarning() << "RealtimeSqlRecorder: ddl failed" << sql << q.lastError();
-                return false;
-            }
+        QString error;
+        const bool ok = RealtimeSqlRecorder::ensureAlignedFramesSchema(m_db, &error);
+        if (!ok) {
+            qWarning() << "RealtimeSqlRecorder: ensure schema failed:" << error;
         }
-        return true;
+        return ok;
     }
 
     bool prepareStatements()
     {
         m_insertAlignedFrame = QSqlQuery(m_db);
-
-        QString sql = QStringLiteral("INSERT INTO aligned_frames(");
-        sql += QStringLiteral("frame_sequence,timestamp_unix_ms,cell_count,detect_mode,source_tag,created_at_ms");
-        for (int pos = 0; pos < RealtimeSqlRecorder::kSqlAlignedChannelCount; ++pos) {
-            const QString prefix = QStringLiteral(",pos%1_amp,pos%1_phase,pos%1_x,pos%1_y,pos%1_source_channel")
-                                       .arg(pos, 2, 10, QLatin1Char('0'));
-            sql += prefix;
-        }
-        sql += QStringLiteral(") VALUES(");
-        const int totalParams = 6 + RealtimeSqlRecorder::kSqlAlignedChannelCount * 5;
-        for (int i = 0; i < totalParams; ++i) {
-            if (i > 0) {
-                sql += QLatin1Char(',');
-            }
-            sql += QLatin1Char('?');
-        }
-        sql += QLatin1Char(')');
+        const QString sql = RealtimeSqlRecorder::alignedFramesInsertSql();
 
         if (!m_insertAlignedFrame.prepare(sql)) {
             qWarning() << "RealtimeSqlRecorder: prepare insert aligned_frames failed" << m_insertAlignedFrame.lastError();
@@ -416,6 +367,84 @@ private:
     QSqlQuery m_insertAlignedFrame;
     qint64 m_lastPruneMs = 0;
 };
+
+bool RealtimeSqlRecorder::ensureAlignedFramesSchema(QSqlDatabase& db, QString* errorMessage)
+{
+    QSqlQuery q(db);
+    const QStringList ddl {
+        QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS aligned_frames ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "frame_sequence INTEGER NOT NULL,"
+            "timestamp_unix_ms INTEGER NOT NULL,"
+            "cell_count INTEGER NOT NULL,"
+            "detect_mode INTEGER NOT NULL DEFAULT 0,"
+            "source_tag TEXT DEFAULT '',"
+            "created_at_ms INTEGER NOT NULL DEFAULT 0,"
+            "pos00_amp REAL, pos00_phase REAL, pos00_x REAL, pos00_y REAL, pos00_source_channel INTEGER,"
+            "pos01_amp REAL, pos01_phase REAL, pos01_x REAL, pos01_y REAL, pos01_source_channel INTEGER,"
+            "pos02_amp REAL, pos02_phase REAL, pos02_x REAL, pos02_y REAL, pos02_source_channel INTEGER,"
+            "pos03_amp REAL, pos03_phase REAL, pos03_x REAL, pos03_y REAL, pos03_source_channel INTEGER,"
+            "pos04_amp REAL, pos04_phase REAL, pos04_x REAL, pos04_y REAL, pos04_source_channel INTEGER,"
+            "pos05_amp REAL, pos05_phase REAL, pos05_x REAL, pos05_y REAL, pos05_source_channel INTEGER,"
+            "pos06_amp REAL, pos06_phase REAL, pos06_x REAL, pos06_y REAL, pos06_source_channel INTEGER,"
+            "pos07_amp REAL, pos07_phase REAL, pos07_x REAL, pos07_y REAL, pos07_source_channel INTEGER,"
+            "pos08_amp REAL, pos08_phase REAL, pos08_x REAL, pos08_y REAL, pos08_source_channel INTEGER,"
+            "pos09_amp REAL, pos09_phase REAL, pos09_x REAL, pos09_y REAL, pos09_source_channel INTEGER,"
+            "pos10_amp REAL, pos10_phase REAL, pos10_x REAL, pos10_y REAL, pos10_source_channel INTEGER,"
+            "pos11_amp REAL, pos11_phase REAL, pos11_x REAL, pos11_y REAL, pos11_source_channel INTEGER,"
+            "pos12_amp REAL, pos12_phase REAL, pos12_x REAL, pos12_y REAL, pos12_source_channel INTEGER,"
+            "pos13_amp REAL, pos13_phase REAL, pos13_x REAL, pos13_y REAL, pos13_source_channel INTEGER,"
+            "pos14_amp REAL, pos14_phase REAL, pos14_x REAL, pos14_y REAL, pos14_source_channel INTEGER,"
+            "pos15_amp REAL, pos15_phase REAL, pos15_x REAL, pos15_y REAL, pos15_source_channel INTEGER,"
+            "pos16_amp REAL, pos16_phase REAL, pos16_x REAL, pos16_y REAL, pos16_source_channel INTEGER,"
+            "pos17_amp REAL, pos17_phase REAL, pos17_x REAL, pos17_y REAL, pos17_source_channel INTEGER,"
+            "pos18_amp REAL, pos18_phase REAL, pos18_x REAL, pos18_y REAL, pos18_source_channel INTEGER,"
+            "pos19_amp REAL, pos19_phase REAL, pos19_x REAL, pos19_y REAL, pos19_source_channel INTEGER,"
+            "pos20_amp REAL, pos20_phase REAL, pos20_x REAL, pos20_y REAL, pos20_source_channel INTEGER,"
+            "pos21_amp REAL, pos21_phase REAL, pos21_x REAL, pos21_y REAL, pos21_source_channel INTEGER,"
+            "pos22_amp REAL, pos22_phase REAL, pos22_x REAL, pos22_y REAL, pos22_source_channel INTEGER,"
+            "pos23_amp REAL, pos23_phase REAL, pos23_x REAL, pos23_y REAL, pos23_source_channel INTEGER,"
+            "pos24_amp REAL, pos24_phase REAL, pos24_x REAL, pos24_y REAL, pos24_source_channel INTEGER,"
+            "pos25_amp REAL, pos25_phase REAL, pos25_x REAL, pos25_y REAL, pos25_source_channel INTEGER,"
+            "pos26_amp REAL, pos26_phase REAL, pos26_x REAL, pos26_y REAL, pos26_source_channel INTEGER,"
+            "pos27_amp REAL, pos27_phase REAL, pos27_x REAL, pos27_y REAL, pos27_source_channel INTEGER,"
+            "pos28_amp REAL, pos28_phase REAL, pos28_x REAL, pos28_y REAL, pos28_source_channel INTEGER,"
+            "pos29_amp REAL, pos29_phase REAL, pos29_x REAL, pos29_y REAL, pos29_source_channel INTEGER,"
+            "pos30_amp REAL, pos30_phase REAL, pos30_x REAL, pos30_y REAL, pos30_source_channel INTEGER,"
+            "pos31_amp REAL, pos31_phase REAL, pos31_x REAL, pos31_y REAL, pos31_source_channel INTEGER,"
+            "pos32_amp REAL, pos32_phase REAL, pos32_x REAL, pos32_y REAL, pos32_source_channel INTEGER,"
+            "pos33_amp REAL, pos33_phase REAL, pos33_x REAL, pos33_y REAL, pos33_source_channel INTEGER,"
+            "pos34_amp REAL, pos34_phase REAL, pos34_x REAL, pos34_y REAL, pos34_source_channel INTEGER,"
+            "pos35_amp REAL, pos35_phase REAL, pos35_x REAL, pos35_y REAL, pos35_source_channel INTEGER,"
+            "pos36_amp REAL, pos36_phase REAL, pos36_x REAL, pos36_y REAL, pos36_source_channel INTEGER,"
+            "pos37_amp REAL, pos37_phase REAL, pos37_x REAL, pos37_y REAL, pos37_source_channel INTEGER,"
+            "pos38_amp REAL, pos38_phase REAL, pos38_x REAL, pos38_y REAL, pos38_source_channel INTEGER,"
+            "pos39_amp REAL, pos39_phase REAL, pos39_x REAL, pos39_y REAL, pos39_source_channel INTEGER"
+            ")"),
+        QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_aligned_frames_sequence ON aligned_frames(frame_sequence)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_timestamp ON aligned_frames(timestamp_unix_ms)")
+    };
+    for (const QString& sql : ddl) {
+        if (!q.exec(sql)) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("DDL 执行失败: %1").arg(q.lastError().text());
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+QString RealtimeSqlRecorder::alignedFramesInsertSql()
+{
+    return buildAlignedFramesInsertSql();
+}
+
+int RealtimeSqlRecorder::alignedFramesBoundParamCount()
+{
+    return 6 + kSqlAlignedChannelCount * 5;
+}
 
 RealtimeSqlRecorder::RealtimeSqlRecorder(QObject* parent)
     : QObject(parent)

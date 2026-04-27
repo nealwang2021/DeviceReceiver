@@ -106,7 +106,6 @@ private slots:
     void onDisconnectClicked();
     void onPauseClicked();
     void onResumeClicked();
-    void onExportClicked();
     void onUseMockDataChanged(bool use);
     void onBackendTypeChanged(int index);
     
@@ -300,7 +299,6 @@ private:
     QPushButton* m_disconnectButton;
     QPushButton* m_pauseButton;
     QPushButton* m_resumeButton;
-    QPushButton* m_exportButton;
     QPushButton* m_startGrpcTestServerButton;
     QPushButton* m_stopGrpcTestServerButton;
     QPushButton* m_runGrpcSelfTestButton;

@@ -1,6 +1,5 @@
 #include "ApplicationController.h"
 #include "DataCacheManager.h"
-#include "DataExporter.h"
 #include "IReceiverBackend.h"
 #include "SerialReceiver.h"
 #include "GrpcReceiverBackend.h"
@@ -804,41 +803,6 @@ void ApplicationController::resumeAcquisition()
     }
     m_isPaused = false;
     emit paused(false);
-}
-
-bool ApplicationController::exportCacheToFile(const QString& filePath,
-                                              const QString& format,
-                                              qint64 startTimeMs,
-                                              qint64 endTimeMs,
-                                              QString* errorMessage)
-{
-    if (!m_cacheManager) {
-        if (errorMessage) {
-            *errorMessage = "缓存管理器未初始化";
-        }
-        return false;
-    }
-
-    QVector<FrameData> frames;
-    if (startTimeMs > 0 && endTimeMs > 0 && endTimeMs >= startTimeMs) {
-        frames = m_cacheManager->getFramesInTimeRange(startTimeMs, endTimeMs);
-    } else {
-        frames = m_cacheManager->getAllFrames();
-    }
-
-    DataExporter::Format exportFormat = DataExporter::Format::Csv;
-    QString formatLower = format.toLower();
-    if (formatLower == "hdf5" || formatLower == "h5") {
-        exportFormat = DataExporter::Format::Hdf5;
-    }
-
-    DataExporter::ExportOptions options;
-    options.filePath = filePath;
-    options.sourceTag = m_config.useMockData ? "mock" : "device";
-    options.startTimeMs = startTimeMs;
-    options.endTimeMs = endTimeMs;
-
-    return DataExporter::exportFrames(frames, exportFormat, options, errorMessage);
 }
 
 PlotWindowManager* ApplicationController::plotWindowManager() const

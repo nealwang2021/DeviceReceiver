@@ -98,11 +98,6 @@ public:
      * @brief 从 AppConfig 同步接收后端类型；若与当前实现不一致则停止采集并重建后端（须先 saveConfigFromUI）
      */
     void applyReceiverBackendFromConfig();
-    bool exportCacheToFile(const QString& filePath,
-                           const QString& format,
-                           qint64 startTimeMs,
-                           qint64 endTimeMs,
-                           QString* errorMessage = nullptr);
 
     /// 三轴台测试装置（StageService）独立后端，与主采集（被测设备）无关
     bool connectStageBackend(const QString& endpoint);

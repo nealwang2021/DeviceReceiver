@@ -408,7 +408,7 @@ docs/                       # GitHub Pages 部署目录
 | 模式 | 含义 |
 |------|------|
 | **SessionRealtime** | 只读连接指向 **当前运行会话** 的实时库：启动时由 `ApplicationController` 在记录器成功后写入 `sessionDatabasePath()`，并打开同一路径。总览的「刷新」、时间边界查询默认针对该库。若登记路径暂时打不开，代码可能从可执行文件旁 `data/device_realtime_*.db` 中取 **按修改时间排序的最新** 文件作为兜底；此时 DB 状态标签会显示 **「会话·兜底」**，并在日志中输出「当前只读库与会话记录路径不一致」，表示与记录器登记路径 **不是同一文件**。 |
-| **OfflineExternal** | 用户通过总览 **「打开离线库…」** 选择的 **外部** `.db`（只读打开）。此模式下 **不会** 再用 `data/` 目录自动扫描覆盖当前连接，避免打断离线分析。点击 **「回到会话库」** 会切回 `SessionRealtime` 并重新 `openDatabase(sessionDatabasePath())`（若路径无效会提示）。 |
+| **OfflineExternal** | 用户通过总览 **「导入…」** 选择 `.db` 直接只读打开，或把 `.csv/.h5/.hdf5` 导入到新建 `import_preview_*.db` 后自动打开。此模式下 **不会** 再用 `data/` 目录自动扫描覆盖当前连接，避免打断离线分析。点击 **「回到会话库」** 会切回 `SessionRealtime` 并重新 `openDatabase(sessionDatabasePath())`（若路径无效会提示）。 |
 
 ##### 3. 「会话实时 + Live」与「最近 1 小时」窗
 
@@ -423,10 +423,11 @@ docs/                       # GitHub Pages 部署目录
 
 | 按钮/操作 | 作用 |
 |-----------|------|
-| **打开离线库…** | 设为 `OfflineExternal` 并只读打开所选 `.db`；超大表可能弹出说明（聚合与热力图列抽样）。 |
+| **导入…** | 统一入口，按后缀自动识别：`.db` 直接只读打开；`.csv/.h5/.hdf5` 后台导入到新建 `data/import_preview_yyyyMMdd_HHmmss.db` 并自动切到离线库。导入使用 Worker + `QProgressDialog`，支持取消并删除半成品文件。 |
 | **回到会话库** | 切回 `SessionRealtime` 并打开 `sessionDatabasePath()`。 |
 | **回到实时** | 强制 Live + 选区对齐数据尾（`jumpToLive` → `syncLiveTailToSelectionState(true)`）。 |
 | **刷新** | 按当前分量重算包络；工具提示会随 **数据源 + Live/Review** 变化，标明是「最近 1 小时」还是「当前模式下的全时间范围」。 |
+| **导出…** | 将当前只读 DB 的原始行导出为 CSV / HDF5（`schema_version=3`，与 `aligned_frames` 1:1；`stage_pose/*` 占位保留）。支持选区/整库/自定义时段；Worker 线程按 `(timestamp, frame_sequence)` 游标分块流式读写，`QProgressDialog` 可 **取消**，取消后目标文件自动删除。详见 `HistoryExportService`。 |
 
 ##### 常用 SQL 排查语句
 

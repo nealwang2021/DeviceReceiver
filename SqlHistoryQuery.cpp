@@ -11,6 +11,8 @@
 
 namespace {
 constexpr int kSqlAlignedChannelCount = 40;
+static_assert(kSqlAlignedChannelCount == SqlHistoryQuery::kAlignedChannelCount,
+              "kAlignedChannelCount mismatch");
 }
 
 SqlHistoryQuery::SqlHistoryQuery(QObject* parent)
@@ -278,6 +280,132 @@ bool SqlHistoryQuery::queryChannelEnvelope(qint64 startMs,
         row.maxValue = dMax;
         row.hasData = true;
         outBuckets->append(row);
+    }
+    return true;
+}
+
+qint64 SqlHistoryQuery::estimateRowCount(qint64 startMs, qint64 endMs) const
+{
+    if (!m_isOpen || endMs < startMs) {
+        return 0;
+    }
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isValid() || !db.isOpen()) {
+        return 0;
+    }
+
+    constexpr qint64 kOneHourMs = 60LL * 60LL * 1000LL;
+    const qint64 spanMs = endMs - startMs;
+
+    if (spanMs <= kOneHourMs) {
+        QSqlQuery q(db);
+        q.prepare(QStringLiteral(
+            "SELECT COUNT(*) FROM aligned_frames "
+            "WHERE timestamp_unix_ms BETWEEN :start AND :end"));
+        q.bindValue(QStringLiteral(":start"), startMs);
+        q.bindValue(QStringLiteral(":end"), endMs);
+        if (!q.exec() || !q.next()) {
+            qWarning() << "SqlHistoryQuery::estimateRowCount COUNT failed" << q.lastError();
+            return 0;
+        }
+        return q.value(0).toLongLong();
+    }
+
+    // 长时段：用经验帧率（100 fps）粗估，避免全表扫描。
+    constexpr qint64 kAssumedFps = 100;
+    const qint64 spanSec = (spanMs + 999) / 1000;
+    return spanSec * kAssumedFps;
+}
+
+bool SqlHistoryQuery::fetchRawChunk(qint64 startMs,
+                                    qint64 endMs,
+                                    qint64 lastTimestampMs,
+                                    qint64 lastFrameSequence,
+                                    int chunkSize,
+                                    QVector<AlignedFrameRow>* outRows,
+                                    QString* errorMessage) const
+{
+    if (!outRows) {
+        if (errorMessage) *errorMessage = QStringLiteral("outRows 为空");
+        return false;
+    }
+    outRows->clear();
+
+    if (!m_isOpen) {
+        if (errorMessage) *errorMessage = QStringLiteral("数据库未打开");
+        return false;
+    }
+    if (chunkSize <= 0) {
+        chunkSize = 8192;
+    }
+    if (endMs < startMs) {
+        return true; // 空结果
+    }
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isValid() || !db.isOpen()) {
+        if (errorMessage) *errorMessage = QStringLiteral("数据库连接无效");
+        return false;
+    }
+
+    // 组装 SELECT 列：基础字段 + 40 × (amp,phase,x,y,source_channel)
+    QString sql = QStringLiteral(
+        "SELECT timestamp_unix_ms, frame_sequence, detect_mode, cell_count, source_tag");
+    for (int i = 0; i < kSqlAlignedChannelCount; ++i) {
+        const QString prefix = QStringLiteral("pos%1").arg(i, 2, 10, QLatin1Char('0'));
+        sql += QStringLiteral(", %1_amp, %1_phase, %1_x, %1_y, %1_source_channel").arg(prefix);
+    }
+    // (timestamp, frame_sequence) 元组游标：严格递增推进避免 OFFSET 的 O(N^2)
+    sql += QStringLiteral(
+        " FROM aligned_frames "
+        "WHERE timestamp_unix_ms BETWEEN :start AND :end "
+        "AND (timestamp_unix_ms > :lastTs "
+        "     OR (timestamp_unix_ms = :lastTsEq AND frame_sequence > :lastSeq)) "
+        "ORDER BY timestamp_unix_ms ASC, frame_sequence ASC "
+        "LIMIT :chunkSize");
+
+    QSqlQuery q(db);
+    q.setForwardOnly(true);
+    if (!q.prepare(sql)) {
+        const QString msg = QStringLiteral("fetchRawChunk prepare 失败: %1").arg(q.lastError().text());
+        qWarning() << msg;
+        if (errorMessage) *errorMessage = msg;
+        return false;
+    }
+    q.bindValue(QStringLiteral(":start"), startMs);
+    q.bindValue(QStringLiteral(":end"), endMs);
+    q.bindValue(QStringLiteral(":lastTs"), lastTimestampMs);
+    q.bindValue(QStringLiteral(":lastTsEq"), lastTimestampMs);
+    q.bindValue(QStringLiteral(":lastSeq"), lastFrameSequence);
+    q.bindValue(QStringLiteral(":chunkSize"), chunkSize);
+
+    if (!q.exec()) {
+        const QString msg = QStringLiteral("fetchRawChunk exec 失败: %1").arg(q.lastError().text());
+        qWarning() << msg;
+        if (errorMessage) *errorMessage = msg;
+        return false;
+    }
+
+    outRows->reserve(chunkSize);
+    while (q.next()) {
+        AlignedFrameRow row;
+        row.timestampMs    = q.value(0).toLongLong();
+        row.frameSequence  = q.value(1).toLongLong();
+        row.detectMode     = q.value(2).toInt();
+        row.cellCount      = q.value(3).toInt();
+        row.sourceTag      = q.value(4).toString();
+
+        // 基础 5 列后，每槽位 5 列，共 40*5=200 列。
+        int col = 5;
+        for (int i = 0; i < kSqlAlignedChannelCount; ++i) {
+            row.amp[i]           = q.value(col + 0);
+            row.phase[i]         = q.value(col + 1);
+            row.x[i]             = q.value(col + 2);
+            row.y[i]             = q.value(col + 3);
+            row.sourceChannel[i] = q.value(col + 4);
+            col += 5;
+        }
+        outRows->append(row);
     }
     return true;
 }

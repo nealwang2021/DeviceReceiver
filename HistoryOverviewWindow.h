@@ -16,6 +16,9 @@ class QComboBox;
 class QLabel;
 class QPushButton;
 class QTimer;
+class QThread;
+class HistoryExportService;
+class HistoryImportService;
 
 /**
  * 历史总览窗口：
@@ -40,6 +43,7 @@ public slots:
     void jumpToLive();
 
 protected:
+    void changeEvent(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
@@ -48,8 +52,9 @@ private slots:
     void onDatabaseOpened(const QString& path);
     void onDatabaseClosed();
     void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
-    void onOpenOfflineDatabaseClicked();
+    void onImportClicked();
     void onReopenSessionDatabaseClicked();
+    void onExportClicked();
 
 private:
     enum class DragMode {
@@ -71,6 +76,8 @@ private:
     void rebuildEnvelope();
     void applyRangeToItems();
     void updateStatusLabels();
+    bool isDarkThemeActive() const;
+    void applyThemeToPlot();
     void commitRangeToSelectionState(bool asReview);
     DragMode hitTest(double timeX) const;
     void snapRangeToBounds();
@@ -90,11 +97,18 @@ private:
     QComboBox* m_componentCombo = nullptr;
     QPushButton* m_backToLiveButton = nullptr;
     QPushButton* m_refreshButton = nullptr;
-    QPushButton* m_openOfflineDbButton = nullptr;
+    QPushButton* m_importButton = nullptr;
     QPushButton* m_reopenSessionDbButton = nullptr;
+    QPushButton* m_exportButton = nullptr;
     QLabel* m_dbLabel = nullptr;
     QLabel* m_statusLabel = nullptr;
     QLabel* m_boundsLabel = nullptr;
+
+    /// 正在运行的导出任务（同一时刻至多一个）。
+    QPointer<QThread> m_exportThread;
+    QPointer<HistoryExportService> m_exportService;
+    QPointer<QThread> m_importThread;
+    QPointer<HistoryImportService> m_importService;
 
     SqlHistoryQuery::Component m_component = SqlHistoryQuery::Component::Amplitude;
 

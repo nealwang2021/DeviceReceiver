@@ -60,3 +60,10 @@ Makefile.Release
 
 # ===== Local-only files =====
 realtime_data_resource.rc
+
+# ===== Cursor governance artifacts =====
+.cursor/*
+!.cursor/rules/
+!.cursor/skills/
+!.cursor/rules/**
+!.cursor/skills/**
