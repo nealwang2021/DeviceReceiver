@@ -1,5 +1,38 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#
+# grpc_test_server.py 使用说明
+# ============================
+# 作用：
+# - 基于 proto/device.proto 提供 AcquisitionDevice gRPC 模拟服务
+# - 支持 CSV 回放与纯模拟数据
+# - 支持可配置 sequence 行为，用于复现/验证 frame_sequence 冲突问题
+#
+# 常用启动：
+#   python grpc_test_server.py
+#   python grpc_test_server.py --no-csv --interval 50
+#
+# sequence 验证模式：
+# - 单调递增（基线，不应冲突）
+#   python grpc_test_server.py --seq-mode monotonic
+# - 每次 StartSampling 后重置（模拟设备重启采样）
+#   python grpc_test_server.py --seq-mode reset-on-start
+# - 周期回绕（如 0,1,2,3,0,1...）
+#   python grpc_test_server.py --seq-mode cycle --seq-cycle 4
+# - 恒为 0（强冲突复现）
+#   python grpc_test_server.py --seq-mode always-zero
+#
+# 参数摘要：
+# - --host / --port：监听地址（默认 0.0.0.0:50051）
+# - --csv / --no-csv：CSV 回放开关
+# - --cells / --interval / --noise：模拟数据通道数、帧间隔、噪声
+# - --seq-mode / --seq-cycle：sequence 生成策略
+#
+# 建议验证步骤：
+# 1) 先用 --seq-mode monotonic 确认基线
+# 2) 再用 always-zero / cycle / reset-on-start 观察客户端写库与导出行为
+# 3) 重点确认不再出现 UNIQUE constraint failed: aligned_frames.frame_sequence
+#
 
 import argparse
 import csv
@@ -176,10 +209,19 @@ class CsvReplaySource:
 
 
 class FrameGenerator:
-    def __init__(self, cell_count: int = 40, noise: float = 0.03, csv_path: str = ""):
+    def __init__(
+        self,
+        cell_count: int = 40,
+        noise: float = 0.03,
+        csv_path: str = "",
+        seq_mode: str = "monotonic",
+        seq_cycle: int = 8,
+    ):
         self.cell_count = max(1, min(cell_count, 512))
         self.noise = max(0.0, noise)
         self.sequence = 0
+        self.seq_mode = (seq_mode or "monotonic").strip().lower()
+        self.seq_cycle = max(1, int(seq_cycle))
         self._opened = False
         self._sampling = False
         self._current_device_id = ""
@@ -198,6 +240,16 @@ class FrameGenerator:
                 )
             except Exception as e:
                 print(f"[grpc_test_server] CSV replay disabled, fallback to synthetic: {e}")
+
+    def _next_sequence_locked(self) -> int:
+        self.sequence += 1
+        if self.seq_mode == "always-zero":
+            return 0
+        if self.seq_mode == "cycle":
+            # 示例: cycle=8 -> 0,1,2,3,4,5,6,7,0,1...
+            return (self.sequence - 1) % self.seq_cycle
+        # monotonic / reset-on-start
+        return self.sequence
 
     def list_devices(self):
         display_name = "CSV Replay Device" if self._csv_source else "Mock Device 001"
@@ -226,6 +278,8 @@ class FrameGenerator:
         with self._lock:
             if not self._opened:
                 return False, "device not opened"
+            if self.seq_mode == "reset-on-start":
+                self.sequence = 0
             self._sampling = True
             return True, "sampling started"
 
@@ -243,14 +297,17 @@ class FrameGenerator:
             opened = self._opened
             sampling = self._sampling
             cell_count = self.cell_count
-            self.sequence += 1
-            sequence = self.sequence
 
         if not opened or not sampling:
             return None
 
+        with self._lock:
+            sequence = self._next_sequence_locked()
+
         if self._csv_source:
-            return self._csv_source.next_frame()
+            frame = self._csv_source.next_frame()
+            frame.sequence = sequence
+            return frame
 
         now_ms = int(time.time() * 1000)
         t = now_ms / 1000.0
@@ -340,6 +397,18 @@ def parse_args():
     parser.add_argument("--noise", type=float, default=0.03)
     parser.add_argument("--csv", default=default_csv, help="CSV replay source path")
     parser.add_argument("--no-csv", action="store_true", help="Disable CSV replay and use synthetic data")
+    parser.add_argument(
+        "--seq-mode",
+        choices=["monotonic", "reset-on-start", "cycle", "always-zero"],
+        default="monotonic",
+        help="Sequence generation mode for ProcessedFrameReply.sequence",
+    )
+    parser.add_argument(
+        "--seq-cycle",
+        type=int,
+        default=8,
+        help="Cycle size when --seq-mode=cycle (default: 8)",
+    )
     return parser.parse_args()
 
 
@@ -347,7 +416,13 @@ def main():
     args = parse_args()
 
     csv_path = "" if args.no_csv else args.csv
-    generator = FrameGenerator(cell_count=args.cells, noise=args.noise, csv_path=csv_path)
+    generator = FrameGenerator(
+        cell_count=args.cells,
+        noise=args.noise,
+        csv_path=csv_path,
+        seq_mode=args.seq_mode,
+        seq_cycle=args.seq_cycle,
+    )
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
     device_pb2_grpc.add_AcquisitionDeviceServicer_to_server(
         AcquisitionDeviceServicer(generator, interval_ms=args.interval), server
@@ -359,6 +434,10 @@ def main():
 
     print(f"[grpc_test_server] AcquisitionDevice listening on {bind_addr}")
     print("[grpc_test_server] methods: ListDevices/OpenDevice/StartSampling/SubscribeProcessedFrames")
+    print(
+        f"[grpc_test_server] seq_mode={args.seq_mode}"
+        + (f", seq_cycle={args.seq_cycle}" if args.seq_mode == "cycle" else "")
+    )
 
     stop_event = threading.Event()
 

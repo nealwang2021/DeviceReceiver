@@ -320,7 +320,7 @@ qint64 SqlHistoryQuery::estimateRowCount(qint64 startMs, qint64 endMs) const
 bool SqlHistoryQuery::fetchRawChunk(qint64 startMs,
                                     qint64 endMs,
                                     qint64 lastTimestampMs,
-                                    qint64 lastFrameSequence,
+                                    qint64 lastRowId,
                                     int chunkSize,
                                     QVector<AlignedFrameRow>* outRows,
                                     QString* errorMessage) const
@@ -350,18 +350,18 @@ bool SqlHistoryQuery::fetchRawChunk(qint64 startMs,
 
     // 组装 SELECT 列：基础字段 + 40 × (amp,phase,x,y,source_channel)
     QString sql = QStringLiteral(
-        "SELECT timestamp_unix_ms, frame_sequence, detect_mode, cell_count, source_tag");
+        "SELECT id, timestamp_unix_ms, frame_sequence, detect_mode, cell_count, source_tag");
     for (int i = 0; i < kSqlAlignedChannelCount; ++i) {
         const QString prefix = QStringLiteral("pos%1").arg(i, 2, 10, QLatin1Char('0'));
         sql += QStringLiteral(", %1_amp, %1_phase, %1_x, %1_y, %1_source_channel").arg(prefix);
     }
-    // (timestamp, frame_sequence) 元组游标：严格递增推进避免 OFFSET 的 O(N^2)
+    // (timestamp, id) 元组游标：避免 frame_sequence 重复时分页歧义，同时规避 OFFSET 的 O(N^2)
     sql += QStringLiteral(
         " FROM aligned_frames "
         "WHERE timestamp_unix_ms BETWEEN :start AND :end "
         "AND (timestamp_unix_ms > :lastTs "
-        "     OR (timestamp_unix_ms = :lastTsEq AND frame_sequence > :lastSeq)) "
-        "ORDER BY timestamp_unix_ms ASC, frame_sequence ASC "
+        "     OR (timestamp_unix_ms = :lastTsEq AND id > :lastRowId)) "
+        "ORDER BY timestamp_unix_ms ASC, id ASC "
         "LIMIT :chunkSize");
 
     QSqlQuery q(db);
@@ -376,7 +376,7 @@ bool SqlHistoryQuery::fetchRawChunk(qint64 startMs,
     q.bindValue(QStringLiteral(":end"), endMs);
     q.bindValue(QStringLiteral(":lastTs"), lastTimestampMs);
     q.bindValue(QStringLiteral(":lastTsEq"), lastTimestampMs);
-    q.bindValue(QStringLiteral(":lastSeq"), lastFrameSequence);
+    q.bindValue(QStringLiteral(":lastRowId"), lastRowId);
     q.bindValue(QStringLiteral(":chunkSize"), chunkSize);
 
     if (!q.exec()) {
@@ -389,14 +389,15 @@ bool SqlHistoryQuery::fetchRawChunk(qint64 startMs,
     outRows->reserve(chunkSize);
     while (q.next()) {
         AlignedFrameRow row;
-        row.timestampMs    = q.value(0).toLongLong();
-        row.frameSequence  = q.value(1).toLongLong();
-        row.detectMode     = q.value(2).toInt();
-        row.cellCount      = q.value(3).toInt();
-        row.sourceTag      = q.value(4).toString();
+        row.rowId          = q.value(0).toLongLong();
+        row.timestampMs    = q.value(1).toLongLong();
+        row.frameSequence  = q.value(2).toLongLong();
+        row.detectMode     = q.value(3).toInt();
+        row.cellCount      = q.value(4).toInt();
+        row.sourceTag      = q.value(5).toString();
 
-        // 基础 5 列后，每槽位 5 列，共 40*5=200 列。
-        int col = 5;
+        // 基础 6 列后，每槽位 5 列，共 40*5=200 列。
+        int col = 6;
         for (int i = 0; i < kSqlAlignedChannelCount; ++i) {
             row.amp[i]           = q.value(col + 0);
             row.phase[i]         = q.value(col + 1);

@@ -37,6 +37,7 @@ public:
 
     /// 原始行（用于整库/时段导出）。QVariant 为 null 表示 DB 中对应槽位为 NULL。
     struct AlignedFrameRow {
+        qint64 rowId = 0; // aligned_frames.id，稳定且唯一，作为流式游标
         qint64 timestampMs = 0;
         qint64 frameSequence = 0;
         int detectMode = 0;
@@ -95,14 +96,14 @@ public:
 
     /**
      * 分块读取原始行（用于导出）。
-     * 游标以 (timestampMs, frameSequence) 严格递增推进；首个 chunk 传 lastTimestampMs=startMs-1,
-     * lastFrameSequence=std::numeric_limits<qint64>::min()，或传入上一批最后一行的值。
+     * 游标以 (timestampMs, rowId) 严格递增推进；首个 chunk 传 lastTimestampMs=startMs-1,
+     * lastRowId=std::numeric_limits<qint64>::min()，或传入上一批最后一行的值。
      * 返回 false 表示出错；outRows 为空表示已到末尾。
      */
     bool fetchRawChunk(qint64 startMs,
                        qint64 endMs,
                        qint64 lastTimestampMs,
-                       qint64 lastFrameSequence,
+                       qint64 lastRowId,
                        int chunkSize,
                        QVector<AlignedFrameRow>* outRows,
                        QString* errorMessage = nullptr) const;

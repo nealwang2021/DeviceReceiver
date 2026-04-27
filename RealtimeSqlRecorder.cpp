@@ -122,6 +122,9 @@ public slots:
             pragma.exec("PRAGMA wal_checkpoint(TRUNCATE)");
             m_db.close();
         }
+        // removeDatabase 前先释放所有依赖该连接的句柄，避免 Qt 未定义行为。
+        m_insertAlignedFrame = QSqlQuery();
+        m_db = QSqlDatabase();
         if (!m_connectionName.isEmpty()) {
             QSqlDatabase::removeDatabase(m_connectionName);
             m_connectionName.clear();
@@ -422,7 +425,6 @@ bool RealtimeSqlRecorder::ensureAlignedFramesSchema(QSqlDatabase& db, QString* e
             "pos38_amp REAL, pos38_phase REAL, pos38_x REAL, pos38_y REAL, pos38_source_channel INTEGER,"
             "pos39_amp REAL, pos39_phase REAL, pos39_x REAL, pos39_y REAL, pos39_source_channel INTEGER"
             ")"),
-        QStringLiteral("CREATE UNIQUE INDEX IF NOT EXISTS idx_aligned_frames_sequence ON aligned_frames(frame_sequence)"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_timestamp ON aligned_frames(timestamp_unix_ms)")
     };
     for (const QString& sql : ddl) {
@@ -433,6 +435,42 @@ bool RealtimeSqlRecorder::ensureAlignedFramesSchema(QSqlDatabase& db, QString* e
             return false;
         }
     }
+
+    // 兼容历史版本：若 sequence 索引为 UNIQUE，则降级为普通索引，保留设备原始 sequence 允许重复。
+    bool sequenceIndexIsUnique = false;
+    QSqlQuery indexListQuery(db);
+    if (!indexListQuery.exec(QStringLiteral("PRAGMA index_list('aligned_frames')"))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("读取索引信息失败: %1").arg(indexListQuery.lastError().text());
+        }
+        return false;
+    }
+    while (indexListQuery.next()) {
+        const QString idxName = indexListQuery.value(1).toString();
+        const int uniqueFlag = indexListQuery.value(2).toInt();
+        if (idxName == QStringLiteral("idx_aligned_frames_sequence")) {
+            sequenceIndexIsUnique = (uniqueFlag != 0);
+            break;
+        }
+    }
+
+    QSqlQuery indexFixQuery(db);
+    if (sequenceIndexIsUnique) {
+        if (!indexFixQuery.exec(QStringLiteral("DROP INDEX IF EXISTS idx_aligned_frames_sequence"))) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("移除旧 UNIQUE 索引失败: %1").arg(indexFixQuery.lastError().text());
+            }
+            return false;
+        }
+    }
+    if (!indexFixQuery.exec(QStringLiteral(
+            "CREATE INDEX IF NOT EXISTS idx_aligned_frames_sequence ON aligned_frames(frame_sequence)"))) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("创建 sequence 普通索引失败: %1").arg(indexFixQuery.lastError().text());
+        }
+        return false;
+    }
+
     return true;
 }
 
