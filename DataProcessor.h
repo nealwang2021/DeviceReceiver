@@ -17,6 +17,7 @@ private slots:
 
 private:
     QTimer* m_statTimer; // 统计定时器
+    bool m_enabled = false;
 };
 
 #endif // DATAPROCESSOR_H

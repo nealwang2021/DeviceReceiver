@@ -221,7 +221,6 @@ include( $$PWD/3rd_qcustomplot/3rd_qcustomplot/3rd_qcustomplot.pri )
 # 源文件列表
 SOURCES += main.cpp \
            DataCacheManager.cpp \
-           DataExporter.cpp \
            SerialReceiver.cpp \
            GrpcReceiverBackend.cpp \
            StageReceiverBackend.cpp \
@@ -251,7 +250,6 @@ SOURCES += main.cpp \
 HEADERS += FrameData.h \
            GrpcEndpointUtils.h \
            DataCacheManager.h \
-           DataExporter.h \
            IReceiverBackend.h \
            SerialReceiver.h \
            GrpcReceiverBackend.h \

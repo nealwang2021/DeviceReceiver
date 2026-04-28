@@ -62,7 +62,6 @@ endif()
 set(SOURCE_FILES
     main.cpp
     DataCacheManager.cpp
-    DataExporter.cpp
     SerialReceiver.cpp
     GrpcReceiverBackend.cpp
     StageReceiverBackend.cpp
@@ -94,7 +93,6 @@ set(HEADER_FILES
     FrameData.h
     GrpcEndpointUtils.h
     DataCacheManager.h
-    DataExporter.h
     IReceiverBackend.h
     SerialReceiver.h
     GrpcReceiverBackend.h
@@ -344,10 +342,10 @@ if(MSVC)
         /wd4819  # 禁用C4819编码警告
     )
     
-    # Release模式可调试（与.pro文件一致）
+    # Release保持优化；如需可调试发布构建，请使用 RelWithDebInfo。
     set_target_properties(realtime_data PROPERTIES
-        COMPILE_FLAGS_RELEASE "/Zi"
-        LINK_FLAGS_RELEASE "/DEBUG"
+        COMPILE_FLAGS_RELWITHDEBINFO "/Zi"
+        LINK_FLAGS_RELWITHDEBINFO "/DEBUG"
     )
 else()
     # GCC/Clang/Mingw
@@ -358,10 +356,10 @@ else()
         -fexec-charset=UTF-8
     )
     
-    # Release模式可调试
+    # Release保持优化；如需可调试发布构建，请使用 RelWithDebInfo。
     set_target_properties(realtime_data PROPERTIES
-        COMPILE_FLAGS_RELEASE "-O0 -g"
-        LINK_FLAGS_RELEASE "-g"
+        COMPILE_FLAGS_RELWITHDEBINFO "-O2 -g"
+        LINK_FLAGS_RELWITHDEBINFO "-g"
     )
 endif()
 

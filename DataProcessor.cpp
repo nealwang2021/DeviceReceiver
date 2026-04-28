@@ -2,10 +2,22 @@
 #include "DataCacheManager.h"
 #include <QDateTime>
 #include <QDebug>
+#include <QProcessEnvironment>
 #include <algorithm>
 #include <cmath>
 DataProcessor::DataProcessor(QObject *parent) : QObject(parent)
 {
+    // 默认关闭 1Hz 统计，避免在生产路径增加额外锁竞争和日志开销。
+    // 如需排障可临时设置环境变量 DEVICE_RECEIVER_ENABLE_STATS=1。
+    const QString enableStats = QProcessEnvironment::systemEnvironment().value(
+        QStringLiteral("DEVICE_RECEIVER_ENABLE_STATS"));
+    m_enabled = (enableStats == QStringLiteral("1"));
+    if (!m_enabled) {
+        m_statTimer = nullptr;
+        qInfo() << "DataProcessor: 统计定时器已禁用（设置 DEVICE_RECEIVER_ENABLE_STATS=1 可启用）";
+        return;
+    }
+
     // 1Hz统计定时器
     m_statTimer = new QTimer(this);
     m_statTimer->setInterval(1000);
@@ -15,6 +27,10 @@ DataProcessor::DataProcessor(QObject *parent) : QObject(parent)
 
 void DataProcessor::calcStats()
 {
+    if (!m_enabled) {
+        return;
+    }
+
     // 获取过去1秒内的所有帧
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     auto frames = DataCacheManager::instance()->getFramesInTimeRange(now - 1000, now);

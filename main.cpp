@@ -10,11 +10,14 @@
 #include <QFontDatabase>
 #include <QFont>
 #include <iostream>
+#include <mutex>
 
 static QFile* g_logFile = nullptr;
+static std::mutex g_logMutex;
 
 static void writeUtf8LogLine(const QString& line)
 {
+    std::lock_guard<std::mutex> lock(g_logMutex);
     if (!g_logFile) {
         return;
     }

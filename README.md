@@ -177,16 +177,23 @@ build_cmake.bat
 build_cmake\build\release\realtime_data.exe
 ```
 
-#### 📦 **其他构建脚本**
+#### 📦 **其他构建脚本（Legacy，仅兼容保留）**
 
 
 | 脚本文件                   | 说明               |
 | ---------------------- | ---------------- |
-| `build_and_run.bat`    | 原始增强构建脚本         |
-| `build_and_run_en.bat` | 英文版本增强构建脚本       |
-| `full_build.bat`       | 基础构建脚本，无参数支持     |
-| `build.ps1`            | PowerShell构建脚本   |
-| `build_ps.ps1`         | 原始PowerShell构建脚本 |
+| `build_and_run.bat`    | Legacy 脚本，不作为主入口 |
+| `build_and_run_en.bat` | Legacy 脚本，不作为主入口 |
+| `full_build.bat`       | Legacy 脚本，不作为主入口 |
+| `build.ps1`            | Legacy 脚本，不作为主入口 |
+| `build_ps.ps1`         | Legacy 脚本，不作为主入口 |
+
+> 日常开发、联调、CI 对齐请统一使用 `build_cmake.bat`。
+
+### 仓库治理说明（性能与维护）
+
+- `3rd_qcustomplot` 目录中保留了多个历史版本，仅 `v2_1` 参与当前主构建。
+- `testDemo/` 为历史演示工程，不参与主程序默认构建与发布流程。
 
 
 #### 🧩 `**package_grpc_test_server.bat` - gRPC 测试服务打包脚本**

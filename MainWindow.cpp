@@ -2002,6 +2002,7 @@ void MainWindow::updateGrpcTestUiState()
     const bool isGrpcBackend = (m_backendTypeCombo &&
                                 m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
     const bool isGrpcRealMode = (isGrpcBackend && m_useMockDataCheck && !m_useMockDataCheck->isChecked());
+    const bool allowGenericSend = !isGrpcRealMode;
 
 #ifndef QT_COMPILE_FOR_WASM
     const bool serverRunning = m_grpcTestServerProcess && m_grpcTestServerProcess->state() != QProcess::NotRunning;
@@ -2014,6 +2015,13 @@ void MainWindow::updateGrpcTestUiState()
 
     m_runGrpcSelfTestButton->setEnabled(isGrpcRealMode && m_isConnected && !m_grpcSelfTestPending);
     m_grpcModeCombo->setEnabled(isGrpcRealMode && m_isConnected && !m_grpcSelfTestPending);
+    if (m_sendButton) {
+        m_sendButton->setEnabled(allowGenericSend);
+        m_sendButton->setToolTip(
+            allowGenericSend
+                ? QString()
+                : QStringLiteral("gRPC 真机模式下未提供通用 SendCommand，请使用自检/专用控制面板。"));
+    }
 
     if (!m_grpcSelfTestPending) {
         if (!isGrpcBackend) {
@@ -3073,6 +3081,15 @@ void MainWindow::onGrpcSelfTestTimeout()
 
 void MainWindow::onSendClicked()
 {
+    const bool isGrpcBackend = (m_backendTypeCombo &&
+                                m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
+    const bool isGrpcRealMode = (isGrpcBackend && m_useMockDataCheck && !m_useMockDataCheck->isChecked());
+    if (isGrpcRealMode) {
+        QMessageBox::information(this, "提示",
+                                 "gRPC 真机模式下未提供通用 SendCommand，请使用自检或专用控制面板。");
+        return;
+    }
+
     QString command = m_commandInput->toPlainText().trimmed();
     if (command.isEmpty()) {
         QMessageBox::warning(this, "警告", "指令不能为空");
@@ -3097,8 +3114,6 @@ void MainWindow::onSendClicked()
     
     // 在监控区显示发送的指令
     addDataToMonitor(command, isHex, false);
-    const bool isGrpcBackend = (m_backendTypeCombo &&
-                                m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
     if (isGrpcBackend) {
         logGrpcInteraction("send", QString("发送命令: %1 (isHex=%2)").arg(command, isHex ? "true" : "false"));
     }
