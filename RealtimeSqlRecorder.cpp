@@ -309,11 +309,15 @@ private:
         }
         m_lastPruneMs = nowMs;
 
+        // 保留窗口必须按「写入本机时间」判断：timestamp_unix_ms 可能为设备相对时钟或非 UTC，
+        // 若与 wall-clock 比较会误删几乎全部行，历史总览只剩极短跨度。
         const qint64 cutoff = nowMs - m_owner->m_retentionMs;
         if (m_owner->m_retentionMs > 0) {
             QSqlQuery delFrames(m_db);
             if (m_db.transaction()) {
-                delFrames.prepare(QStringLiteral("DELETE FROM aligned_frames WHERE timestamp_unix_ms < ?"));
+                delFrames.prepare(QStringLiteral(
+                    "DELETE FROM aligned_frames WHERE "
+                    "(CASE WHEN created_at_ms > 0 THEN created_at_ms ELSE timestamp_unix_ms END) < ?"));
                 delFrames.addBindValue(cutoff);
                 const bool ok = delFrames.exec();
                 if (ok) {
@@ -332,11 +336,10 @@ private:
                     break;
                 }
                 QSqlQuery delFrames(m_db);
-                const QString deleteOldFrameIds = QStringLiteral(
-                    "SELECT id FROM aligned_frames ORDER BY timestamp_unix_ms ASC LIMIT 2000");
-
-                const bool ok = delFrames.exec(
-                    QStringLiteral("DELETE FROM aligned_frames WHERE id IN (%1)").arg(deleteOldFrameIds));
+                // 按插入顺序删最旧行；勿用 timestamp_unix_ms 排序（设备时间可能非单调）。
+                const bool ok = delFrames.exec(QStringLiteral(
+                    "DELETE FROM aligned_frames WHERE id IN ("
+                    "SELECT id FROM aligned_frames ORDER BY id ASC LIMIT 2000)"));
 
                 if (ok) {
                     m_db.commit();
@@ -425,7 +428,8 @@ bool RealtimeSqlRecorder::ensureAlignedFramesSchema(QSqlDatabase& db, QString* e
             "pos38_amp REAL, pos38_phase REAL, pos38_x REAL, pos38_y REAL, pos38_source_channel INTEGER,"
             "pos39_amp REAL, pos39_phase REAL, pos39_x REAL, pos39_y REAL, pos39_source_channel INTEGER"
             ")"),
-        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_timestamp ON aligned_frames(timestamp_unix_ms)")
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_timestamp ON aligned_frames(timestamp_unix_ms)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_aligned_frames_created_at ON aligned_frames(created_at_ms)")
     };
     for (const QString& sql : ddl) {
         if (!q.exec(sql)) {

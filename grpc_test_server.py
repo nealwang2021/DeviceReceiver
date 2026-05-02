@@ -41,6 +41,7 @@ import os
 import random
 import re
 import signal
+import sqlite3
 import sys
 import threading
 import time
@@ -208,12 +209,94 @@ class CsvReplaySource:
         return frame
 
 
+class SqliteReplaySource:
+    POS_AMP_PATTERN = re.compile(r"^pos(\d+)_amp$")
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._rows = []
+        self._positions = []
+        self._emit_counter = 0
+        self._last_emit_unix_ms = 0
+        self._load()
+
+    @property
+    def cell_count(self) -> int:
+        return len(self._positions)
+
+    @property
+    def frame_count(self) -> int:
+        return len(self._rows)
+
+    def _load(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute("PRAGMA table_info(aligned_frames)")
+            cols = [r["name"] for r in cur.fetchall()]
+            if not cols:
+                raise RuntimeError(f"aligned_frames schema missing: {self.db_path}")
+
+            positions = []
+            for name in cols:
+                m = self.POS_AMP_PATTERN.match(name)
+                if m:
+                    positions.append(int(m.group(1)))
+            positions.sort()
+            if not positions:
+                raise RuntimeError(f"aligned_frames missing posXX_amp columns: {self.db_path}")
+
+            rows = conn.execute("SELECT * FROM aligned_frames ORDER BY frame_sequence ASC").fetchall()
+            if not rows:
+                raise RuntimeError(f"aligned_frames has no rows: {self.db_path}")
+
+            self._positions = positions
+            self._rows = rows
+        finally:
+            conn.close()
+
+    def next_frame(self):
+        row_count = len(self._rows)
+        row_index = self._emit_counter % row_count
+        row = self._rows[row_index]
+        self._emit_counter += 1
+
+        frame = device_pb2.ProcessedFrameReply()
+        frame.sequence = self._emit_counter
+
+        # DB 回放时间戳同样采用实时单调时钟，避免历史时间轴乱序影响客户端增量处理。
+        now_ms = int(time.time() * 1000)
+        if now_ms <= self._last_emit_unix_ms:
+            now_ms = self._last_emit_unix_ms + 1
+        self._last_emit_unix_ms = now_ms
+        frame.timestamp_unix_ms = now_ms
+
+        db_cell_count = _to_int(row["cell_count"], len(self._positions))
+        active_count = min(max(1, db_cell_count), len(self._positions))
+        frame.cell_count = active_count
+
+        for display_index in range(active_count):
+            pos = self._positions[display_index]
+            prefix = f"pos{pos:02d}"
+
+            sample = frame.samples.add()
+            sample.display_index = display_index
+            sample.source_channel = _to_int(row[f"{prefix}_source_channel"], pos)
+            sample.amp = _to_float(row[f"{prefix}_amp"], 0.0)
+            sample.phase = _to_float(row[f"{prefix}_phase"], 0.0)
+            sample.x = _to_float(row[f"{prefix}_x"], 0.0)
+            sample.y = _to_float(row[f"{prefix}_y"], 0.0)
+
+        return frame
+
+
 class FrameGenerator:
     def __init__(
         self,
         cell_count: int = 40,
         noise: float = 0.03,
         csv_path: str = "",
+        db_path: str = "",
         seq_mode: str = "monotonic",
         seq_cycle: int = 8,
     ):
@@ -227,10 +310,22 @@ class FrameGenerator:
         self._current_device_id = ""
         self._lock = threading.Lock()
         self._csv_source = None
+        self._db_source = None
         self._phase = [random.uniform(0.0, 2.0 * math.pi) for _ in range(512)]
         self._freq = [0.3 + i * 0.07 for i in range(512)]
 
-        if csv_path:
+        if db_path:
+            try:
+                self._db_source = SqliteReplaySource(db_path)
+                self.cell_count = self._db_source.cell_count
+                print(
+                    f"[grpc_test_server] DB replay enabled: {db_path} "
+                    f"(frames={self._db_source.frame_count}, cell_count={self.cell_count})"
+                )
+            except Exception as e:
+                print(f"[grpc_test_server] DB replay disabled, fallback: {e}")
+
+        if (not self._db_source) and csv_path:
             try:
                 self._csv_source = CsvReplaySource(csv_path)
                 self.cell_count = self._csv_source.cell_count
@@ -252,8 +347,15 @@ class FrameGenerator:
         return self.sequence
 
     def list_devices(self):
-        display_name = "CSV Replay Device" if self._csv_source else "Mock Device 001"
-        serial_number = "SN-CSV-001" if self._csv_source else "SN-MOCK-001"
+        if self._db_source:
+            display_name = "DB Replay Device"
+            serial_number = "SN-DB-001"
+        elif self._csv_source:
+            display_name = "CSV Replay Device"
+            serial_number = "SN-CSV-001"
+        else:
+            display_name = "Mock Device 001"
+            serial_number = "SN-MOCK-001"
         return [
             device_pb2.DeviceItem(
                 device_id="mock-001",
@@ -304,6 +406,11 @@ class FrameGenerator:
         with self._lock:
             sequence = self._next_sequence_locked()
 
+        if self._db_source:
+            frame = self._db_source.next_frame()
+            frame.sequence = sequence
+            return frame
+
         if self._csv_source:
             frame = self._csv_source.next_frame()
             frame.sequence = sequence
@@ -338,7 +445,8 @@ class FrameGenerator:
 class AcquisitionDeviceServicer(device_pb2_grpc.AcquisitionDeviceServicer):
     def __init__(self, generator: FrameGenerator, interval_ms: int = 100):
         self.generator = generator
-        self.interval_ms = max(10, interval_ms)
+        # 允许 <10ms 的高频回放；仅保护非法值（0/负数）。
+        self.interval_ms = max(1, interval_ms)
 
     def ListDevices(self, request, context):
         reply = device_pb2.ListDevicesReply()
@@ -396,6 +504,7 @@ def parse_args():
     parser.add_argument("--interval", type=int, default=100)
     parser.add_argument("--noise", type=float, default=0.03)
     parser.add_argument("--csv", default=default_csv, help="CSV replay source path")
+    parser.add_argument("--db", default="", help="SQLite replay source path (aligned_frames table)")
     parser.add_argument("--no-csv", action="store_true", help="Disable CSV replay and use synthetic data")
     parser.add_argument(
         "--seq-mode",
@@ -416,10 +525,12 @@ def main():
     args = parse_args()
 
     csv_path = "" if args.no_csv else args.csv
+    db_path = args.db.strip() if args.db else ""
     generator = FrameGenerator(
         cell_count=args.cells,
         noise=args.noise,
         csv_path=csv_path,
+        db_path=db_path,
         seq_mode=args.seq_mode,
         seq_cycle=args.seq_cycle,
     )

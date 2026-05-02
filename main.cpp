@@ -78,11 +78,17 @@ int main(int argc, char *argv[])
 #endif
 
         // 先安装日志处理器，再加载 config.ini，否则 AppConfig::loadFromFile 内的 qInfo/qWarning 不会写入 realtime_data.log
-        QString logPath = QApplication::applicationDirPath() + "/realtime_data.log";
+        const QString startupTag = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+        QString logPath = QApplication::applicationDirPath() + QString("/realtime_data_%1.log").arg(startupTag);
         g_logFile = new QFile(logPath, qApp);
         if (g_logFile->open(QIODevice::Append | QIODevice::Text)) {
             qInstallMessageHandler(realtimeMessageHandler);
             qInfo() << "日志已打开:" << logPath;
+            const qint64 startupEpochMs = QDateTime::currentMSecsSinceEpoch();
+            const QString startupIso = QDateTime::fromMSecsSinceEpoch(startupEpochMs).toString(Qt::ISODateWithMs);
+            qInfo().noquote() << QString("=== APP_START startup_iso=%1 startup_epoch_ms=%2 ===")
+                                     .arg(startupIso)
+                                     .arg(startupEpochMs);
         } else {
             qWarning() << "无法打开日志文件:" << logPath;
             delete g_logFile; g_logFile = nullptr;

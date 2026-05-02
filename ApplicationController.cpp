@@ -21,6 +21,11 @@
 #include <QPushButton>
 #include <QDir>
 #include <QDateTime>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QThread>
+#include <QCoreApplication>
 
 namespace {
 
@@ -39,6 +44,29 @@ PlotWindowManager::PlotType normalizeStoredPlotType(int v)
     }
     qWarning() << "ApplicationController: 无效的绘图类型序号" << v << "，回退为组合图";
     return PlotWindowManager::CombinedPlot;
+}
+
+void writeDebugNdjson(const char* runId,
+                      const char* hypothesisId,
+                      const char* location,
+                      const QString& message,
+                      const QJsonObject& data = QJsonObject())
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("sessionId"), QStringLiteral("3f496b"));
+    payload.insert(QStringLiteral("runId"), QString::fromUtf8(runId));
+    payload.insert(QStringLiteral("hypothesisId"), QString::fromUtf8(hypothesisId));
+    payload.insert(QStringLiteral("location"), QString::fromUtf8(location));
+    payload.insert(QStringLiteral("message"), message);
+    payload.insert(QStringLiteral("data"), data);
+    payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+
+    QFile f(QStringLiteral("d:/WS/qtpro/DeviceReceiver/debug-3f496b.log"));
+    if (f.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        f.write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
+        f.write("\n");
+        f.close();
+    }
 }
 
 } // namespace
@@ -300,6 +328,27 @@ void ApplicationController::start()
 
 void ApplicationController::stop()
 {
+    // #region agent log
+    writeDebugNdjson(
+        "baseline",
+        "H1",
+        "ApplicationController::stop:entry",
+        QStringLiteral("进入 stop，记录运行状态与线程状态"),
+        QJsonObject{
+            {QStringLiteral("isRunning"), m_isRunning},
+            {QStringLiteral("connectInProgress"), m_connectInProgress},
+            {QStringLiteral("hasReceiver"), m_serialReceiver != nullptr},
+            {QStringLiteral("hasSerialThread"), m_serialThread != nullptr},
+            {QStringLiteral("serialThreadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
+        });
+    // #endregion
+    qWarning().noquote() << QString("[DBG-3f496b][H1] stop.entry isRunning=%1 connectInProgress=%2 hasReceiver=%3 hasSerialThread=%4 serialThreadRunning=%5")
+                                .arg(m_isRunning)
+                                .arg(m_connectInProgress)
+                                .arg(m_serialReceiver != nullptr)
+                                .arg(m_serialThread != nullptr)
+                                .arg(m_serialThread ? m_serialThread->isRunning() : false);
+
     if (m_connectInProgress) {
         m_connectInProgress = false;
         emit connectionInProgressChanged(false);
@@ -380,13 +429,41 @@ bool ApplicationController::initCacheManager()
 bool ApplicationController::initReceiverBackend()
 {
     if (m_serialReceiver) {
+        // #region agent log
+        writeDebugNdjson(
+            "baseline",
+            "H4",
+            "ApplicationController::initReceiverBackend:before-reset",
+            QStringLiteral("重建后端前准备停止旧线程"),
+            QJsonObject{
+                {QStringLiteral("hasThread"), m_serialThread != nullptr},
+                {QStringLiteral("threadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
+            });
+        // #endregion
+        qWarning().noquote() << QString("[DBG-3f496b][H4] initReceiverBackend.beforeReset hasThread=%1 threadRunning=%2")
+                                    .arg(m_serialThread != nullptr)
+                                    .arg(m_serialThread ? m_serialThread->isRunning() : false);
         if (m_serialThread && m_serialThread->isRunning()) {
             QMetaObject::invokeMethod(m_serialReceiver.get(), "stopAcquisition",
                                       Qt::BlockingQueuedConnection);
             QMetaObject::invokeMethod(m_serialReceiver.get(), "disconnectBackend",
                                       Qt::BlockingQueuedConnection);
             m_serialThread->quit();
-            m_serialThread->wait(3000);
+            const bool stopped = m_serialThread->wait(3000);
+            // #region agent log
+            writeDebugNdjson(
+                "baseline",
+                "H4",
+                "ApplicationController::initReceiverBackend:wait-old-thread",
+                QStringLiteral("重建后端时等待旧线程退出"),
+                QJsonObject{
+                    {QStringLiteral("waitReturned"), stopped},
+                    {QStringLiteral("threadRunningAfterWait"), m_serialThread->isRunning()},
+                });
+            // #endregion
+            qWarning().noquote() << QString("[DBG-3f496b][H4] initReceiverBackend.waitOldThread waitReturned=%1 threadRunningAfterWait=%2")
+                                        .arg(stopped)
+                                        .arg(m_serialThread->isRunning());
         }
         m_serialReceiver.reset();
         m_serialThread.reset();
@@ -829,6 +906,27 @@ PlotWindowBase* ApplicationController::createPlotWindow(PlotType type)
 
 void ApplicationController::cleanup()
 {
+    // #region agent log
+    writeDebugNdjson(
+        "baseline",
+        "H2",
+        "ApplicationController::cleanup:entry",
+        QStringLiteral("进入 cleanup，记录关键对象状态"),
+        QJsonObject{
+            {QStringLiteral("hasReceiver"), m_serialReceiver != nullptr},
+            {QStringLiteral("hasSerialThread"), m_serialThread != nullptr},
+            {QStringLiteral("serialThreadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
+            {QStringLiteral("hasStageThread"), m_stageThread != nullptr},
+            {QStringLiteral("stageThreadRunning"), m_stageThread ? m_stageThread->isRunning() : false},
+        });
+    // #endregion
+    qWarning().noquote() << QString("[DBG-3f496b][H2] cleanup.entry hasReceiver=%1 hasSerialThread=%2 serialThreadRunning=%3 hasStageThread=%4 stageThreadRunning=%5")
+                                .arg(m_serialReceiver != nullptr)
+                                .arg(m_serialThread != nullptr)
+                                .arg(m_serialThread ? m_serialThread->isRunning() : false)
+                                .arg(m_stageThread != nullptr)
+                                .arg(m_stageThread ? m_stageThread->isRunning() : false);
+
     if (m_realtimeRecorder) {
         m_realtimeRecorder->stop();
         m_realtimeRecorder.reset();
@@ -854,8 +952,37 @@ void ApplicationController::cleanup()
     // 销毁线程
     if (m_serialThread && m_serialThread->isRunning()) {
         m_serialThread->quit();
-        m_serialThread->wait(3000);
+        const bool stopped = m_serialThread->wait(3000);
+        // #region agent log
+        writeDebugNdjson(
+            "baseline",
+            "H3",
+            "ApplicationController::cleanup:wait-serial-thread",
+            QStringLiteral("cleanup 等待串口线程退出"),
+            QJsonObject{
+                {QStringLiteral("waitReturned"), stopped},
+                {QStringLiteral("threadRunningAfterWait"), m_serialThread->isRunning()},
+            });
+        // #endregion
+        qWarning().noquote() << QString("[DBG-3f496b][H3] cleanup.waitSerialThread waitReturned=%1 threadRunningAfterWait=%2")
+                                    .arg(stopped)
+                                    .arg(m_serialThread->isRunning());
     }
+
+    // #region agent log
+    writeDebugNdjson(
+        "baseline",
+        "H5",
+        "ApplicationController::cleanup:before-thread-reset",
+        QStringLiteral("cleanup 即将 reset 串口线程对象"),
+        QJsonObject{
+            {QStringLiteral("hasSerialThread"), m_serialThread != nullptr},
+            {QStringLiteral("serialThreadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
+        });
+    // #endregion
+    qWarning().noquote() << QString("[DBG-3f496b][H5] cleanup.beforeThreadReset hasSerialThread=%1 serialThreadRunning=%2")
+                                .arg(m_serialThread != nullptr)
+                                .arg(m_serialThread ? m_serialThread->isRunning() : false);
     m_serialThread.reset();
     
     // 清理绘图窗口管理器（单例，由管理器自身管理销毁）
