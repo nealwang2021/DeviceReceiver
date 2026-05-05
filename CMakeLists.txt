@@ -86,6 +86,7 @@ set(SOURCE_FILES
     HistoryOverviewWindow.cpp
     HistoryExportService.cpp
     HistoryImportService.cpp
+    CrashHandlerWin.cpp
 )
 
 # 头文件列表
@@ -119,6 +120,7 @@ set(HEADER_FILES
     HistoryExportService.h
     HistoryImportService.h
     MinMaxBucketSampler.h
+    CrashHandlerWin.h
 )
 
 # UI文件
@@ -210,6 +212,7 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
     )
+    target_link_libraries(realtime_data dbghelp)
 endif()
 
 # HDF5支持

@@ -424,6 +424,8 @@ bool AppConfig::loadFromFile(const QString& filename)
         m_mockDataIntervalMs = settings.value("Serial/MockDataIntervalMs", m_mockDataIntervalMs).toInt();
     }
     m_mockDataIntervalMs = qBound(10, m_mockDataIntervalMs, 60000);
+    m_grpcConnectTimeoutMs = settings.value("Receiver/GrpcConnectTimeoutMs", m_grpcConnectTimeoutMs).toInt();
+    m_grpcConnectTimeoutMs = qBound(500, m_grpcConnectTimeoutMs, 30000);
     
     // 加载绘图配置
     m_maxPlotPoints = settings.value("Plot/MaxPoints", m_maxPlotPoints).toInt();
@@ -495,6 +497,7 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("Receiver/StageGrpcEndpoint", m_stageGrpcEndpoint);
     settings.setValue("Receiver/UseMockData", m_useMockData);
     settings.setValue("Receiver/MockDataIntervalMs", m_mockDataIntervalMs);
+    settings.setValue("Receiver/GrpcConnectTimeoutMs", m_grpcConnectTimeoutMs);
     
     // 保存绘图配置
     settings.setValue("Plot/MaxPoints", m_maxPlotPoints);
@@ -555,6 +558,7 @@ void AppConfig::loadDefaults()
     m_stageGrpcEndpoint = defaultGrpcEndpoint(50052);
     m_useMockData = false;
     m_mockDataIntervalMs = 100;
+    m_grpcConnectTimeoutMs = 6000;
     m_maxPlotPoints = 2000;
     m_plotRefreshIntervalMs = 50;
     m_arrayPlotRowHeightPx = 0;

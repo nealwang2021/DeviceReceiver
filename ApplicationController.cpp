@@ -21,11 +21,13 @@
 #include <QPushButton>
 #include <QDir>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QThread>
 #include <QCoreApplication>
+#include <mutex>
 
 namespace {
 
@@ -46,22 +48,32 @@ PlotWindowManager::PlotType normalizeStoredPlotType(int v)
     return PlotWindowManager::CombinedPlot;
 }
 
-void writeDebugNdjson(const char* runId,
-                      const char* hypothesisId,
-                      const char* location,
-                      const QString& message,
-                      const QJsonObject& data = QJsonObject())
+void writeLifecycleBreadcrumb(const char* location,
+                              const QString& message,
+                              const QJsonObject& data = QJsonObject())
 {
+    static std::mutex s_breadcrumbMutex;
+    std::lock_guard<std::mutex> lock(s_breadcrumbMutex);
+
     QJsonObject payload;
-    payload.insert(QStringLiteral("sessionId"), QStringLiteral("3f496b"));
-    payload.insert(QStringLiteral("runId"), QString::fromUtf8(runId));
-    payload.insert(QStringLiteral("hypothesisId"), QString::fromUtf8(hypothesisId));
+    payload.insert(QStringLiteral("kind"), QStringLiteral("lifecycle_breadcrumb"));
     payload.insert(QStringLiteral("location"), QString::fromUtf8(location));
     payload.insert(QStringLiteral("message"), message);
     payload.insert(QStringLiteral("data"), data);
     payload.insert(QStringLiteral("timestamp"), QDateTime::currentMSecsSinceEpoch());
+    payload.insert(QStringLiteral("threadId"),
+                   QString::number(reinterpret_cast<quintptr>(QThread::currentThreadId())));
+    payload.insert(QStringLiteral("pid"), static_cast<qint64>(QCoreApplication::applicationPid()));
 
-    QFile f(QStringLiteral("d:/WS/qtpro/DeviceReceiver/debug-3f496b.log"));
+    const QString dayTag = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd"));
+    const QString fileName = QStringLiteral("breadcrumbs_%1_pid%2.ndjson")
+                                 .arg(dayTag)
+                                 .arg(static_cast<qint64>(QCoreApplication::applicationPid()));
+    QDir crashDir(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("crash")));
+    if (!crashDir.exists()) {
+        crashDir.mkpath(QStringLiteral("."));
+    }
+    QFile f(crashDir.filePath(fileName));
     if (f.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
         f.write(QJsonDocument(payload).toJson(QJsonDocument::Compact));
         f.write("\n");
@@ -99,7 +111,7 @@ void ApplicationController::applyReceiverBackendFromConfig()
 
     qInfo() << "接收后端类型变更，重建实现:" << m_activeBackendType << "->" << m_config.backendType;
     if (m_isRunning) {
-        stop();
+        stopWithReason(QStringLiteral("backend_switch"));
     }
     if (!initReceiverBackend()) {
         qCritical() << "applyReceiverBackendFromConfig: 重建接收后端失败";
@@ -130,6 +142,7 @@ void ApplicationController::reloadRuntimeConfig()
     m_config.grpcEndpoint = config->grpcEndpoint();
     m_config.useMockData = config->useMockData();
     m_config.mockDataIntervalMs = config->mockDataIntervalMs();
+    m_config.grpcConnectTimeoutMs = config->grpcConnectTimeoutMs();
     m_config.defaultExportDirectory = config->defaultExportDirectory();
     m_config.defaultExportFormat = config->defaultExportFormat();
     qDebug() << "[ApplicationController] 配置加载完成，backend=" << m_config.backendType;
@@ -137,9 +150,15 @@ void ApplicationController::reloadRuntimeConfig()
 
 ApplicationController::~ApplicationController()
 {
-    stop();
+    stopWithReason(QStringLiteral("controller_destructor"));
     cleanup();
     qInfo() << "应用控制器已销毁";
+}
+
+void ApplicationController::stopWithReason(const QString& reason)
+{
+    m_pendingStopReason = reason;
+    stop();
 }
 
 bool ApplicationController::initialize()
@@ -156,6 +175,11 @@ bool ApplicationController::initialize()
         qWarning() << "实时SQLite记录器启动失败:" << recorderDbPath;
     } else {
         qInfo() << "实时SQLite记录器文件:" << recorderDbPath;
+        QObject::connect(m_realtimeRecorder.get(),
+                         &RealtimeSqlRecorder::sessionDatabaseRotated,
+                         this,
+                         &ApplicationController::onRealtimeSessionDatabaseRotated,
+                         Qt::QueuedConnection);
         // 同步只读打开到 HistoryDataProvider，供历史总览/范围查询使用
         HistoryDataProvider* hdp = HistoryDataProvider::instance();
         hdp->setSessionDatabasePath(recorderDbPath);
@@ -249,6 +273,14 @@ void ApplicationController::start()
     const bool isGrpcLikeBackend = isGrpcBackend;
 
     if (isGrpcLikeBackend) {
+        if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
+            grpcBackend->setShutdownMode(false);
+        }
+        // gRPC 异步 connectBackend 可能耗时；此期间若仍驱动 QCustomPlot 的 OpenGL queued replot，
+        // 容易与线程/对象生命周期叠加触发 QOpenGLContext::makeCurrent 访问无效 surface。
+        if (m_plotWindowManager) {
+            m_plotWindowManager->enterStopGuard();
+        }
         m_connectInProgress = true;
         emit connectionInProgressChanged(true);
 
@@ -315,6 +347,7 @@ void ApplicationController::start()
 
     // 启动绘图窗口管理器的数据更新（仅在已开始接收时）
     if (startedReceiving && m_plotWindowManager) {
+        m_plotWindowManager->leaveStopGuard();
         m_plotWindowManager->startUpdates();
         qInfo() << "已启动绘图窗口管理器数据更新";
     }
@@ -328,31 +361,41 @@ void ApplicationController::start()
 
 void ApplicationController::stop()
 {
-    // #region agent log
-    writeDebugNdjson(
-        "baseline",
-        "H1",
+    const QString stopReason = m_pendingStopReason.isEmpty()
+        ? QStringLiteral("unspecified")
+        : m_pendingStopReason;
+    m_pendingStopReason.clear();
+
+    writeLifecycleBreadcrumb(
         "ApplicationController::stop:entry",
         QStringLiteral("进入 stop，记录运行状态与线程状态"),
         QJsonObject{
+            {QStringLiteral("reason"), stopReason},
             {QStringLiteral("isRunning"), m_isRunning},
             {QStringLiteral("connectInProgress"), m_connectInProgress},
             {QStringLiteral("hasReceiver"), m_serialReceiver != nullptr},
             {QStringLiteral("hasSerialThread"), m_serialThread != nullptr},
             {QStringLiteral("serialThreadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
         });
-    // #endregion
-    qWarning().noquote() << QString("[DBG-3f496b][H1] stop.entry isRunning=%1 connectInProgress=%2 hasReceiver=%3 hasSerialThread=%4 serialThreadRunning=%5")
+    qWarning().noquote() << QString("[Breadcrumb] stop.entry reason=%1 isRunning=%2 connectInProgress=%3 hasReceiver=%4 hasSerialThread=%5 serialThreadRunning=%6")
+                                .arg(stopReason)
                                 .arg(m_isRunning)
                                 .arg(m_connectInProgress)
                                 .arg(m_serialReceiver != nullptr)
                                 .arg(m_serialThread != nullptr)
                                 .arg(m_serialThread ? m_serialThread->isRunning() : false);
 
+    if (m_plotWindowManager) {
+        m_plotWindowManager->enterStopGuard();
+    }
+
     if (m_connectInProgress) {
         m_connectInProgress = false;
         emit connectionInProgressChanged(false);
         if (m_serialReceiver) {
+            if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
+                grpcBackend->setShutdownMode(true);
+            }
             QMetaObject::invokeMethod(m_serialReceiver.get(), "disconnectBackend",
                                       Qt::QueuedConnection);
         }
@@ -366,6 +409,9 @@ void ApplicationController::stop()
     
     // 停止数据接收，但保持线程运行以便重新连接
     if (m_serialReceiver) {
+        if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
+            grpcBackend->setShutdownMode(true);
+        }
         QMetaObject::invokeMethod(m_serialReceiver.get(), "stopAcquisition",
                       Qt::BlockingQueuedConnection);
         QMetaObject::invokeMethod(m_serialReceiver.get(), "disconnectBackend",
@@ -429,18 +475,14 @@ bool ApplicationController::initCacheManager()
 bool ApplicationController::initReceiverBackend()
 {
     if (m_serialReceiver) {
-        // #region agent log
-        writeDebugNdjson(
-            "baseline",
-            "H4",
+        writeLifecycleBreadcrumb(
             "ApplicationController::initReceiverBackend:before-reset",
             QStringLiteral("重建后端前准备停止旧线程"),
             QJsonObject{
                 {QStringLiteral("hasThread"), m_serialThread != nullptr},
                 {QStringLiteral("threadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
             });
-        // #endregion
-        qWarning().noquote() << QString("[DBG-3f496b][H4] initReceiverBackend.beforeReset hasThread=%1 threadRunning=%2")
+        qWarning().noquote() << QString("[Breadcrumb] initReceiverBackend.beforeReset hasThread=%1 threadRunning=%2")
                                     .arg(m_serialThread != nullptr)
                                     .arg(m_serialThread ? m_serialThread->isRunning() : false);
         if (m_serialThread && m_serialThread->isRunning()) {
@@ -448,22 +490,26 @@ bool ApplicationController::initReceiverBackend()
                                       Qt::BlockingQueuedConnection);
             QMetaObject::invokeMethod(m_serialReceiver.get(), "disconnectBackend",
                                       Qt::BlockingQueuedConnection);
+            writeLifecycleBreadcrumb(
+                "ApplicationController::initReceiverBackend:before-quit-old-thread",
+                QStringLiteral("重建后端时调用旧串口线程 quit"),
+                QJsonObject{{QStringLiteral("threadRunningBeforeQuit"), m_serialThread->isRunning()}});
+            QElapsedTimer timer;
+            timer.start();
             m_serialThread->quit();
             const bool stopped = m_serialThread->wait(3000);
-            // #region agent log
-            writeDebugNdjson(
-                "baseline",
-                "H4",
+            writeLifecycleBreadcrumb(
                 "ApplicationController::initReceiverBackend:wait-old-thread",
                 QStringLiteral("重建后端时等待旧线程退出"),
                 QJsonObject{
                     {QStringLiteral("waitReturned"), stopped},
                     {QStringLiteral("threadRunningAfterWait"), m_serialThread->isRunning()},
+                    {QStringLiteral("elapsedMs"), timer.elapsed()},
                 });
-            // #endregion
-            qWarning().noquote() << QString("[DBG-3f496b][H4] initReceiverBackend.waitOldThread waitReturned=%1 threadRunningAfterWait=%2")
+            qWarning().noquote() << QString("[Breadcrumb] initReceiverBackend.waitOldThread waitReturned=%1 threadRunningAfterWait=%2 elapsedMs=%3")
                                         .arg(stopped)
-                                        .arg(m_serialThread->isRunning());
+                                        .arg(m_serialThread->isRunning())
+                                        .arg(timer.elapsed());
         }
         m_serialReceiver.reset();
         m_serialThread.reset();
@@ -474,7 +520,9 @@ bool ApplicationController::initReceiverBackend()
         backendType = QStringLiteral("grpc");
     }
     if (backendType.compare("grpc", Qt::CaseInsensitive) == 0) {
-        m_serialReceiver.reset(new GrpcReceiverBackend);
+        auto* grpc = new GrpcReceiverBackend;
+        grpc->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
+        m_serialReceiver.reset(grpc);
     } else {
         m_serialReceiver.reset(new SerialReceiver);
     }
@@ -588,6 +636,21 @@ bool ApplicationController::initDefaultPlotWindow()
     return true;
 }
 
+void ApplicationController::onRealtimeSessionDatabaseRotated(const QString& newPath)
+{
+    qInfo() << "ApplicationController: 实时会话库轮换 ->" << newPath;
+    HistoryDataProvider* hdp = HistoryDataProvider::instance();
+    if (!hdp) {
+        return;
+    }
+    hdp->setSessionDatabasePath(newPath);
+    if (hdp->sourceMode() == HistoryDataProvider::HistorySourceMode::SessionRealtime) {
+        if (!hdp->openDatabase(newPath)) {
+            qWarning() << "HistoryDataProvider 切换到新会话库失败:" << newPath;
+        }
+    }
+}
+
 bool ApplicationController::initMainWindow()
 {
     // 创建主界面窗口
@@ -650,6 +713,9 @@ void ApplicationController::startGrpcBackendConnectAsync(const QString& endpoint
         qWarning() << "startGrpcBackendConnectAsync: 接收后端未初始化";
         m_connectInProgress = false;
         emit connectionInProgressChanged(false);
+        if (m_plotWindowManager) {
+            m_plotWindowManager->leaveStopGuard();
+        }
         emit started(false);
         return;
     }
@@ -672,6 +738,7 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
                                   Qt::QueuedConnection,
                                   Q_ARG(int, m_config.mockDataIntervalMs));
         if (m_plotWindowManager) {
+            m_plotWindowManager->leaveStopGuard();
             m_plotWindowManager->startUpdates();
             qInfo() << "已启动绘图窗口管理器数据更新";
         }
@@ -714,6 +781,9 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
     m_isRunning = false;
     m_connectInProgress = false;
     emit connectionInProgressChanged(false);
+    if (m_plotWindowManager) {
+        m_plotWindowManager->leaveStopGuard();
+    }
     emit started(false);
 }
 
@@ -906,10 +976,7 @@ PlotWindowBase* ApplicationController::createPlotWindow(PlotType type)
 
 void ApplicationController::cleanup()
 {
-    // #region agent log
-    writeDebugNdjson(
-        "baseline",
-        "H2",
+    writeLifecycleBreadcrumb(
         "ApplicationController::cleanup:entry",
         QStringLiteral("进入 cleanup，记录关键对象状态"),
         QJsonObject{
@@ -919,8 +986,7 @@ void ApplicationController::cleanup()
             {QStringLiteral("hasStageThread"), m_stageThread != nullptr},
             {QStringLiteral("stageThreadRunning"), m_stageThread ? m_stageThread->isRunning() : false},
         });
-    // #endregion
-    qWarning().noquote() << QString("[DBG-3f496b][H2] cleanup.entry hasReceiver=%1 hasSerialThread=%2 serialThreadRunning=%3 hasStageThread=%4 stageThreadRunning=%5")
+    qWarning().noquote() << QString("[Breadcrumb] cleanup.entry hasReceiver=%1 hasSerialThread=%2 serialThreadRunning=%3 hasStageThread=%4 stageThreadRunning=%5")
                                 .arg(m_serialReceiver != nullptr)
                                 .arg(m_serialThread != nullptr)
                                 .arg(m_serialThread ? m_serialThread->isRunning() : false)
@@ -933,54 +999,107 @@ void ApplicationController::cleanup()
     }
 
     // 先断开三轴台（信号指向 MainWindow，须在销毁主窗口前）
+    writeLifecycleBreadcrumb(
+        "ApplicationController::cleanup:before-disconnect-stage",
+        QStringLiteral("cleanup 准备断开 Stage 后端"),
+        QJsonObject{
+            {QStringLiteral("hasStageReceiver"), m_stageReceiver != nullptr},
+            {QStringLiteral("hasStageThread"), m_stageThread != nullptr},
+            {QStringLiteral("stageThreadRunning"), m_stageThread ? m_stageThread->isRunning() : false},
+        });
     disconnectStageBackend();
+    writeLifecycleBreadcrumb(
+        "ApplicationController::cleanup:after-disconnect-stage",
+        QStringLiteral("cleanup 完成断开 Stage 后端"),
+        QJsonObject{
+            {QStringLiteral("hasStageReceiver"), m_stageReceiver != nullptr},
+            {QStringLiteral("hasStageThread"), m_stageThread != nullptr},
+        });
 
-    // 清理顺序：先停止数据处理，再销毁窗口，最后清理串口
-    
-    // 停止并销毁数据处理模块
-    m_dataProcessor.reset();
-    
-    // 销毁绘图窗口
-    m_plotWindow.reset();
-    
-    // 销毁主界面窗口
-    m_mainWindow.reset();
-    
-    // 销毁串口接收器
-    m_serialReceiver.reset();
-    
-    // 销毁线程
+    // 清理顺序：先停串口后端线程，再销毁窗口/UI，避免后台线程仍向 UI 发信号。
+
+    // 先停止串口后端与线程，再销毁接收器对象，避免“线程仍运行时析构跨线程 QObject”。
+    if (m_serialReceiver && m_serialThread && m_serialThread->isRunning()) {
+        if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
+            grpcBackend->setShutdownMode(true);
+        }
+        writeLifecycleBreadcrumb(
+            "ApplicationController::cleanup:before-disconnect-backend",
+            QStringLiteral("cleanup 中先停止采集并断开后端"),
+            QJsonObject{});
+        QMetaObject::invokeMethod(m_serialReceiver.get(), "stopAcquisition",
+                                  Qt::BlockingQueuedConnection);
+        QMetaObject::invokeMethod(m_serialReceiver.get(), "disconnectBackend",
+                                  Qt::BlockingQueuedConnection);
+    }
+
     if (m_serialThread && m_serialThread->isRunning()) {
+        writeLifecycleBreadcrumb(
+            "ApplicationController::cleanup:before-quit-serial-thread",
+            QStringLiteral("cleanup 调用串口线程 quit"),
+            QJsonObject{{QStringLiteral("threadRunningBeforeQuit"), m_serialThread->isRunning()}});
+        QElapsedTimer timer;
+        timer.start();
         m_serialThread->quit();
         const bool stopped = m_serialThread->wait(3000);
-        // #region agent log
-        writeDebugNdjson(
-            "baseline",
-            "H3",
+        writeLifecycleBreadcrumb(
             "ApplicationController::cleanup:wait-serial-thread",
             QStringLiteral("cleanup 等待串口线程退出"),
             QJsonObject{
                 {QStringLiteral("waitReturned"), stopped},
                 {QStringLiteral("threadRunningAfterWait"), m_serialThread->isRunning()},
+                {QStringLiteral("elapsedMs"), timer.elapsed()},
             });
-        // #endregion
-        qWarning().noquote() << QString("[DBG-3f496b][H3] cleanup.waitSerialThread waitReturned=%1 threadRunningAfterWait=%2")
+        qWarning().noquote() << QString("[Breadcrumb] cleanup.waitSerialThread waitReturned=%1 threadRunningAfterWait=%2 elapsedMs=%3")
                                     .arg(stopped)
-                                    .arg(m_serialThread->isRunning());
+                                    .arg(m_serialThread->isRunning())
+                                    .arg(timer.elapsed());
     }
 
-    // #region agent log
-    writeDebugNdjson(
-        "baseline",
-        "H5",
+    // 串口线程退出后再销毁接收器对象。
+    writeLifecycleBreadcrumb(
+        "ApplicationController::cleanup:before-reset-serial-receiver",
+        QStringLiteral("cleanup 即将 reset 串口接收器对象"),
+        QJsonObject{
+            {QStringLiteral("hasSerialReceiver"), m_serialReceiver != nullptr},
+        });
+    m_serialReceiver.reset();
+
+    // 停止并销毁数据处理模块
+    writeLifecycleBreadcrumb(
+        "ApplicationController::cleanup:before-reset-data-processor",
+        QStringLiteral("cleanup 即将 reset 数据处理器"),
+        QJsonObject{
+            {QStringLiteral("hasDataProcessor"), m_dataProcessor != nullptr},
+        });
+    m_dataProcessor.reset();
+
+    // 销毁绘图窗口
+    writeLifecycleBreadcrumb(
+        "ApplicationController::cleanup:before-reset-plot-window",
+        QStringLiteral("cleanup 即将 reset 绘图窗口"),
+        QJsonObject{
+            {QStringLiteral("hasPlotWindow"), m_plotWindow != nullptr},
+        });
+    m_plotWindow.reset();
+
+    // 销毁主界面窗口
+    writeLifecycleBreadcrumb(
+        "ApplicationController::cleanup:before-reset-main-window",
+        QStringLiteral("cleanup 即将 reset 主窗口"),
+        QJsonObject{
+            {QStringLiteral("hasMainWindow"), m_mainWindow != nullptr},
+        });
+    m_mainWindow.reset();
+
+    writeLifecycleBreadcrumb(
         "ApplicationController::cleanup:before-thread-reset",
         QStringLiteral("cleanup 即将 reset 串口线程对象"),
         QJsonObject{
             {QStringLiteral("hasSerialThread"), m_serialThread != nullptr},
             {QStringLiteral("serialThreadRunning"), m_serialThread ? m_serialThread->isRunning() : false},
         });
-    // #endregion
-    qWarning().noquote() << QString("[DBG-3f496b][H5] cleanup.beforeThreadReset hasSerialThread=%1 serialThreadRunning=%2")
+    qWarning().noquote() << QString("[Breadcrumb] cleanup.beforeThreadReset hasSerialThread=%1 serialThreadRunning=%2")
                                 .arg(m_serialThread != nullptr)
                                 .arg(m_serialThread ? m_serialThread->isRunning() : false);
     m_serialThread.reset();

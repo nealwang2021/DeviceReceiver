@@ -8,7 +8,9 @@
 #include <QRandomGenerator>
 #include <QHostInfo>
 #include <QHostAddress>
+#include <QAbstractSocket>
 #include <QtGlobal>
+#include <QElapsedTimer>
 
 #ifdef HAS_GRPC
 #include <chrono>
@@ -42,6 +44,7 @@ GrpcReceiverBackend::~GrpcReceiverBackend()
 
 bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 {
+    m_cancelConnect.store(false);
     const auto finishConnect = [this](bool connected, const QString& detail) {
         emit connectAttemptFinished(connected, detail);
         return connected;
@@ -69,7 +72,11 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 
 #ifdef HAS_GRPC
     // ---- Real 模式：建立 Channel 并等待连接 ----
-    auto tryConnect = [this](const QString& target,
+    const int runtimeTimeoutMs = qBound(500, m_connectTimeoutMs, 30000);
+    const int connectAttemptTimeoutMs = m_shutdownMode.load(std::memory_order_relaxed)
+        ? qBound(200, qMin(runtimeTimeoutMs, m_shutdownConnectTimeoutMs), 5000)
+        : runtimeTimeoutMs;
+    auto tryConnect = [this, connectAttemptTimeoutMs](const QString& target,
                              bool tls,
                              const QString& tlsOverrideHost,
                              QString* errorOut) -> bool {
@@ -98,17 +105,33 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
             return false;
         }
 
-        const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(6000);
-        if (!m_channel->WaitForConnected(deadline)) {
-            if (errorOut) {
-                const auto state = m_channel->GetState(false);
-                *errorOut = QStringLiteral("WaitForConnected timeout, state=%1")
-                    .arg(static_cast<int>(state));
+        constexpr int kPollSliceMs = 100;
+        int waitedMs = 0;
+        grpc_connectivity_state lastState = m_channel->GetState(true);
+        while (waitedMs < connectAttemptTimeoutMs) {
+            if (m_cancelConnect.load(std::memory_order_relaxed) ||
+                m_shutdownMode.load(std::memory_order_relaxed)) {
+                if (errorOut) {
+                    *errorOut = QStringLiteral("connect canceled by shutdown");
+                }
+                m_channel.reset();
+                return false;
             }
-            m_channel.reset();
-            return false;
+            lastState = m_channel->GetState(true);
+            if (lastState == GRPC_CHANNEL_READY) {
+                return true;
+            }
+            const int slice = qMin(kPollSliceMs, connectAttemptTimeoutMs - waitedMs);
+            std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+            waitedMs += slice;
         }
-        return true;
+
+        if (errorOut) {
+            *errorOut = QStringLiteral("WaitForConnected timeout, state=%1")
+                .arg(static_cast<int>(lastState));
+        }
+        m_channel.reset();
+        return false;
     };
 
     struct ConnectAttempt {
@@ -137,6 +160,11 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
     bool connected = false;
     QStringList failureReasons;
     for (const ConnectAttempt& attempt : orderedAttempts) {
+        if (m_cancelConnect.load(std::memory_order_relaxed) ||
+            m_shutdownMode.load(std::memory_order_relaxed)) {
+            failureReasons << QStringLiteral("connect canceled by shutdown");
+            break;
+        }
         QString reason;
         emitBackendStatus("connectAttempt",
                           QStringLiteral("尝试连接: %1 endpoint=%2")
@@ -150,7 +178,12 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
                               .arg(attempt.label, reason.isEmpty() ? QStringLiteral("unknown") : reason);
     }
 
-    if (!connected && !parsedHost.trimmed().isEmpty()) {
+    const bool canceledByShutdown =
+        m_cancelConnect.load(std::memory_order_relaxed) ||
+        m_shutdownMode.load(std::memory_order_relaxed);
+    QHostAddress parsedHostAddress;
+    const bool hostIsLiteralIp = parsedHostAddress.setAddress(parsedHost);
+    if (!connected && !parsedHost.trimmed().isEmpty() && !canceledByShutdown && !hostIsLiteralIp) {
         const QHostInfo hostInfo = QHostInfo::fromName(parsedHost);
         if (hostInfo.error() == QHostInfo::NoError) {
             for (const QHostAddress& addr : hostInfo.addresses()) {
@@ -160,6 +193,11 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 
                 const QString ipTarget = QStringLiteral("%1:%2").arg(addr.toString()).arg(parsedPort);
                 for (const ConnectAttempt& attempt : orderedAttempts) {
+                    if (m_cancelConnect.load(std::memory_order_relaxed) ||
+                        m_shutdownMode.load(std::memory_order_relaxed)) {
+                        failureReasons << QStringLiteral("connect canceled by shutdown");
+                        break;
+                    }
                     QString reason;
                     const QString label = QStringLiteral("%1/ip=%2")
                         .arg(attempt.label, addr.toString());
@@ -243,6 +281,16 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
 
 void GrpcReceiverBackend::disconnectBackend()
 {
+    if (m_disconnectInProgress.exchange(true)) {
+        qWarning() << "[Breadcrumb] GrpcReceiverBackend::disconnectBackend re-entered, skip";
+        return;
+    }
+    m_cancelConnect.store(true);
+
+    qWarning() << "[Breadcrumb] GrpcReceiverBackend::disconnectBackend begin"
+               << "connected=" << m_connected.load()
+               << "mockMode=" << m_mockMode.load();
+
     // 1. 停止采集（含流线程）
     stopAcquisition();
 
@@ -253,16 +301,17 @@ void GrpcReceiverBackend::disconnectBackend()
 
 #ifdef HAS_GRPC
     if (m_stub) {
+        const int controlTimeoutMs = m_shutdownMode.load(std::memory_order_relaxed) ? 500 : 2000;
         google::protobuf::Empty req;
         xiaoche::device::CommandReply stopReply;
         xiaoche::device::CommandReply closeReply;
 
         grpc::ClientContext stopCtx;
-        stopCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
+        stopCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(controlTimeoutMs));
         (void)m_stub->StopSampling(&stopCtx, req, &stopReply);
 
         grpc::ClientContext closeCtx;
-        closeCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
+        closeCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(controlTimeoutMs));
         (void)m_stub->CloseDevice(&closeCtx, req, &closeReply);
     }
 
@@ -272,6 +321,8 @@ void GrpcReceiverBackend::disconnectBackend()
 
     setConnected(false);
     emitBackendStatus("disconnected", "gRPC 后端已断开");
+    qWarning() << "[Breadcrumb] GrpcReceiverBackend::disconnectBackend end";
+    m_disconnectInProgress.store(false);
 }
 
 bool GrpcReceiverBackend::isBackendConnected() const
@@ -337,6 +388,19 @@ void GrpcReceiverBackend::setMockMode(bool enabled)
         enabled ? "切换到 gRPC Mock 模式" : "切换到 gRPC 真实服务模式");
 }
 
+void GrpcReceiverBackend::setConnectTimeoutMs(int ms)
+{
+    m_connectTimeoutMs = qBound(500, ms, 30000);
+}
+
+void GrpcReceiverBackend::setShutdownMode(bool enabled)
+{
+    m_shutdownMode.store(enabled, std::memory_order_relaxed);
+    if (enabled) {
+        m_cancelConnect.store(true, std::memory_order_relaxed);
+    }
+}
+
 // ============================================================
 // sendCommand
 // ============================================================
@@ -389,7 +453,10 @@ void GrpcReceiverBackend::onMockTick()
 
     FrameData frame;
     frame.timestamp   = QDateTime::currentMSecsSinceEpoch();
-    frame.frameId     = static_cast<uint16_t>(++m_frameCounter);
+    ++m_frameCounter;
+    const quint64 seq = static_cast<quint64>(m_frameCounter);
+    frame.sequence = seq;
+    frame.frameId = seq;
     frame.detectMode  = FrameData::MultiChannelComplex;
     frame.channelCount = 8;
     frame.channels_comp0.resize(frame.channelCount);
@@ -409,7 +476,8 @@ void GrpcReceiverBackend::onMockTick()
     QJsonObject pkt;
     pkt.insert("type",         "streamFrame");
     pkt.insert("mode",         "mock");
-    pkt.insert("frameId",      static_cast<int>(frame.frameId));
+    // UI JSON：frameId 使用十进制字符串，避免超大 uint64 在 JSON number 中丢精度
+    pkt.insert("frameId",      QString::number(static_cast<qulonglong>(seq)));
     pkt.insert("timestamp",    static_cast<qint64>(frame.timestamp));
     pkt.insert("channelCount", static_cast<int>(frame.channelCount));
     emit dataReceived(QJsonDocument(pkt).toJson(QJsonDocument::Compact), false);
@@ -483,22 +551,40 @@ void GrpcReceiverBackend::startStreamThread(int intervalMs)
 
 void GrpcReceiverBackend::stopStreamThread()
 {
+    QElapsedTimer timer;
+    timer.start();
     m_stopStream.store(true);
 
 #ifdef HAS_GRPC
     // TryCancel() 会终止阻塞中的 Read() 调用
-    if (m_streamCtx) {
-        m_streamCtx->TryCancel();
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        if (m_streamCtx) {
+            m_streamCtx->TryCancel();
+        }
+        if (m_activeControlCtx) {
+            m_activeControlCtx->TryCancel();
+        }
     }
 #endif
 
+    bool joined = false;
     if (m_streamThread.joinable()) {
         m_streamThread.join();
+        joined = true;
     }
 
 #ifdef HAS_GRPC
-    m_streamCtx.reset();
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        m_streamCtx.reset();
+        m_activeControlCtx = nullptr;
+    }
 #endif
+
+    qWarning() << "[Breadcrumb] GrpcReceiverBackend::stopStreamThread done"
+               << "joined=" << joined
+               << "elapsedMs=" << timer.elapsed();
 }
 
 // ============================================================
@@ -518,15 +604,42 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
     }
 
     // 每次启动流时创建新 Context（Context 不可复用）
-    auto ctx = std::make_unique<grpc::ClientContext>();
-    // 保存指针供 stopStreamThread 调用 TryCancel
+    auto localCtx = std::make_unique<grpc::ClientContext>();
+    // 保存指针供 stopStreamThread 调用 TryCancel（受互斥保护，避免跨线程 data race）
     {
-        // 注：此赋值发生在 std::thread 内部，stopStreamThread 在 Qt 线程侧调用，
-        // 但两者执行顺序已通过 startStreamThread 内的 stopStreamThread 先行调用保证。
-        m_streamCtx = std::move(ctx);
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        m_streamCtx = std::move(localCtx);
+    }
+
+    grpc::ClientContext* streamCtxRaw = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        streamCtxRaw = m_streamCtx.get();
+    }
+    if (!streamCtxRaw) {
+        QMetaObject::invokeMethod(this, [this]() {
+            emit commandError("流线程启动失败：Context 为空");
+        }, Qt::QueuedConnection);
+        return;
     }
 
     google::protobuf::Empty req;
+    auto runCancelableCall = [this](int timeoutMs, auto&& callable) {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(timeoutMs));
+        {
+            std::lock_guard<std::mutex> lock(m_streamStateMutex);
+            m_activeControlCtx = &ctx;
+        }
+        const auto status = callable(ctx);
+        {
+            std::lock_guard<std::mutex> lock(m_streamStateMutex);
+            if (m_activeControlCtx == &ctx) {
+                m_activeControlCtx = nullptr;
+            }
+        }
+        return status;
+    };
 
     // 订阅前流程（与脚本对齐）：ListDevices -> OpenDevice -> StartSampling
     {
@@ -540,9 +653,9 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         bool statusSampling = false;
         {
             xiaoche::device::StatusReply statusReply;
-            grpc::ClientContext statusCtx;
-            statusCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            const grpc::Status status = m_stub->GetStatus(&statusCtx, req, &statusReply);
+            const grpc::Status status = runCancelableCall(1200, [this, &req, &statusReply](grpc::ClientContext& statusCtx) {
+                return m_stub->GetStatus(&statusCtx, req, &statusReply);
+            });
             if (status.ok()) {
                 statusOpened = statusReply.opened();
                 statusSampling = statusReply.sampling();
@@ -558,9 +671,9 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         xiaoche::device::ListDevicesReply listReply;
         bool hasDevice = false;
         {
-            grpc::ClientContext listCtx;
-            listCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            const grpc::Status listStatus = m_stub->ListDevices(&listCtx, emptyReq, &listReply);
+            const grpc::Status listStatus = runCancelableCall(1200, [this, &emptyReq, &listReply](grpc::ClientContext& listCtx) {
+                return m_stub->ListDevices(&listCtx, emptyReq, &listReply);
+            });
             if (!listStatus.ok()) {
                 const QString detail = grpcErr(listStatus);
                 QMetaObject::invokeMethod(this, [this, detail]() {
@@ -582,9 +695,9 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
             xiaoche::device::OpenDeviceRequest openReq;
             openReq.set_device_id(listReply.devices(0).device_id());
             xiaoche::device::CommandReply openReply;
-            grpc::ClientContext openCtx;
-            openCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            const grpc::Status openStatus = m_stub->OpenDevice(&openCtx, openReq, &openReply);
+            const grpc::Status openStatus = runCancelableCall(1200, [this, &openReq, &openReply](grpc::ClientContext& openCtx) {
+                return m_stub->OpenDevice(&openCtx, openReq, &openReply);
+            });
             if (!openStatus.ok() || !openReply.ok()) {
                 const QString detail = openStatus.ok()
                     ? QString::fromStdString(openReply.message())
@@ -598,9 +711,9 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
 
         if (!statusSampling) {
             xiaoche::device::CommandReply startReply;
-            grpc::ClientContext startCtx;
-            startCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            const grpc::Status startStatus = m_stub->StartSampling(&startCtx, req, &startReply);
+            const grpc::Status startStatus = runCancelableCall(1200, [this, &req, &startReply](grpc::ClientContext& startCtx) {
+                return m_stub->StartSampling(&startCtx, req, &startReply);
+            });
             if (!startStatus.ok() || !startReply.ok()) {
                 const QString detail = startStatus.ok()
                     ? QString::fromStdString(startReply.message())
@@ -617,7 +730,7 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         }
     }
 
-    auto reader = m_stub->SubscribeProcessedFrames(m_streamCtx.get(), req);
+    auto reader = m_stub->SubscribeProcessedFrames(streamCtxRaw, req);
 
     // 读取帧循环
     xiaoche::device::ProcessedFrameReply pbFrame;
@@ -630,7 +743,7 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         FrameData frame;
         frame.timestamp    = static_cast<int64_t>(pbFrame.timestamp_unix_ms());
         frame.sequence     = static_cast<uint64_t>(pbFrame.sequence());
-        frame.frameId      = static_cast<uint16_t>(pbFrame.sequence() & 0xFFFF);
+        frame.frameId      = frame.sequence;
         frame.detectMode   = FrameData::MultiChannelComplex;
 
         const int sampleCount = pbFrame.samples_size();
@@ -673,7 +786,7 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
         QJsonObject pkt;
         pkt.insert("type",         "streamFrame");
         pkt.insert("mode",         "real");
-        pkt.insert("frameId",      static_cast<int>(frame.frameId));
+        pkt.insert("frameId",      QString::number(static_cast<qulonglong>(frame.sequence)));
         pkt.insert("sequence",     QString::number(static_cast<qulonglong>(frame.sequence)));
         pkt.insert("timestamp",    static_cast<qint64>(frame.timestamp));
         pkt.insert("channelCount", static_cast<int>(frame.channelCount));
@@ -695,6 +808,14 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
             setConnected(false);
             emit commandError(errMsg);
         }, Qt::QueuedConnection);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        // 仅清理仍指向本次流上下文的成员，避免并发覆盖后误清空新上下文。
+        if (m_streamCtx.get() == streamCtxRaw) {
+            m_streamCtx.reset();
+        }
     }
 #else
     QMetaObject::invokeMethod(this, [this]() {

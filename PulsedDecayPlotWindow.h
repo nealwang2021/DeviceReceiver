@@ -106,6 +106,7 @@ private:
     QTimer* m_mockTimer = nullptr;
     bool m_useMockData = false;
     double m_mockT = 0.0;
+    quint64 m_mockFrameSeq {0};
 
     QElapsedTimer m_replotThrottle;
     int m_replotMinMs = 33;

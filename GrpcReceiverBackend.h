@@ -7,6 +7,7 @@
 #include <QString>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 #ifdef HAS_GRPC
@@ -47,6 +48,8 @@ public slots:
     // -------- gRPC 专属控制 --------
     /// 切换 mock / real 模式（切换后需重新 connectBackend）
     void setMockMode(bool enabled);
+    void setConnectTimeoutMs(int ms);
+    void setShutdownMode(bool enabled);
 
 signals:
     /// connectBackend 完成后发射，用于 UI 线程异步衔接后续流程
@@ -71,6 +74,8 @@ private:
     // -------- 配置 --------
     QString m_endpoint;
     int     m_acquisitionIntervalMs = 100;
+    int     m_connectTimeoutMs = 6000;
+    int     m_shutdownConnectTimeoutMs = 800;
 
     // -------- 原子状态（跨线程安全）--------
     std::atomic<bool> m_connected  {false};
@@ -85,18 +90,23 @@ private:
 
     // -------- Mock 模式定时器 --------
     QTimer*  m_mockTimer    = nullptr;
-    quint32  m_frameCounter = 0;
+    quint64  m_frameCounter = 0;
 
     // -------- Real 模式：断线重连定时器 --------
     QTimer*  m_reconnectTimer = nullptr;
 
     // -------- Real 模式：流线程 --------
     std::thread m_streamThread;
+    std::mutex m_streamStateMutex;
+    std::atomic<bool> m_disconnectInProgress {false};
+    std::atomic<bool> m_shutdownMode {false};
+    std::atomic<bool> m_cancelConnect {false};
 
 #ifdef HAS_GRPC
     std::shared_ptr<grpc::Channel>                         m_channel;
     std::unique_ptr<xiaoche::device::AcquisitionDevice::Stub>  m_stub;
     std::unique_ptr<grpc::ClientContext>                   m_streamCtx;
+    grpc::ClientContext* m_activeControlCtx = nullptr;
 #endif
 };
 

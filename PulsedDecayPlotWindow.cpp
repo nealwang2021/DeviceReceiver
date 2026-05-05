@@ -536,7 +536,9 @@ void PulsedDecayPlotWindow::onMockTick()
 {
     FrameData f;
     f.timestamp = static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch());
-    f.frameId = static_cast<uint16_t>(m_nextCurveId & 0xFFFF);
+    const quint64 seq = ++m_mockFrameSeq;
+    f.sequence = seq;
+    f.frameId = seq;
     f.detectMode = FrameData::MultiChannelReal;
     f.channelCount = 1;
     const double amp = 5.0 * std::exp(-m_mockT / 80.0) + 0.05 * (static_cast<double>((f.timestamp / 3) % 17) - 8.0);

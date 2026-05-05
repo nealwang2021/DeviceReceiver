@@ -4,7 +4,10 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
+#include <QMetaObject>
+#include <QMutexLocker>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -51,7 +54,12 @@ public slots:
         }
 
         if (!openDatabase()) {
-            qWarning() << "RealtimeSqlRecorder: 打开数据库失败" << m_owner->m_databaseFilePath;
+            QString dbPath;
+            {
+                QMutexLocker locker(&m_owner->m_databasePathMutex);
+                dbPath = m_owner->m_databaseFilePath;
+            }
+            qWarning() << "RealtimeSqlRecorder: 打开数据库失败" << dbPath;
             return;
         }
 
@@ -61,7 +69,12 @@ public slots:
         m_flushTimer->start();
 
         m_lastPruneMs = QDateTime::currentMSecsSinceEpoch();
-        qInfo() << "RealtimeSqlRecorder: 启动，db=" << m_owner->m_databaseFilePath;
+        QString dbPath;
+        {
+            QMutexLocker locker(&m_owner->m_databasePathMutex);
+            dbPath = m_owner->m_databaseFilePath;
+        }
+        qInfo() << "RealtimeSqlRecorder: 启动，db=" << dbPath;
     }
 
     void flushOnce()
@@ -72,36 +85,15 @@ public slots:
 
         const QVector<FrameData> frames = m_owner->takeBatch(m_owner->m_batchSize);
         if (frames.isEmpty()) {
-            maybePrune();
+            maybeRotateSessionFile();
             return;
         }
 
-        if (!m_db.transaction()) {
-            qWarning() << "RealtimeSqlRecorder: transaction begin failed" << m_db.lastError();
-            reportDatabaseDropped(frames, QStringLiteral("transaction begin failed"));
+        if (!insertBatch(frames)) {
             return;
         }
 
-        bool ok = true;
-        for (const FrameData& frame : frames) {
-            if (!insertFrame(frame)) {
-                ok = false;
-                break;
-            }
-        }
-
-        if (ok) {
-            if (!m_db.commit()) {
-                qWarning() << "RealtimeSqlRecorder: commit failed" << m_db.lastError();
-                m_db.rollback();
-                reportDatabaseDropped(frames, QStringLiteral("commit failed"));
-            }
-        } else {
-            m_db.rollback();
-            reportDatabaseDropped(frames, QStringLiteral("insert failed / rollback"));
-        }
-
-        maybePrune();
+        maybeRotateSessionFile();
     }
 
     void shutdown()
@@ -117,18 +109,7 @@ public slots:
             flushOnce();
         }
 
-        if (m_db.isValid() && m_db.isOpen()) {
-            QSqlQuery pragma(m_db);
-            pragma.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-            m_db.close();
-        }
-        // removeDatabase 前先释放所有依赖该连接的句柄，避免 Qt 未定义行为。
-        m_insertAlignedFrame = QSqlQuery();
-        m_db = QSqlDatabase();
-        if (!m_connectionName.isEmpty()) {
-            QSqlDatabase::removeDatabase(m_connectionName);
-            m_connectionName.clear();
-        }
+        closeDbConnection();
     }
 
 private:
@@ -173,13 +154,69 @@ private:
                 .arg(reason));
     }
 
+    void closeDbConnection()
+    {
+        m_insertAlignedFrame = QSqlQuery();
+        if (m_db.isValid() && m_db.isOpen()) {
+            QSqlQuery pragma(m_db);
+            pragma.exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)"));
+            m_db.close();
+        }
+        m_db = QSqlDatabase();
+        if (!m_connectionName.isEmpty()) {
+            QSqlDatabase::removeDatabase(m_connectionName);
+            m_connectionName.clear();
+        }
+    }
+
+    bool insertBatch(const QVector<FrameData>& frames)
+    {
+        if (frames.isEmpty()) {
+            return true;
+        }
+        if (!m_db.transaction()) {
+            qWarning() << "RealtimeSqlRecorder: transaction begin failed" << m_db.lastError();
+            reportDatabaseDropped(frames, QStringLiteral("transaction begin failed"));
+            return false;
+        }
+
+        bool ok = true;
+        for (const FrameData& frame : frames) {
+            if (!insertFrame(frame)) {
+                ok = false;
+                break;
+            }
+        }
+
+        if (ok) {
+            if (!m_db.commit()) {
+                qWarning() << "RealtimeSqlRecorder: commit failed" << m_db.lastError();
+                m_db.rollback();
+                reportDatabaseDropped(frames, QStringLiteral("commit failed"));
+                return false;
+            }
+        } else {
+            m_db.rollback();
+            reportDatabaseDropped(frames, QStringLiteral("insert failed / rollback"));
+            return false;
+        }
+
+        return true;
+    }
+
     bool openDatabase()
     {
         if (!m_owner) {
             return false;
         }
 
-        const QFileInfo dbFileInfo(m_owner->m_databaseFilePath);
+        QString dbPath;
+        {
+            QMutexLocker locker(&m_owner->m_databasePathMutex);
+            dbPath = m_owner->m_databaseFilePath;
+        }
+
+        const QFileInfo dbFileInfo(dbPath);
         QDir dir = dbFileInfo.dir();
         if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
             qWarning() << "RealtimeSqlRecorder: 创建数据库目录失败" << dir.absolutePath();
@@ -188,7 +225,7 @@ private:
 
         m_connectionName = QStringLiteral("realtime_sql_%1").arg(QUuid::createUuid().toString(QUuid::Id128));
         m_db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connectionName);
-        m_db.setDatabaseName(m_owner->m_databaseFilePath);
+        m_db.setDatabaseName(dbPath);
         if (!m_db.open()) {
             qWarning() << "RealtimeSqlRecorder: sqlite open failed" << m_db.lastError();
             return false;
@@ -297,7 +334,136 @@ private:
         return true;
     }
 
-    void maybePrune()
+    bool shouldRotateSessionDatabase(QString* reasonOut) const
+    {
+        if (!m_owner || !m_db.isOpen()) {
+            return false;
+        }
+
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+
+        if (m_owner->m_retentionMs > 0) {
+            QSqlQuery q(m_db);
+            const QString sql = QStringLiteral(
+                "SELECT MIN(CASE WHEN created_at_ms > 0 THEN created_at_ms ELSE timestamp_unix_ms END) "
+                "FROM aligned_frames");
+            if (q.exec(sql) && q.next()) {
+                const QVariant v = q.value(0);
+                if (!v.isNull()) {
+                    const qint64 minWallMs = v.toLongLong();
+                    const qint64 cutoff = nowMs - m_owner->m_retentionMs;
+                    if (minWallMs < cutoff) {
+                        if (reasonOut) {
+                            *reasonOut = QStringLiteral("retention_exceeded");
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if (m_owner->m_maxDatabaseBytes > 0 && databaseBytes() > m_owner->m_maxDatabaseBytes) {
+            if (reasonOut) {
+                *reasonOut = QStringLiteral("max_bytes_exceeded");
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    bool drainOwnerQueueToDatabase()
+    {
+        if (!m_owner) {
+            return false;
+        }
+        while (true) {
+            const QVector<FrameData> batch = m_owner->takeBatch(m_owner->m_batchSize);
+            if (batch.isEmpty()) {
+                return true;
+            }
+            if (!insertBatch(batch)) {
+                return false;
+            }
+        }
+    }
+
+    bool rotateSessionDatabase(const QString& reason)
+    {
+        if (!m_owner || !m_db.isOpen()) {
+            return false;
+        }
+
+        QString oldPath;
+        {
+            QMutexLocker locker(&m_owner->m_databasePathMutex);
+            oldPath = m_owner->m_databaseFilePath;
+        }
+
+        qInfo() << "RealtimeSqlRecorder: 会话库轮换开始 reason=" << reason << "old=" << oldPath;
+
+        if (m_flushTimer) {
+            m_flushTimer->stop();
+        }
+
+        if (!drainOwnerQueueToDatabase()) {
+            qWarning() << "RealtimeSqlRecorder: 轮换前刷盘失败，放弃轮换";
+            if (m_flushTimer) {
+                m_flushTimer->start();
+            }
+            return false;
+        }
+
+        closeDbConnection();
+
+        const QFileInfo oldInfo(oldPath);
+        QDir dir = oldInfo.dir();
+        QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+        QString newPath = dir.filePath(QStringLiteral("device_realtime_%1.db").arg(stamp));
+        if (QFile::exists(newPath)) {
+            newPath = dir.filePath(QStringLiteral("device_realtime_%1_%2.db")
+                                       .arg(stamp, QUuid::createUuid().toString(QUuid::WithoutBraces).left(8)));
+        }
+
+        {
+            QMutexLocker locker(&m_owner->m_databasePathMutex);
+            m_owner->m_databaseFilePath = newPath;
+        }
+
+        if (!openDatabase()) {
+            qCritical() << "RealtimeSqlRecorder: 打开新会话库失败，尝试回退旧库" << newPath;
+            {
+                QMutexLocker locker(&m_owner->m_databasePathMutex);
+                m_owner->m_databaseFilePath = oldPath;
+            }
+            if (!openDatabase()) {
+                qCritical() << "RealtimeSqlRecorder: 回退旧会话库失败" << oldPath;
+                if (m_flushTimer) {
+                    m_flushTimer->start();
+                }
+                return false;
+            }
+            if (m_flushTimer) {
+                m_flushTimer->start();
+            }
+            return false;
+        }
+
+        qInfo() << "RealtimeSqlRecorder: 会话库轮换完成 new=" << newPath;
+        if (!QMetaObject::invokeMethod(m_owner,
+                                       "publishSessionDatabaseRotated",
+                                       Qt::QueuedConnection,
+                                       Q_ARG(QString, newPath))) {
+            qWarning() << "RealtimeSqlRecorder: invokeMethod publishSessionDatabaseRotated 失败";
+        }
+
+        if (m_flushTimer) {
+            m_flushTimer->start();
+        }
+        return true;
+    }
+
+    void maybeRotateSessionFile()
     {
         if (!m_owner || !m_db.isOpen()) {
             return;
@@ -309,49 +475,12 @@ private:
         }
         m_lastPruneMs = nowMs;
 
-        // 保留窗口必须按「写入本机时间」判断：timestamp_unix_ms 可能为设备相对时钟或非 UTC，
-        // 若与 wall-clock 比较会误删几乎全部行，历史总览只剩极短跨度。
-        const qint64 cutoff = nowMs - m_owner->m_retentionMs;
-        if (m_owner->m_retentionMs > 0) {
-            QSqlQuery delFrames(m_db);
-            if (m_db.transaction()) {
-                delFrames.prepare(QStringLiteral(
-                    "DELETE FROM aligned_frames WHERE "
-                    "(CASE WHEN created_at_ms > 0 THEN created_at_ms ELSE timestamp_unix_ms END) < ?"));
-                delFrames.addBindValue(cutoff);
-                const bool ok = delFrames.exec();
-                if (ok) {
-                    m_db.commit();
-                } else {
-                    m_db.rollback();
-                }
-            }
+        QString reason;
+        if (!shouldRotateSessionDatabase(&reason)) {
+            return;
         }
 
-        if (m_owner->m_maxDatabaseBytes > 0) {
-            int round = 0;
-            while (databaseBytes() > m_owner->m_maxDatabaseBytes && round < 20) {
-                ++round;
-                if (!m_db.transaction()) {
-                    break;
-                }
-                QSqlQuery delFrames(m_db);
-                // 按插入顺序删最旧行；勿用 timestamp_unix_ms 排序（设备时间可能非单调）。
-                const bool ok = delFrames.exec(QStringLiteral(
-                    "DELETE FROM aligned_frames WHERE id IN ("
-                    "SELECT id FROM aligned_frames ORDER BY id ASC LIMIT 2000)"));
-
-                if (ok) {
-                    m_db.commit();
-                } else {
-                    m_db.rollback();
-                    break;
-                }
-            }
-
-            QSqlQuery checkpoint(m_db);
-            checkpoint.exec(QStringLiteral("PRAGMA wal_checkpoint(PASSIVE)"));
-        }
+        rotateSessionDatabase(reason);
     }
 
     qint64 databaseBytes() const
@@ -359,10 +488,15 @@ private:
         if (!m_owner) {
             return 0;
         }
-        const QString dbPath = m_owner->m_databaseFilePath;
+        QString dbPath;
+        {
+            QMutexLocker locker(&m_owner->m_databasePathMutex);
+            dbPath = m_owner->m_databaseFilePath;
+        }
         const QFileInfo mainInfo(dbPath);
         const QFileInfo walInfo(dbPath + QStringLiteral("-wal"));
-        return mainInfo.size() + walInfo.size();
+        const QFileInfo shmInfo(dbPath + QStringLiteral("-shm"));
+        return mainInfo.size() + walInfo.size() + shmInfo.size();
     }
 
 private:
@@ -504,7 +638,10 @@ bool RealtimeSqlRecorder::start(const QString& databaseFilePath)
         return true;
     }
 
-    m_databaseFilePath = databaseFilePath;
+    {
+        QMutexLocker locker(&m_databasePathMutex);
+        m_databaseFilePath = databaseFilePath;
+    }
     m_worker = new RealtimeSqlRecorderWorker(this);
     m_worker->moveToThread(&m_workerThread);
 
@@ -515,6 +652,17 @@ bool RealtimeSqlRecorder::start(const QString& databaseFilePath)
     m_workerThread.start();
     m_running.store(true);
     return true;
+}
+
+QString RealtimeSqlRecorder::currentDatabasePath() const
+{
+    QMutexLocker locker(&m_databasePathMutex);
+    return m_databaseFilePath;
+}
+
+void RealtimeSqlRecorder::publishSessionDatabaseRotated(const QString& newPath)
+{
+    emit sessionDatabaseRotated(newPath);
 }
 
 void RealtimeSqlRecorder::stop()

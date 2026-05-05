@@ -5,10 +5,12 @@
 #include "PlotWindowBase.h"
 #include "ApplicationController.h"
 #include "AppConfig.h"
+#include "CrashHandlerWin.h"
 #include <QFile>
 #include <QDateTime>
 #include <QFontDatabase>
 #include <QFont>
+#include <QTimer>
 #include <iostream>
 #include <mutex>
 
@@ -26,6 +28,13 @@ static void writeUtf8LogLine(const QString& line)
     g_logFile->write(utf8);
     g_logFile->write("\n", 1);
     g_logFile->flush();
+}
+
+static void crashHandlerLogBridge(const char* utf8Message)
+{
+    const QString line = QString::fromUtf8(utf8Message);
+    writeUtf8LogLine(line);
+    fprintf(stderr, "%s\n", utf8Message);
 }
 
 static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
@@ -52,6 +61,8 @@ static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &con
 int main(int argc, char *argv[])
 {
     try {
+        CrashHandlerWin::setLogCallback(crashHandlerLogBridge);
+        CrashHandlerWin::installHandlers();
         // QCustomPlot 多窗口 OpenGL：共享组 + FBO toImage 前绑定本 buffer 的 context（见 qcustomplot.cpp QCPPaintBufferGlFbo::draw）
         QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
         QApplication app(argc, argv);
@@ -79,11 +90,13 @@ int main(int argc, char *argv[])
 
         // 先安装日志处理器，再加载 config.ini，否则 AppConfig::loadFromFile 内的 qInfo/qWarning 不会写入 realtime_data.log
         const QString startupTag = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+        CrashHandlerWin::setSessionTag(startupTag);
         QString logPath = QApplication::applicationDirPath() + QString("/realtime_data_%1.log").arg(startupTag);
         g_logFile = new QFile(logPath, qApp);
         if (g_logFile->open(QIODevice::Append | QIODevice::Text)) {
             qInstallMessageHandler(realtimeMessageHandler);
             qInfo() << "日志已打开:" << logPath;
+            qInfo() << "Crash dump目录:" << CrashHandlerWin::crashDirectoryPath();
             const qint64 startupEpochMs = QDateTime::currentMSecsSinceEpoch();
             const QString startupIso = QDateTime::fromMSecsSinceEpoch(startupEpochMs).toString(Qt::ISODateWithMs);
             qInfo().noquote() << QString("=== APP_START startup_iso=%1 startup_epoch_ms=%2 ===")
@@ -124,9 +137,24 @@ int main(int argc, char *argv[])
         
         // 程序退出清理
         QObject::connect(&app, &QApplication::aboutToQuit, [&controller]() {
-            controller.stop();
+            controller.stopWithReason(QStringLiteral("aboutToQuit"));
             qInfo() << "程序正常退出";
         });
+
+        bool autoCloseOk = false;
+        const int autoCloseMs = qEnvironmentVariableIntValue("DEVICE_RECEIVER_AUTOCLOSE_MS", &autoCloseOk);
+        if (autoCloseOk && autoCloseMs > 0) {
+            qInfo() << "启用自动退出定时器，毫秒=" << autoCloseMs;
+            QTimer::singleShot(autoCloseMs, &app, &QCoreApplication::quit);
+        }
+
+        bool triggerCrash = false;
+        const int crashFlag = qEnvironmentVariableIntValue("DEVICE_RECEIVER_TRIGGER_CRASH_ON_START", &triggerCrash);
+        if (triggerCrash && crashFlag == 1) {
+            qCritical() << "触发受控崩溃测试：DEVICE_RECEIVER_TRIGGER_CRASH_ON_START=1";
+            volatile int* p = nullptr;
+            *p = 1;
+        }
 
         qDebug() << "进入事件循环...";
         return app.exec();

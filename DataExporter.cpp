@@ -43,7 +43,7 @@ bool exportCsv(const QVector<FrameData>& frames,
 
     const int channels = maxChannelCount(frames);
     const qint64 exportAt = QDateTime::currentMSecsSinceEpoch();
-    stream << "# schema_version=2\n";
+    stream << "# schema_version=3\n";
     stream << "# exported_at_ms=" << exportAt << "\n";
     stream << "# source=" << options.sourceTag << "\n";
     stream << "# range_start_ms=" << options.startTimeMs << "\n";
@@ -236,7 +236,7 @@ bool exportHdf5(const QVector<FrameData>& frames,
     }
 
     QVector<qint64> timestamps;
-    QVector<quint16> frameIds;
+    QVector<quint64> frameIds;
     QVector<quint8> detectModes;
     QVector<quint8> channelCounts;
     QVector<quint8> stageHas;
@@ -333,7 +333,7 @@ bool exportHdf5(const QVector<FrameData>& frames,
     H5Gclose(stagePoseGroup);
 
     if (!writeDataset1D(fileId, "/frames/timestamp_ms_utc", H5T_STD_I64LE, timestamps, errorMessage) ||
-        !writeDataset1D(fileId, "/frames/frame_id", H5T_STD_U16LE, frameIds, errorMessage) ||
+        !writeDataset1D(fileId, "/frames/frame_id", H5T_STD_U64LE, frameIds, errorMessage) ||
         !writeDataset1D(fileId, "/frames/detect_mode", H5T_STD_U8LE, detectModes, errorMessage) ||
         !writeDataset1D(fileId, "/frames/channel_count", H5T_STD_U8LE, channelCounts, errorMessage) ||
         !writeDataset2D(fileId, "/channels/comp0", comp0, frames.size(), channelMax, errorMessage) ||

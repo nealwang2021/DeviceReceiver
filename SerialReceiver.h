@@ -1,4 +1,4 @@
-﻿#ifndef SERIALRECEIVER_H
+#ifndef SERIALRECEIVER_H
 #define SERIALRECEIVER_H
 // SerialReceiver.h 第一行添加
 #ifdef QT_COMPILE_FOR_WASM
@@ -85,7 +85,8 @@ private:
     bool m_paused = false;       // 采集暂停标记
 
     // 帧协议配置（根据硬件修改）
-    const int FRAME_LENGTH = 16;                     // 固定帧长度
+    const int FRAME_LENGTH = 22;                   // 固定帧长度（含 AA55 + uint64 frameId + 3x float 传感器占位字段）
+    quint64 m_mockFrameSeq {0};                    // 串口模拟数据：单调递增序号（与 FrameData::sequence/frameId 对齐）
     const QByteArray FRAME_HEAD = QByteArray::fromHex("AA55"); // 帧头
 };
 

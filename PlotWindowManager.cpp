@@ -14,6 +14,8 @@
 #include <QDebug>
 #include <QDateTime>
 #include <QElapsedTimer>
+#include "qcustomplot.h"
+#include <utility>
 
 namespace {
 bool perfLogEnabled()
@@ -75,7 +77,12 @@ void PlotWindowManager::initialize()
     DataCacheManager* cacheManager = DataCacheManager::instance();
     if (cacheManager) {
         connect(cacheManager, &DataCacheManager::criticalFrameReceived,
-                this, &PlotWindowManager::criticalFrameReceived);
+                this, [this](const FrameData& frame) {
+                    if (m_stopGuardActive) {
+                        return;
+                    }
+                    emit criticalFrameReceived(frame);
+                });
     }
 
     m_isInitialized = true;
@@ -302,6 +309,47 @@ void PlotWindowManager::stopUpdates()
     }
 }
 
+void PlotWindowManager::enterStopGuard()
+{
+    m_stopGuardActive = true;
+    stopUpdates();
+
+    for (PlotWindowBase* window : std::as_const(m_windows)) {
+        if (!window) {
+            continue;
+        }
+        window->setUpdatesEnabled(false);
+        const auto plots = window->findChildren<QCustomPlot*>();
+        for (QCustomPlot* plot : plots) {
+            if (!plot) {
+                continue;
+            }
+            // 退出/停止阶段常见崩溃：QCustomPlot 默认大量使用 rpQueuedReplot，
+            // 若随后窗口/Surface 被销毁，队列中的 OpenGL replot 仍可能在无效 surface 上 makeCurrent。
+            // 这里用一次“立即 replot + 排队重绘”把待处理队列排空，同时**不关闭 OpenGL**（避免运行期性能回退）。
+#ifdef QCUSTOMPLOT_USE_OPENGL
+            if (plot->openGl()) {
+                plot->replot(QCustomPlot::rpQueuedRefresh);
+            }
+#endif
+        }
+    }
+}
+
+void PlotWindowManager::leaveStopGuard()
+{
+    if (!m_stopGuardActive) {
+        return;
+    }
+    m_stopGuardActive = false;
+    for (PlotWindowBase* window : std::as_const(m_windows)) {
+        if (!window) {
+            continue;
+        }
+        window->setUpdatesEnabled(true);
+    }
+}
+
 QVector<FrameData> PlotWindowManager::getRecentFrames(int count)
 {
     DataCacheManager* cacheManager = DataCacheManager::instance();
@@ -313,6 +361,9 @@ QVector<FrameData> PlotWindowManager::getRecentFrames(int count)
 
 void PlotWindowManager::onUpdateTimer()
 {
+    if (m_stopGuardActive) {
+        return;
+    }
     QElapsedTimer tickTimer;
     tickTimer.start();
 

@@ -29,7 +29,7 @@ public:
     void enqueueFrame(const FrameData& frame);
 
     /// 当前会话写入的 SQLite 文件路径；未 start 时返回空串。
-    QString currentDatabasePath() const { return m_databaseFilePath; }
+    QString currentDatabasePath() const;
 
     quint64 droppedFrameCount() const { return m_droppedFrames.load(); }
     quint64 droppedByQueueCount() const { return m_droppedByQueue.load(); }
@@ -49,6 +49,12 @@ private:
 signals:
     void stopWorker();
     void dropFrameAlert(const QString& message);
+    /// 实时会话库因「保留时长 / 文件大小上限」轮换到新文件（旧文件不删不改，仅停止写入）。
+    void sessionDatabaseRotated(const QString& newPath);
+
+public slots:
+    /// 供 worker 线程通过 QMetaObject::invokeMethod(..., Qt::QueuedConnection) 投递到对象线程后发出 sessionDatabaseRotated。
+    void publishSessionDatabaseRotated(const QString& newPath);
 
 private:
     friend class RealtimeSqlRecorderWorker;
@@ -64,6 +70,7 @@ private:
     qint64 m_maxDatabaseBytes = 1024ll * 1024ll * 1024ll;
 
     QString m_databaseFilePath;
+    mutable QMutex m_databasePathMutex;
     std::atomic<quint64> m_droppedFrames {0};
     std::atomic<quint64> m_droppedByQueue {0};
     std::atomic<quint64> m_droppedByDatabase {0};

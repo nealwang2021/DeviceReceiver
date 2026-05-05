@@ -1,6 +1,7 @@
-﻿#include "DataCacheManager.h"
+#include "DataCacheManager.h"
 #include <QDateTime>
 #include <QDebug>
+#include <cstdint>
 
 DataCacheManager* DataCacheManager::m_instance = nullptr;
 
@@ -111,7 +112,7 @@ FrameData DataCacheManager::getLatestFrame()
     if (m_size <= 0) {
         FrameData emptyFrame;
         emptyFrame.timestamp = 0;
-        emptyFrame.frameId = UINT16_MAX; // 无效帧ID
+        emptyFrame.frameId = UINT64_MAX; // 无效帧ID
         return emptyFrame;
     }
     return m_frameCache[physicalIndex(m_size - 1)];

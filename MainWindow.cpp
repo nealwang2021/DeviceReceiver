@@ -2124,7 +2124,23 @@ void MainWindow::handleGrpcBackendPacket(const QJsonObject& packet)
     if (packetType == "streamFrame") {
         const qint64 localTs = QDateTime::currentMSecsSinceEpoch();
         const qint64 payloadTimestamp = packet.value("timestamp").toVariant().toLongLong();
-        const int frameId = packet.value("frameId").toInt(-1);
+        // frameId 可能为数值或字符串（大序号时用字符串避免 JSON number 精度问题）
+        quint64 frameIdUi = 0;
+        {
+            const QJsonValue v = packet.value("frameId");
+            if (v.isString()) {
+                bool ok = false;
+                frameIdUi = v.toString().toULongLong(&ok);
+                if (!ok) {
+                    frameIdUi = 0;
+                }
+            } else if (v.isDouble()) {
+                frameIdUi = static_cast<quint64>(v.toDouble());
+            } else {
+                frameIdUi = static_cast<quint64>(v.toVariant().toULongLong());
+            }
+        }
+        Q_UNUSED(frameIdUi);
         const int channelCount = packet.value("channelCount").toInt(-1);
         const QString mode = packet.value("mode").toString();
 
@@ -2826,7 +2842,7 @@ void MainWindow::onDisconnectClicked()
         if (isGrpcBackend) {
             logGrpcInteraction("connect", "点击断开");
         }
-        m_appController->stop();
+        m_appController->stopWithReason(QStringLiteral("ui_disconnect_click"));
         updateConnectionStatus(false);
     }
 }

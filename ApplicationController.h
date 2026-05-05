@@ -60,6 +60,7 @@ public:
      * @brief 停止应用（停止数据接收，准备退出）
      */
     void stop();
+    void stopWithReason(const QString& reason);
     void pauseAcquisition();
     void resumeAcquisition();
     bool isPaused() const { return m_isPaused; }
@@ -163,6 +164,9 @@ private:
     void handleGrpcConnectAttemptFinished(bool connected, const QString& detail);
     void connectStageReceiverToMainWindow();
     void disconnectStageReceiverFromMainWindow();
+
+    /// 实时 SQLite 会话库轮换到新文件后，更新 HistoryDataProvider 的会话路径与只读连接。
+    void onRealtimeSessionDatabaseRotated(const QString& newPath);
     
     /**
      * @brief 清理所有资源
@@ -173,6 +177,7 @@ private:
     bool m_isRunning = false;
     bool m_isPaused = false;
     bool m_connectInProgress = false;
+    QString m_pendingStopReason;
     
     // 核心模块实例
     DataCacheManager* m_cacheManager = nullptr;
@@ -198,6 +203,7 @@ private:
         QString grpcEndpoint = "127.0.0.1:50051";
         bool useMockData = true;         // 是否使用模拟数据
         int mockDataIntervalMs = 100;    // 模拟/gRPC Subscribe 帧间隔（毫秒，勿用 1000 除非刻意 1Hz）
+        int grpcConnectTimeoutMs = 6000; // gRPC 单次连接等待超时（毫秒）
         int initialWindowCount = 1;      // 初始窗口数量
         PlotType initialWindowType = CombinedPlot; // 初始窗口类型
         QString defaultExportDirectory = "exports";

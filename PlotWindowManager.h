@@ -10,6 +10,7 @@
 
 class PlotWindowBase;
 class QMdiArea;
+class QCustomPlot;
 
 /**
  * @brief 绘图窗口管理器（单例模式）
@@ -46,6 +47,8 @@ public:
     int updateInterval() const { return m_updateTimer->interval(); }
     void startUpdates();
     void stopUpdates();
+    void enterStopGuard();
+    void leaveStopGuard();
     QVector<FrameData> getRecentFrames(int count = 5);
 
 signals:
@@ -80,7 +83,7 @@ private:
     bool m_hasLastDispatchedKey{false};
     quint64 m_lastDispatchedSequence{0};
     qint64 m_lastDispatchedTimestamp{0};
-    uint16_t m_lastDispatchedFrameId{0};
+    quint64 m_lastDispatchedFrameId{0};
     int m_baseUpdateIntervalMs{50};
     qint64 m_lastManagerTickMs{0};
     qint64 m_lastPolledTotalFrames{-1};
@@ -92,6 +95,7 @@ private:
     qint64 m_perfTickTotalMs{0};
     qint64 m_perfDataEmitCount{0};
     qint64 m_perfSnapshotEmitCount{0};
+    bool m_stopGuardActive{false};
 };
 
 #endif // PLOTWINDOWMANAGER_H

@@ -11,7 +11,7 @@ struct FrameData
     // 基本字段
     int64_t timestamp;     // 时间戳（毫秒）
     uint64_t sequence;     // 原始序列号（device.proto: sequence）
-    uint16_t frameId;      // 帧ID（0-65535）
+    uint64_t frameId;      // 帧序号（与 sequence 对齐；用于 UI/导出/调试展示的全量 uint64 标识）
 
     // 检测模式：用于区分 legacy / 多通道实数 / 多通道复数
     enum DetectionMode : uint8_t {

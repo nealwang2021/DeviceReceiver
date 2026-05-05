@@ -244,7 +244,8 @@ SOURCES += main.cpp \
            HistoryDataProvider.cpp \
            HistoryOverviewWindow.cpp \
            HistoryExportService.cpp \
-           HistoryImportService.cpp
+           HistoryImportService.cpp \
+           CrashHandlerWin.cpp
 
 # 头文件列表
 HEADERS += FrameData.h \
@@ -274,7 +275,8 @@ HEADERS += FrameData.h \
            HistoryDataProvider.h \
            HistoryOverviewWindow.h \
            HistoryExportService.h \
-           HistoryImportService.h
+           HistoryImportService.h \
+           CrashHandlerWin.h
 
 # UI文件列表
 FORMS += MainWindow.ui
@@ -288,6 +290,7 @@ RESOURCES += realtime_data.qrc
 }
 msvc {
     QMAKE_CXXFLAGS += /W3
+    LIBS += -ldbghelp
 }
 
 #中文乱码

@@ -63,6 +63,9 @@ public:
     
     int mockDataIntervalMs() const { return m_mockDataIntervalMs; }
     void setMockDataIntervalMs(int ms) { m_mockDataIntervalMs = ms; }
+
+    int grpcConnectTimeoutMs() const { return m_grpcConnectTimeoutMs; }
+    void setGrpcConnectTimeoutMs(int ms) { m_grpcConnectTimeoutMs = ms; }
     
 #ifndef QT_COMPILE_FOR_WASM
     // ========== 串口高级配置（仅在非WASM环境下可用）==========
@@ -197,6 +200,7 @@ private:
     QString m_stageGrpcEndpoint;
     bool m_useMockData = false;        // 是否使用模拟数据
     int m_mockDataIntervalMs = 100;    // 模拟数据间隔；gRPC 真机时为 Subscribe 请求的 interval_ms（毫秒）
+    int m_grpcConnectTimeoutMs = 6000; // gRPC 单次连接等待超时（毫秒）
     
 #ifndef QT_COMPILE_FOR_WASM
     // 串口高级配置（仅在非WASM环境下可用）

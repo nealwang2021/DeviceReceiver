@@ -1,4 +1,4 @@
-﻿#include "SerialReceiver.h"
+#include "SerialReceiver.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QRandomGenerator>
@@ -162,7 +162,9 @@ void SerialReceiver::onMockDataTimer()
     // 生成模拟帧数据（无硬件时测试用）
     FrameData frame;
     frame.timestamp = QDateTime::currentMSecsSinceEpoch();
-    frame.frameId = QRandomGenerator::global()->bounded(10000);
+    const quint64 seq = ++m_mockFrameSeq;
+    frame.sequence = seq;
+    frame.frameId = seq;
 
     // 模拟单个多通道信号（用于开发），周期性切换实数/复数
     const int MOCK_CHANNEL_COUNT = 8;
@@ -197,7 +199,7 @@ void SerialReceiver::onMockDataTimer()
     QDataStream ds(&raw, QIODevice::WriteOnly);
     ds.setByteOrder(QDataStream::LittleEndian);
     ds << static_cast<quint64>(frame.timestamp);
-    ds << static_cast<quint16>(frame.frameId);
+    ds << static_cast<quint64>(frame.frameId);
     emit dataReceived(raw.toHex(' ').toUpper(), true);
 
     // 节流调试日志：最多每秒输出一次，避免刷屏
@@ -231,9 +233,9 @@ void SerialReceiver::processSerialBuffer()
         }
 
         int frameLength = FRAME_LENGTH;
-        if (m_serialBuffer.size() >= 18) {
-            const quint8 modeByte = static_cast<quint8>(m_serialBuffer.at(16));
-            const quint8 channelCount = static_cast<quint8>(m_serialBuffer.at(17));
+        if (m_serialBuffer.size() >= FRAME_LENGTH + 2) {
+            const quint8 modeByte = static_cast<quint8>(m_serialBuffer.at(FRAME_LENGTH));
+            const quint8 channelCount = static_cast<quint8>(m_serialBuffer.at(FRAME_LENGTH + 1));
             if (modeByte <= static_cast<quint8>(FrameData::MultiChannelComplex)) {
                 int payloadBytes = 0;
                 if (modeByte == static_cast<quint8>(FrameData::MultiChannelReal)) {
@@ -242,7 +244,7 @@ void SerialReceiver::processSerialBuffer()
                     payloadBytes = static_cast<int>(channelCount) * static_cast<int>(sizeof(float)) * 2;
                 }
 
-                const int candidateLength = 18 + payloadBytes;
+                const int candidateLength = FRAME_LENGTH + 2 + payloadBytes;
                 if (m_serialBuffer.size() < candidateLength) {
                     break; // 扩展帧尚未接收完整
                 }
@@ -270,7 +272,7 @@ FrameData SerialReceiver::parseRawData(const QByteArray& rawFrame)
 {
     FrameData frame;
     // 使用安全解析，假定帧格式（小端）：
-    // [0-1] head(2) | [2-3] frameId(u16) | [4-7] temperature(float) | [8-11] humidity(float) | [12-15] voltage(float)
+    // [0-1] head(2) | [2-9] frameId(u64) | [10-13] temperature(float) | [14-17] humidity(float) | [18-21] voltage(float)
     if (rawFrame.size() < FRAME_LENGTH) {
         qWarning() << "解析错误：帧长度不足，期待至少" << FRAME_LENGTH << "实际" << rawFrame.size();
         return frame;
@@ -287,20 +289,19 @@ FrameData SerialReceiver::parseRawData(const QByteArray& rawFrame)
     quint16 head = 0;
     ds >> head; // 读取并丢弃帧头
 
-    quint16 frameId = 0;
+    quint64 frameIdWire = 0;
     // 跳过旧的温度、湿度、电压字段（各4字节，共12字节）
     float dummy = 0.0f;
-    ds >> frameId;
+    ds >> frameIdWire;
     ds >> dummy; // temperature
     ds >> dummy; // humidity
     ds >> dummy; // voltage
 
-    frame.frameId = static_cast<uint32_t>(frameId);
+    frame.frameId = frameIdWire;
+    frame.sequence = frameIdWire;
 
-    // 如果帧长度超出基础16字节，尝试读取扩展字段：mode/count及通道数据
-    if (rawFrame.size() >= 18) { // 至少要有 mode 和 count
-        // 将数据流定位到第16字节之后
-        ds.device()->seek(16);
+    // 如果帧长度超出基础帧，尝试读取扩展字段：mode/count及通道数据
+    if (rawFrame.size() >= static_cast<int>(FRAME_LENGTH + 2)) { // 至少要有 mode 和 count
         quint8 modeByte = 0;
         quint8 chCount = 0;
         ds >> modeByte;
