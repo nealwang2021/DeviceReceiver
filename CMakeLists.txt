@@ -19,7 +19,7 @@ if(NOT DEFINED CMAKE_PREFIX_PATH AND NOT DEFINED QT5_DIR)
 endif()
 
 # 查找Qt库（Qt 5.15）
-find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Sql)
+find_package(Qt5 5.15 REQUIRED COMPONENTS Core Gui Widgets Network PrintSupport Sql Concurrent)
 if(NOT ENABLE_WASM)
     find_package(Qt5 5.15 REQUIRED COMPONENTS SerialPort OpenGL)
 else()
@@ -87,6 +87,8 @@ set(SOURCE_FILES
     HistoryExportService.cpp
     HistoryImportService.cpp
     CrashHandlerWin.cpp
+    BusyOverlay.cpp
+    ReviewLoadCoordinator.cpp
 )
 
 # 头文件列表
@@ -121,6 +123,8 @@ set(HEADER_FILES
     HistoryImportService.h
     MinMaxBucketSampler.h
     CrashHandlerWin.h
+    BusyOverlay.h
+    ReviewLoadCoordinator.h
 )
 
 # UI文件
@@ -153,6 +157,7 @@ target_link_libraries(realtime_data
     Qt5::Network
     Qt5::PrintSupport
     Qt5::Sql
+    Qt5::Concurrent
 )
 
 if(NOT ENABLE_WASM)
@@ -395,6 +400,8 @@ if(WIN32 AND NOT ENABLE_WASM)
             "$<TARGET_FILE:Qt5::PrintSupport>" "$<TARGET_FILE_DIR:realtime_data>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt5::Sql>" "$<TARGET_FILE_DIR:realtime_data>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:Qt5::Concurrent>" "$<TARGET_FILE_DIR:realtime_data>"
     )
     
     if(NOT ENABLE_WASM)

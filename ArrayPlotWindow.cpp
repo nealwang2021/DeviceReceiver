@@ -1,8 +1,11 @@
 #include "ArrayPlotWindow.h"
 #include "AppConfig.h"
+#include "BusyOverlay.h"
 #include "FrameData.h"
 #include "HistoryDataProvider.h"
+#include "ReviewLoadCoordinator.h"
 #include "SelectionState.h"
+#include "SqlHistoryQuery.h"
 #include "qcustomplot.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -17,8 +20,10 @@
 #include <QDir>
 #include <QDateTime>
 #include <QCoreApplication>
+#include <QPointer>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QtConcurrent/QtConcurrent>
 #include <QtGlobal>
 #include <set>
 #include <cmath>
@@ -312,6 +317,31 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
         m_reviewMode = (sel->mode() == SelectionState::Review);
     }
 
+    // 加载蒙版：仅响应本窗口自己的 review worker 状态。
+    if (m_plotScrollArea) {
+        m_busyOverlay = new BusyOverlay(m_plotScrollArea);
+        m_busyOverlay->setMessage(QStringLiteral("正在加载历史数据..."));
+        connect(ReviewLoadCoordinator::instance(),
+                &ReviewLoadCoordinator::busyChanged,
+                this,
+                [this](bool /*busy*/, const QStringList& descriptors) {
+                    if (!m_busyOverlay) return;
+                    // 只在"本窗口的"任务挂起时显示，避免被其他窗口的加载状态拖累。
+                    bool selfBusy = false;
+                    for (const QString& d : descriptors) {
+                        if (d.startsWith(QStringLiteral("阵列图"))) {
+                            selfBusy = true;
+                            break;
+                        }
+                    }
+                    if (selfBusy) {
+                        m_busyOverlay->showOverlay();
+                    } else {
+                        m_busyOverlay->hideOverlay();
+                    }
+                });
+    }
+
     m_perfLogTimer.start();
 }
 
@@ -561,7 +591,6 @@ void ArrayPlotWindow::renderReviewRange()
         return;
     }
 
-    // 分量映射到 SQL 列（当前为幅值/相位/实部/虚部 ↔ amp/phase/x/y）
     SqlHistoryQuery::Component comp = SqlHistoryQuery::Component::Amplitude;
     switch (m_componentMode) {
     case ArrayComponent::Phase: comp = SqlHistoryQuery::Component::Phase; break;
@@ -571,56 +600,116 @@ void ArrayPlotWindow::renderReviewRange()
     default: comp = SqlHistoryQuery::Component::Amplitude; break;
     }
 
-    // 目标点数：按绘图宽像素估算，桶点 = ~像素数
     const int pixelWidth = std::max(320, m_plot->axisRect() ? m_plot->axisRect()->rect().width() : m_plot->width());
     const int targetBuckets = std::max(200, std::min(2000, pixelWidth));
     const qint64 bucketMs = HistoryDataProvider::suggestBucketMs(m_reviewStartMs, m_reviewEndMs, targetBuckets);
-
     const int channelCount = std::min(m_plot->graphCount(), 40);
-    m_channelDataMin.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
-    m_channelDataMax.fill(std::numeric_limits<double>::quiet_NaN(), m_plot->graphCount());
+    const QString dbPath = hdp->currentDatabasePath();
+    if (dbPath.isEmpty()) {
+        return;
+    }
+
+    const quint64 epoch = ++m_reviewEpoch;
+    const qint64 startMs = m_reviewStartMs;
+    const qint64 endMs = m_reviewEndMs;
+
+    auto* coord = ReviewLoadCoordinator::instance();
+    const QString taskKey = QStringLiteral("ArrayPlot/%1").arg(epoch);
+    coord->beginTask(taskKey, QStringLiteral("阵列图加载历史"));
+
+    QPointer<ArrayPlotWindow> self(this);
+    QtConcurrent::run([self, epoch, taskKey, dbPath, startMs, endMs, comp, bucketMs, channelCount]() {
+        ReviewQueryResult result;
+        result.startMs = startMs;
+        result.endMs = endMs;
+
+        SqlHistoryQuery query;
+        if (!query.open(dbPath)) {
+            qWarning() << "[ArrayPlot review] 打开 DB 只读连接失败:" << dbPath;
+            QMetaObject::invokeMethod(qApp,
+                [self, epoch, taskKey, r = std::move(result)]() mutable {
+                    if (self) self->onReviewQueryFinished(epoch, std::move(r));
+                    ReviewLoadCoordinator::instance()->endTask(taskKey);
+                },
+                Qt::QueuedConnection);
+            return;
+        }
+
+        result.channels.resize(channelCount);
+        for (int i = 0; i < channelCount; ++i) {
+            ReviewChannelResult& ch = result.channels[i];
+            ch.channelIndex = i;
+            QVector<SqlHistoryQuery::BucketRow> buckets;
+            if (!query.queryChannelEnvelope(startMs, endMs, bucketMs, i, comp, &buckets)) {
+                continue;
+            }
+            ch.keys.reserve(buckets.size() * 2);
+            ch.values.reserve(buckets.size() * 2);
+            double chMin = 0.0, chMax = 0.0;
+            bool hasMin = false, hasMax = false;
+            for (const auto& row : buckets) {
+                if (!row.hasData) continue;
+                const double tLeft = static_cast<double>(row.bucketStartMs);
+                const double tRight = tLeft + static_cast<double>(bucketMs) * 0.5;
+                ch.keys.append(tLeft);
+                ch.values.append(row.minValue);
+                ch.keys.append(tRight);
+                ch.values.append(row.maxValue);
+                if (!hasMin || row.minValue < chMin) { chMin = row.minValue; hasMin = true; }
+                if (!hasMax || row.maxValue > chMax) { chMax = row.maxValue; hasMax = true; }
+            }
+            ch.dataMin = chMin;
+            ch.dataMax = chMax;
+            ch.hasMin = hasMin;
+            ch.hasMax = hasMax;
+        }
+        result.ok = true;
+
+        QMetaObject::invokeMethod(qApp,
+            [self, epoch, taskKey, r = std::move(result)]() mutable {
+                if (self) self->onReviewQueryFinished(epoch, std::move(r));
+                ReviewLoadCoordinator::instance()->endTask(taskKey);
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void ArrayPlotWindow::onReviewQueryFinished(quint64 epoch, ReviewQueryResult result)
+{
+    if (epoch != m_reviewEpoch) {
+        return; // 已被新的 review 请求覆盖
+    }
+    if (!m_plot || m_channelAxisRects.isEmpty() || !result.ok) {
+        return;
+    }
+    if (!m_reviewMode) {
+        return; // 用户已切回 Live，丢弃
+    }
+
+    const int graphCount = m_plot->graphCount();
+    m_channelDataMin.fill(std::numeric_limits<double>::quiet_NaN(), graphCount);
+    m_channelDataMax.fill(std::numeric_limits<double>::quiet_NaN(), graphCount);
     m_timeAxis.clear();
 
-    for (int i = 0; i < channelCount; ++i) {
-        QVector<SqlHistoryQuery::BucketRow> buckets;
-        if (!hdp->queryChannelEnvelope(m_reviewStartMs, m_reviewEndMs, bucketMs, i, comp, &buckets)) {
+    for (const ReviewChannelResult& ch : result.channels) {
+        if (ch.channelIndex < 0 || ch.channelIndex >= graphCount) {
             continue;
         }
-        // 每桶展平为 2 个点（min/max），保留时间顺序
-        QVector<double> keys;
-        QVector<double> vals;
-        keys.reserve(buckets.size() * 2);
-        vals.reserve(buckets.size() * 2);
-        double chMin = std::numeric_limits<double>::quiet_NaN();
-        double chMax = std::numeric_limits<double>::quiet_NaN();
-        for (const auto& row : buckets) {
-            if (!row.hasData) continue;
-            const double tLeft = static_cast<double>(row.bucketStartMs);
-            const double tRight = tLeft + static_cast<double>(bucketMs) * 0.5;
-            keys.append(tLeft);
-            vals.append(row.minValue);
-            keys.append(tRight);
-            vals.append(row.maxValue);
-            if (!std::isfinite(chMin) || row.minValue < chMin) chMin = row.minValue;
-            if (!std::isfinite(chMax) || row.maxValue > chMax) chMax = row.maxValue;
+        m_plot->graph(ch.channelIndex)->setData(ch.keys, ch.values, true);
+        if (ch.channelIndex < m_channelDataMin.size()) {
+            m_channelDataMin[ch.channelIndex] = ch.hasMin ? ch.dataMin : std::numeric_limits<double>::quiet_NaN();
         }
-        if (i < m_plot->graphCount()) {
-            m_plot->graph(i)->setData(keys, vals, true);
+        if (ch.channelIndex < m_channelDataMax.size()) {
+            m_channelDataMax[ch.channelIndex] = ch.hasMax ? ch.dataMax : std::numeric_limits<double>::quiet_NaN();
         }
-        if (i < m_channelDataMin.size()) {
-            m_channelDataMin[i] = chMin;
-            m_channelDataMax[i] = chMax;
-        }
-        // 时间轴以第 0 通道为代表（用于 updateArrayData 的判空/共享范围）
-        if (i == 0) {
-            m_timeAxis = keys;
+        if (ch.channelIndex == 0) {
+            m_timeAxis = ch.keys;
         }
     }
 
-    // 当前 X 范围固定为 [m_reviewStartMs, m_reviewEndMs]
     for (auto axisRect : m_channelAxisRects) {
         axisRect->axis(QCPAxis::atBottom)
-            ->setRange(static_cast<double>(m_reviewStartMs), static_cast<double>(m_reviewEndMs));
+            ->setRange(static_cast<double>(result.startMs), static_cast<double>(result.endMs));
     }
     applyChannelVisibility();
     updateUnifiedYAxisRange();

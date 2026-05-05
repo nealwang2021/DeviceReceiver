@@ -1,4 +1,4 @@
-QT += core gui widgets network
+QT += core gui widgets network concurrent
 # 根据编译目标条件添加模块
 !wasm {
     QT += serialport sql
@@ -245,7 +245,9 @@ SOURCES += main.cpp \
            HistoryOverviewWindow.cpp \
            HistoryExportService.cpp \
            HistoryImportService.cpp \
-           CrashHandlerWin.cpp
+           CrashHandlerWin.cpp \
+           BusyOverlay.cpp \
+           ReviewLoadCoordinator.cpp
 
 # 头文件列表
 HEADERS += FrameData.h \
@@ -276,7 +278,9 @@ HEADERS += FrameData.h \
            HistoryOverviewWindow.h \
            HistoryExportService.h \
            HistoryImportService.h \
-           CrashHandlerWin.h
+           CrashHandlerWin.h \
+           BusyOverlay.h \
+           ReviewLoadCoordinator.h
 
 # UI文件列表
 FORMS += MainWindow.ui

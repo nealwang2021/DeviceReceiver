@@ -402,6 +402,11 @@ void ApplicationController::stop()
     }
 
     if (!m_isRunning) {
+        // 断开过程结束（或本就未运行），释放 stop guard 让窗口恢复重绘，
+        // 否则离线状态下 resize / 历史回放的 replot 都会被 setUpdatesEnabled(false) 吞掉。
+        if (m_plotWindowManager) {
+            m_plotWindowManager->leaveStopGuard();
+        }
         return;
     }
     
@@ -442,6 +447,15 @@ void ApplicationController::stop()
     
     m_isRunning = false;
     m_isPaused = false;
+
+    // 关键：受控断开已完成，释放 stop guard。否则窗口被 setUpdatesEnabled(false)
+    // 持续屏蔽 paint 事件，导致：1) 断开后阵列图/阵列热力图不刷新；
+    // 2) resize 触发的重绘被丢弃出现残影；3) 拖时间范围回放历史时
+    // renderReviewRange / rebuildPlots 内部的 replot 不可见。
+    if (m_plotWindowManager) {
+        m_plotWindowManager->leaveStopGuard();
+    }
+
     qInfo() << "应用已停止";
     
     // 发射停止信号

@@ -140,3 +140,34 @@ bool HistoryDataProvider::queryChannelEnvelope(qint64 startMs,
     }
     return m_query->queryChannelEnvelope(startMs, endMs, bucketMs, channelIndex, component, outBuckets);
 }
+
+qint64 HistoryDataProvider::estimateRowCount(qint64 startMs, qint64 endMs) const
+{
+    if (!isDatabaseOpen()) {
+        return 0;
+    }
+    return m_query->estimateRowCount(startMs, endMs);
+}
+
+bool HistoryDataProvider::fetchRawChunk(qint64 startMs,
+                                        qint64 endMs,
+                                        qint64 lastTimestampMs,
+                                        qint64 lastRowId,
+                                        int chunkSize,
+                                        QVector<SqlHistoryQuery::AlignedFrameRow>* outRows,
+                                        QString* errorMessage) const
+{
+    if (!outRows || !isDatabaseOpen()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("HistoryDataProvider: database not open");
+        }
+        return false;
+    }
+    return m_query->fetchRawChunk(startMs,
+                                  endMs,
+                                  lastTimestampMs,
+                                  lastRowId,
+                                  chunkSize,
+                                  outRows,
+                                  errorMessage);
+}

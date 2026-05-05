@@ -14,6 +14,7 @@ class QCheckBox;
 class QPushButton;
 class QScrollArea;
 class QWidget;
+class BusyOverlay;
 
 class ArrayPlotWindow : public PlotWindowBase
 {
@@ -68,8 +69,31 @@ private:
     int perRowHeightForDensity() const;
     void onThemeChanged() override;
 
-    /// 回放模式下按 SelectionState 范围从 DB 重建 40 通道数据
+    /// 回放模式下按 SelectionState 范围从 DB 重建 40 通道数据。
+    /// 实际的 SQL 查询会被派发到 worker 线程，结果回到主线程后才更新 graph。
     void renderReviewRange();
+
+    /// review 查询单通道结果（在 worker 线程组装完毕后回到主线程使用）。
+    struct ReviewChannelResult
+    {
+        int channelIndex{-1};
+        QVector<double> keys;   // 时间轴（毫秒，min/max 各占一个点）
+        QVector<double> values; // 与 keys 同长，min/max 交替
+        double dataMin{0.0};
+        double dataMax{0.0};
+        bool hasMin{false};
+        bool hasMax{false};
+    };
+    struct ReviewQueryResult
+    {
+        bool ok{false};
+        qint64 startMs{0};
+        qint64 endMs{0};
+        QVector<ReviewChannelResult> channels;
+    };
+
+    /// worker 线程结果回主线程的入口；epoch 不一致直接丢弃。
+    void onReviewQueryFinished(quint64 epoch, ReviewQueryResult result);
 
 private:
     QCustomPlot* m_plot{nullptr};
@@ -118,6 +142,12 @@ private:
     bool m_reviewMode{false};
     qint64 m_reviewStartMs{0};
     qint64 m_reviewEndMs{0};
+
+    /// 单调递增的 review 加载世代号；worker 完成时与当前 epoch 比对，旧任务结果丢弃。
+    quint64 m_reviewEpoch{0};
+
+    /// 加载蒙版：与 ReviewLoadCoordinator 协同显示/隐藏。覆盖在 m_plot 之上。
+    BusyOverlay* m_busyOverlay{nullptr};
 };
 
 #endif // ARRAYPLOTWINDOW_H

@@ -1,11 +1,15 @@
 #include "ArrayRgbHeatmapWindow.h"
 
 #include "AppConfig.h"
+#include "BusyOverlay.h"
 #include "HistoryDataProvider.h"
+#include "ReviewLoadCoordinator.h"
 #include "SelectionState.h"
+#include "SqlHistoryQuery.h"
 #include "qcustomplot.h"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
@@ -15,8 +19,10 @@
 #include <QHBoxLayout>
 #include <QImage>
 #include <QPainter>
+#include <QPointer>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrent>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -67,6 +73,34 @@ ArrayRgbHeatmapWindow::ArrayRgbHeatmapWindow(QWidget* parent)
         m_reviewStartMs = sel->startMs();
         m_reviewEndMs = sel->endMs();
         m_reviewMode = (sel->mode() == SelectionState::Review);
+    }
+
+    // 加载蒙版：覆盖整个窗口，仅响应阵列热力图自己的任务。
+    m_busyOverlay = new BusyOverlay(this);
+    m_busyOverlay->setMessage(QStringLiteral("正在加载历史数据..."));
+    connect(ReviewLoadCoordinator::instance(),
+            &ReviewLoadCoordinator::busyChanged,
+            this,
+            [this](bool /*busy*/, const QStringList& descriptors) {
+                if (!m_busyOverlay) return;
+                bool selfBusy = false;
+                for (const QString& d : descriptors) {
+                    if (d.startsWith(QStringLiteral("阵列热力图"))) {
+                        selfBusy = true;
+                        break;
+                    }
+                }
+                if (selfBusy) {
+                    m_busyOverlay->showOverlay();
+                } else {
+                    m_busyOverlay->hideOverlay();
+                }
+            });
+
+    if (m_reviewMode) {
+        // 窗口在已处于 review 状态时打开：尝试一次 DB 加载；DB 未就绪也不报错，
+        // 后续 selectionChanged 信号会再次触发 loadReviewFromDb。
+        loadReviewFromDb();
     }
 }
 
@@ -241,9 +275,10 @@ double ArrayRgbHeatmapWindow::currentXAxisMax() const
         return 1.0;
     }
 
+    const QVector<FrameRecord>& src = sourceFramesForRender();
     if (m_xAxisMode == XAxisMode::TimeSeconds) {
-        const qint64 t0 = m_frames.at(visible.first()).timestampMs;
-        const qint64 t1 = m_frames.at(visible.last()).timestampMs;
+        const qint64 t0 = src.at(visible.first()).timestampMs;
+        const qint64 t1 = src.at(visible.last()).timestampMs;
         const double duration = (t1 - t0) / 1000.0;
         return (duration > 0.0) ? duration : 1.0;
     }
@@ -328,6 +363,7 @@ void ArrayRgbHeatmapWindow::clearFrames()
     }
     m_rebuildPending = false;
     m_frames.clear();
+    m_reviewFrames.clear();
     m_lastSequence = -1;
     m_lastTimestamp = -1;
     if (m_statusLabel) {
@@ -376,10 +412,11 @@ QImage ArrayRgbHeatmapWindow::buildHeatmapImage(bool useAmpPhase) const
     QImage image(width, height, QImage::Format_RGB32);
     image.fill(QColor(24, 24, 24));
 
+    const QVector<FrameRecord>& src = sourceFramesForRender();
     for (int x = 0; x < visible.size(); ++x) {
         const int frameIdx = visible.at(x);
-        if (frameIdx < 0 || frameIdx >= m_frames.size()) continue;
-        const FrameRecord& record = m_frames[frameIdx];
+        if (frameIdx < 0 || frameIdx >= src.size()) continue;
+        const FrameRecord& record = src[frameIdx];
         for (int pos = 0; pos < m_channelCount; ++pos) {
             const int row = (m_channelCount - 1) - pos;
             QColor color(24, 24, 24);
@@ -407,20 +444,17 @@ QImage ArrayRgbHeatmapWindow::buildHeatmapImage(bool useAmpPhase) const
 
 QVector<int> ArrayRgbHeatmapWindow::collectVisibleFrameIndices() const
 {
+    const QVector<FrameRecord>& src = sourceFramesForRender();
     QVector<int> out;
-    out.reserve(m_frames.size());
-    if (!m_reviewMode || m_reviewEndMs <= m_reviewStartMs) {
-        for (int i = 0; i < m_frames.size(); ++i) {
-            out.append(i);
-        }
-    } else {
-        for (int i = 0; i < m_frames.size(); ++i) {
-            const qint64 ts = m_frames.at(i).timestampMs;
-            if (ts >= m_reviewStartMs && ts <= m_reviewEndMs) {
-                out.append(i);
-            }
-        }
+    out.reserve(src.size());
+
+    // Review 模式：m_reviewFrames 已经是按 SelectionState 范围加载并抽稀过的，直接全选；
+    // Live 模式：使用全部 m_frames（早期版本支持过 review 时按时间过滤 m_frames，但 m_frames
+    // 仅在 live 流时有效，无法回放更早历史，故现已移除该过滤路径）。
+    for (int i = 0; i < src.size(); ++i) {
+        out.append(i);
     }
+
     if (out.size() > kHeatmapMaxVisibleColumns) {
         const int stride = (out.size() + kHeatmapMaxVisibleColumns - 1) / kHeatmapMaxVisibleColumns;
         QVector<int> sub;
@@ -431,6 +465,151 @@ QVector<int> ArrayRgbHeatmapWindow::collectVisibleFrameIndices() const
         return sub;
     }
     return out;
+}
+
+const QVector<ArrayRgbHeatmapWindow::FrameRecord>& ArrayRgbHeatmapWindow::sourceFramesForRender() const
+{
+    return m_reviewMode ? m_reviewFrames : m_frames;
+}
+
+void ArrayRgbHeatmapWindow::loadReviewFromDb()
+{
+    m_reviewFrames.clear();
+    if (m_reviewEndMs <= m_reviewStartMs) {
+        return;
+    }
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isDatabaseOpen()) {
+        return;
+    }
+    const QString dbPath = hdp->currentDatabasePath();
+    if (dbPath.isEmpty()) {
+        return;
+    }
+
+    const int channelCount = qBound(1, m_channelCount, displayChannelCount());
+    const qint64 startMs = m_reviewStartMs;
+    const qint64 endMs = m_reviewEndMs;
+
+    const quint64 epoch = ++m_reviewEpoch;
+    auto* coord = ReviewLoadCoordinator::instance();
+    const QString taskKey = QStringLiteral("ArrayRgbHeatmap/%1").arg(epoch);
+    coord->beginTask(taskKey, QStringLiteral("阵列热力图加载历史"));
+
+    QPointer<ArrayRgbHeatmapWindow> self(this);
+    QtConcurrent::run([self, epoch, taskKey, dbPath, startMs, endMs, channelCount]() {
+        ReviewQueryResult result;
+        result.startMs = startMs;
+        result.endMs = endMs;
+        result.channelCount = channelCount;
+
+        SqlHistoryQuery query;
+        if (!query.open(dbPath)) {
+            qWarning() << "[ArrayRgbHeatmap review] 打开 DB 只读连接失败:" << dbPath;
+            QMetaObject::invokeMethod(qApp,
+                [self, epoch, taskKey, r = std::move(result)]() mutable {
+                    if (self) self->onReviewQueryFinished(epoch, std::move(r));
+                    ReviewLoadCoordinator::instance()->endTask(taskKey);
+                },
+                Qt::QueuedConnection);
+            return;
+        }
+
+        constexpr int kReviewMaxFrames = kHeatmapMaxVisibleColumns;
+        qint64 estimated = query.estimateRowCount(startMs, endMs);
+        if (estimated < 0) estimated = 0;
+        int stride = 1;
+        if (estimated > kReviewMaxFrames) {
+            stride = static_cast<int>((estimated + kReviewMaxFrames - 1) / kReviewMaxFrames);
+            stride = qMax(1, stride);
+        }
+        result.stride = stride;
+
+        constexpr int kChunkSize = 2000;
+        qint64 cursorTs = startMs - 1;
+        qint64 cursorRowId = std::numeric_limits<qint64>::min();
+        qint64 seenRows = 0;
+        QString err;
+
+        while (result.frames.size() < kReviewMaxFrames) {
+            QVector<SqlHistoryQuery::AlignedFrameRow> rows;
+            if (!query.fetchRawChunk(startMs, endMs,
+                                     cursorTs, cursorRowId,
+                                     kChunkSize, &rows, &err)) {
+                qWarning() << "[ArrayRgbHeatmap review] fetchRawChunk 失败:" << err;
+                break;
+            }
+            if (rows.isEmpty()) break;
+
+            for (const SqlHistoryQuery::AlignedFrameRow& row : rows) {
+                const qint64 idx = seenRows++;
+                cursorTs = row.timestampMs;
+                cursorRowId = row.rowId;
+                if (stride > 1 && (idx % stride) != 0) continue;
+
+                FrameRecord record;
+                record.sequence = row.frameSequence;
+                record.timestampMs = row.timestampMs;
+                record.amp = makeNaNVector(channelCount);
+                record.phase = makeNaNVector(channelCount);
+                record.x = makeNaNVector(channelCount);
+                record.y = makeNaNVector(channelCount);
+                for (int pos = 0; pos < channelCount && pos < SqlHistoryQuery::kAlignedChannelCount; ++pos) {
+                    if (row.amp[pos].isValid() && !row.amp[pos].isNull()) {
+                        record.amp[pos] = row.amp[pos].toDouble();
+                    }
+                    if (row.phase[pos].isValid() && !row.phase[pos].isNull()) {
+                        record.phase[pos] = row.phase[pos].toDouble();
+                    }
+                    if (row.x[pos].isValid() && !row.x[pos].isNull()) {
+                        record.x[pos] = row.x[pos].toDouble();
+                    }
+                    if (row.y[pos].isValid() && !row.y[pos].isNull()) {
+                        record.y[pos] = row.y[pos].toDouble();
+                    }
+                }
+                result.frames.append(std::move(record));
+                if (result.frames.size() >= kReviewMaxFrames) break;
+            }
+            if (rows.size() < kChunkSize) break;
+        }
+        result.ok = true;
+
+        QMetaObject::invokeMethod(qApp,
+            [self, epoch, taskKey, r = std::move(result)]() mutable {
+                if (self) self->onReviewQueryFinished(epoch, std::move(r));
+                ReviewLoadCoordinator::instance()->endTask(taskKey);
+            },
+            Qt::QueuedConnection);
+    });
+}
+
+void ArrayRgbHeatmapWindow::onReviewQueryFinished(quint64 epoch, ReviewQueryResult result)
+{
+    if (epoch != m_reviewEpoch) {
+        return;
+    }
+    if (!m_reviewMode) {
+        return;
+    }
+
+    m_reviewFrames = std::move(result.frames);
+    if (result.channelCount > 0) {
+        m_channelCount = qBound(1, result.channelCount, displayChannelCount());
+    }
+
+    if (m_statusLabel) {
+        if (!result.ok) {
+            m_statusLabel->setText(QStringLiteral("状态：回放加载失败"));
+        } else {
+            m_statusLabel->setText(QStringLiteral("状态：回放 [%1, %2] 共 %3 帧（步长 %4）")
+                                       .arg(result.startMs)
+                                       .arg(result.endMs)
+                                       .arg(m_reviewFrames.size())
+                                       .arg(result.stride));
+        }
+    }
+    scheduleRebuild();
 }
 
 void ArrayRgbHeatmapWindow::trimFramesToRealtimeLiveWindow()
@@ -453,10 +632,22 @@ void ArrayRgbHeatmapWindow::trimFramesToRealtimeLiveWindow()
 
 void ArrayRgbHeatmapWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
 {
+    const bool nowReview = (mode == 1);
     m_reviewStartMs = startMs;
     m_reviewEndMs = endMs;
-    m_reviewMode = (mode == 1);
-    scheduleRebuild();
+    const bool wasReview = m_reviewMode;
+    m_reviewMode = nowReview;
+
+    if (nowReview) {
+        // 切到 review：异步从 DB 拉取；先清空 review 缓冲并主动重绘一次（即出现"空白等待"），
+        // worker 完成后 onReviewQueryFinished 会再次 scheduleRebuild。
+        loadReviewFromDb();
+        scheduleRebuild();
+    } else if (wasReview) {
+        // 切回 live：丢弃 review 缓冲，下一帧/快照到达后用 m_frames 重绘。
+        m_reviewFrames.clear();
+        scheduleRebuild();
+    }
 }
 
 void ArrayRgbHeatmapWindow::configurePlot(QCustomPlot* plot,
@@ -499,13 +690,20 @@ void ArrayRgbHeatmapWindow::rebuildPlots()
     configurePlot(m_realImagPlot, m_realImagPixmap, realImag, currentXAxisLabel());
 
     if (m_statusLabel) {
-        if (m_frames.isEmpty()) {
-            m_statusLabel->setText(QStringLiteral("状态：等待数据"));
+        const QVector<FrameRecord>& src = sourceFramesForRender();
+        if (src.isEmpty()) {
+            if (m_reviewMode) {
+                m_statusLabel->setText(QStringLiteral("状态：回放范围内无数据"));
+            } else {
+                m_statusLabel->setText(QStringLiteral("状态：等待数据"));
+            }
         } else {
-            const FrameRecord& last = m_frames.last();
-            m_statusLabel->setText(QStringLiteral("状态：帧 %1 | 缓冲 %2 帧 | 通道 %3 | 轴: %4")
+            const FrameRecord& last = src.last();
+            const QString prefix = m_reviewMode ? QStringLiteral("回放") : QStringLiteral("帧");
+            m_statusLabel->setText(QStringLiteral("状态：%1 %2 | 缓冲 %3 帧 | 通道 %4 | 轴: %5")
+                                   .arg(prefix)
                                    .arg(last.sequence)
-                                   .arg(m_frames.size())
+                                   .arg(src.size())
                                    .arg(m_channelCount)
                                    .arg(currentXAxisLabel()));
         }
@@ -559,14 +757,16 @@ void ArrayRgbHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames)
         changed = appendFrame(frame) || changed;
     }
 
-    if (changed) {
+    // Review 模式下保留 live 缓冲（便于切回 live 后立刻有数据），但不触发重绘以免覆盖回放视图。
+    if (changed && !m_reviewMode) {
         scheduleRebuild();
     }
 }
 
 void ArrayRgbHeatmapWindow::onCriticalFrame(const FrameData& frame)
 {
-    if (appendFrame(frame)) {
+    const bool added = appendFrame(frame);
+    if (added && !m_reviewMode) {
         scheduleRebuild();
     }
 }
@@ -577,7 +777,7 @@ void ArrayRgbHeatmapWindow::onPlotSnapshotUpdated(const QSharedPointer<const Plo
         return;
     }
     loadSnapshot(snapshot);
-    if (!m_frames.isEmpty()) {
+    if (!m_frames.isEmpty() && !m_reviewMode) {
         scheduleRebuild();
     }
 }
