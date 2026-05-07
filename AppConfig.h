@@ -4,6 +4,7 @@
 #include <QString>
 #include <QObject>
 #include <QSize>
+#include <QDate>
 #ifndef QT_COMPILE_FOR_WASM
 #include <QSerialPort>
 #endif
@@ -30,7 +31,19 @@ public:
 
     /** 与可执行文件同目录的 config.ini（避免依赖当前工作目录导致配置/布局未加载） */
     static QString defaultConfigFilePath();
-    
+
+    /** `<exe>/data` 根目录（不自动创建） */
+    static QString dataRootPath();
+
+    /** 确保 `<exe>/data/<yyyyMMdd>` 存在并返回其绝对路径（日志、实时库、导入预览等按日落盘） */
+    static QString ensureDatedDataDirectory(const QDate& date = QDate::currentDate());
+
+    /**
+     * 在 `data` 下递归查找最新的 `device_realtime_*.db`（会话路径无效时兜底）。
+     * 返回空串表示未找到。
+     */
+    static QString findNewestDeviceRealtimeDatabaseUnderDataRoot();
+
     // 禁止拷贝和赋值
     AppConfig(const AppConfig&) = delete;
     AppConfig& operator=(const AppConfig&) = delete;

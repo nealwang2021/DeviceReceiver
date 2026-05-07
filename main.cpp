@@ -9,6 +9,7 @@
 #include "CrashHandlerWin.h"
 #include "OpenGlDiagnostics.h"
 #include <QDateTime>
+#include <QDir>
 #include <QFontDatabase>
 #include <QFont>
 #include <QTimer>
@@ -52,10 +53,11 @@ int main(int argc, char *argv[])
         }
 #endif
 
-        // 先安装日志处理器，再加载 config.ini，否则 AppConfig::loadFromFile 内的 qInfo/qWarning 不会写入 realtime_data.log
+        // 先安装日志处理器，再加载 config.ini，否则 AppConfig::loadFromFile 内的 qInfo/qWarning 不会写入日志文件
         const QString startupTag = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
         CrashHandlerWin::setSessionTag(startupTag);
-        QString logPath = QApplication::applicationDirPath() + QString("/realtime_data_%1.log").arg(startupTag);
+        const QString datedDataDir = AppConfig::ensureDatedDataDirectory();
+        const QString logPath = QDir(datedDataDir).filePath(QStringLiteral("realtime_data_%1.log").arg(startupTag));
         if (AppLogger::instance()->initialize(logPath)) {
             AppLogger::instance()->installQtMessageHandler();
             qInfo() << "日志已打开:" << logPath;

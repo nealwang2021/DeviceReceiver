@@ -195,13 +195,6 @@ private:
      */
     void saveCommandHistory();
     
-    /**
-     * @brief 添加接收数据到显示区
-     * @param data 数据内容
-     * @param isHex 是否为十六进制格式
-     * @param isReceived 是否为接收数据（true：接收，false：发送）
-     */
-    void addDataToMonitor(const QString& data, bool isHex = false, bool isReceived = true);
     void appendMonitorLog(const QString& text, const QString& color = QString(), bool storeEntry = true);
     void appendAppLogRecord(const AppLogRecord& record);
     void rebuildMonitorView();
@@ -420,8 +413,6 @@ private:
     int m_frameCount;
     int m_alarmCount;
     qint64 m_lastUpdateTime;
-    qint64 m_lastMonitorAppendTime;
-    int m_monitorAppendIntervalMs;
     qint64 m_lastGrpcStreamTimestampMs;
     bool m_grpcSelfTestPending;
     bool m_grpcSelfTestCommandAcked;

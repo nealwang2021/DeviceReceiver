@@ -535,12 +535,9 @@ void HistoryOverviewWindow::onImportClicked()
         return;
     }
 
-    // 非 .db：一律导入到新建 sqlite（不清空当前库）。
-    const QString dataDirPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data"));
-    QDir dataDir(dataDirPath);
-    if (!dataDir.exists()) {
-        dataDir.mkpath(QStringLiteral("."));
-    }
+    // 非 .db：一律导入到新建 sqlite（不清空当前库），落在 data/当日 目录下。
+    const QString importDir = AppConfig::ensureDatedDataDirectory();
+    QDir dataDir(importDir);
     const QString targetDbPath = dataDir.filePath(
         QStringLiteral("import_preview_%1.db")
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"))));
@@ -771,16 +768,11 @@ bool HistoryOverviewWindow::ensureDatabaseAndBounds()
             }
         }
         if (!hdp->isDatabaseOpen()) {
-            // 兜底：会话路径无效时，尝试自动发现当前目录 data 下最新会话 DB。
-            const QString dataDirPath = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data"));
-            QDir dataDir(dataDirPath);
-            const QFileInfoList dbFiles = dataDir.entryInfoList(
-                QStringList() << QStringLiteral("device_realtime_*.db"),
-                QDir::Files,
-                QDir::Time);
-            if (!dbFiles.isEmpty()) {
+            // 兜底：会话路径无效时，尝试在 data（含按日子目录）下查找最新会话 DB。
+            const QString newestDb = AppConfig::findNewestDeviceRealtimeDatabaseUnderDataRoot();
+            if (!newestDb.isEmpty()) {
                 hdp->setSourceMode(HistoryDataProvider::HistorySourceMode::SessionRealtime);
-                hdp->openDatabase(dbFiles.first().absoluteFilePath());
+                hdp->openDatabase(newestDb);
             }
         }
         if (!hdp->isDatabaseOpen()) {

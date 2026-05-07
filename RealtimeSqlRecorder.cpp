@@ -1,5 +1,6 @@
 #include "RealtimeSqlRecorder.h"
 
+#include "AppConfig.h"
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
@@ -416,8 +417,9 @@ private:
 
         closeDbConnection();
 
-        const QFileInfo oldInfo(oldPath);
-        QDir dir = oldInfo.dir();
+        // 新会话库落在「当天」的 data/yyyyMMdd 下，与启动路径及日志目录一致。
+        const QString datedDir = AppConfig::ensureDatedDataDirectory();
+        QDir dir(datedDir);
         QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
         QString newPath = dir.filePath(QStringLiteral("device_realtime_%1.db").arg(stamp));
         if (QFile::exists(newPath)) {

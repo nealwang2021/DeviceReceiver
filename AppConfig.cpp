@@ -3,12 +3,15 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QDirIterator>
+#include <QDate>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QApplication>
 #include <QTextCodec>
 #include <QTemporaryFile>
 #include <cstdio>
+#include <algorithm>
 #ifndef QT_COMPILE_FOR_WASM
 #include <QAbstractSocket>
 #include <QHostAddress>
@@ -315,6 +318,57 @@ QString AppConfig::defaultConfigFilePath()
         return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("config.ini"));
     }
     return QStringLiteral("config.ini");
+}
+
+QString AppConfig::dataRootPath()
+{
+    if (QCoreApplication::instance()) {
+        return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("data"));
+    }
+    return QStringLiteral("data");
+}
+
+QString AppConfig::ensureDatedDataDirectory(const QDate& date)
+{
+    const QString rel = QStringLiteral("data/%1").arg(date.toString(QStringLiteral("yyyyMMdd")));
+    if (QCoreApplication::instance()) {
+        QDir root(QCoreApplication::applicationDirPath());
+        const QString path = root.filePath(rel);
+        if (!QDir(path).exists() && !root.mkpath(rel)) {
+            qWarning() << "AppConfig: 创建按日数据目录失败:" << path;
+        }
+        return QDir(path).absolutePath();
+    }
+    QDir d(rel);
+    if (!d.exists()) {
+        d.mkpath(QStringLiteral("."));
+    }
+    return QDir(rel).absolutePath();
+}
+
+QString AppConfig::findNewestDeviceRealtimeDatabaseUnderDataRoot()
+{
+    const QString dataDirPath = dataRootPath();
+    QDir dataDir(dataDirPath);
+    if (!dataDir.exists()) {
+        return QString();
+    }
+    QFileInfoList candidates;
+    QDirIterator it(dataDirPath,
+                    QStringList() << QStringLiteral("device_realtime_*.db"),
+                    QDir::Files,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        candidates.append(it.fileInfo());
+    }
+    if (candidates.isEmpty()) {
+        return QString();
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const QFileInfo& a, const QFileInfo& b) {
+        return a.lastModified() > b.lastModified();
+    });
+    return candidates.first().absoluteFilePath();
 }
 
 bool AppConfig::loadFromFile(const QString& filename)

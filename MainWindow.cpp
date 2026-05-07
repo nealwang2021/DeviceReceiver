@@ -74,8 +74,6 @@ MainWindow::MainWindow(ApplicationController* controller, QWidget* parent)
     , m_frameCount(0)
     , m_alarmCount(0)
     , m_lastUpdateTime(0)
-    , m_lastMonitorAppendTime(0)
-    , m_monitorAppendIntervalMs(200)
     , m_lastGrpcStreamTimestampMs(0)
     , m_grpcSelfTestPending(false)
     , m_grpcSelfTestCommandAcked(false)
@@ -1240,7 +1238,8 @@ void MainWindow::initUI()
         m_monitorLogLevelCombo->addItem(QStringLiteral("Info"), static_cast<int>(AppLogLevel::Info));
         m_monitorLogLevelCombo->addItem(QStringLiteral("Warning"), static_cast<int>(AppLogLevel::Warning));
         m_monitorLogLevelCombo->addItem(QStringLiteral("Critical"), static_cast<int>(AppLogLevel::Critical));
-        m_monitorLogLevelCombo->setToolTip(QStringLiteral("仅过滤 qDebug/qInfo/qWarning/qCritical 全局日志；收发数据始终显示"));
+        m_monitorLogLevelCombo->setToolTip(
+            QStringLiteral("按等级过滤下方条目；内容仅为应用日志（qDebug/qInfo/qWarning/qCritical），不含设备原始收发数据。"));
         if (AppConfig* cfg = AppConfig::instance()) {
             const int idx = m_monitorLogLevelCombo->findData(static_cast<int>(cfg->monitorLogMinimumLevel()));
             if (idx >= 0) {
@@ -1659,10 +1658,6 @@ void MainWindow::initConnections()
                 });
 
         auto appendGrpcServerOutput = [this](const QString& output, const QString& streamTag) {
-            if (!m_dataMonitor) {
-                return;
-            }
-
             const QString trimmed = output.trimmed();
             if (trimmed.isEmpty()) {
                 return;
@@ -1670,14 +1665,8 @@ void MainWindow::initConnections()
 
             const QStringList lines = trimmed.split('\n', Qt::SkipEmptyParts);
             for (const QString& line : lines) {
-                const QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
-                m_dataMonitor->append(QString("%1 [gRPC测试服务-%2] %3")
-                                          .arg(timestamp, streamTag, line.trimmed()));
                 logGrpcInteraction("test-server", QString("[%1] %2").arg(streamTag, line.trimmed()));
             }
-
-            QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar();
-            scrollBar->setValue(scrollBar->maximum());
         };
 
         connect(m_grpcTestServerProcess, &QProcess::readyReadStandardOutput, this, [this, appendGrpcServerOutput]() {
@@ -2806,54 +2795,6 @@ int MainWindow::grpcEndpointPort() const
     return port;
 }
 
-void MainWindow::addDataToMonitor(const QString& data, bool isHex, bool isReceived)
-{
-    if (data.isEmpty() || !m_dataMonitor) {
-        return;
-    }
-
-    if (isReceived) {
-        if (m_monitorPanel && !m_monitorPanel->isVisible()) {
-            return;
-        }
-
-        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-        if (nowMs - m_lastMonitorAppendTime < m_monitorAppendIntervalMs) {
-            return;
-        }
-        m_lastMonitorAppendTime = nowMs;
-    }
-
-    QString payload = data;
-    if (!isHex) {
-        const QString decodedPayload = QTextDocumentFragment::fromHtml(payload).toPlainText();
-        if (!decodedPayload.isEmpty()) {
-            payload = decodedPayload;
-        }
-    }
-
-    if (payload.size() > 256) {
-        payload = payload.left(256) + " ...";
-    }
-    
-    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
-    QString direction = isReceived ? "[接收]" : "[发送]";
-    QString format = isHex ? "HEX" : "TXT";
-    
-    QString displayText = QString("%1 %2 %3: %4")
-                             .arg(timestamp)
-                             .arg(direction)
-                             .arg(format)
-                             .arg(payload);
-    
-    // 添加到监控区域
-    appendMonitorLog(displayText);
-    
-    // 自动滚动到底部
-    QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar();
-    scrollBar->setValue(scrollBar->maximum());
-}
-
 void MainWindow::appendMonitorLog(const QString& text, const QString& color, bool storeEntry)
 {
     if (!m_dataMonitor || text.isEmpty()) {
@@ -2922,8 +2863,15 @@ void MainWindow::rebuildMonitorView()
     }
 
     m_dataMonitor->clear();
+    AppLogLevel minimum = AppLogLevel::Info;
+    if (AppConfig* cfg = AppConfig::instance()) {
+        minimum = cfg->monitorLogMinimumLevel();
+    }
     for (const MonitorEntry& entry : std::as_const(m_monitorEntries)) {
-        if (entry.isAppLog && !AppLogger::passesLevel(entry.level, AppConfig::instance()->monitorLogMinimumLevel())) {
+        if (!entry.isAppLog) {
+            continue;
+        }
+        if (!AppLogger::passesLevel(entry.level, minimum)) {
             continue;
         }
         appendMonitorLog(entry.text, entry.color, false);
@@ -3267,8 +3215,6 @@ void MainWindow::onSendClicked()
         }
     }
     
-    // 在监控区显示发送的指令
-    addDataToMonitor(command, isHex, false);
     if (isGrpcBackend) {
         logGrpcInteraction("send", QString("发送命令: %1 (isHex=%2)").arg(command, isHex ? "true" : "false"));
     }
@@ -3446,58 +3392,25 @@ void MainWindow::onDataReceived(const QByteArray& data, bool isHex)
         if (parseError.error == QJsonParseError::NoError && jsonDoc.isObject()) {
             handleGrpcBackendPacket(jsonDoc.object());
         }
-    }
-
-    if (m_monitorPanel && !m_monitorPanel->isVisible()) {
-        return;
-    }
-
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (nowMs - m_lastMonitorAppendTime < m_monitorAppendIntervalMs) {
-        return;
-    }
-
-    QString displayData;
-    if (isHex) {
-        displayData = data.toHex(' ').toUpper();
     } else {
-        displayData = QString::fromUtf8(data);
+        Q_UNUSED(data);
+        Q_UNUSED(isHex);
     }
-    
-    addDataToMonitor(displayData, isHex, true);
 }
 
 void MainWindow::onStageDataReceived(const QByteArray& data, bool isHex)
 {
+    Q_UNUSED(isHex);
     QJsonParseError parseError;
     const QJsonDocument jsonDoc = QJsonDocument::fromJson(data, &parseError);
     if (parseError.error == QJsonParseError::NoError && jsonDoc.isObject()) {
         handleStageBackendPacket(jsonDoc.object());
     }
-
-    if (m_monitorPanel && !m_monitorPanel->isVisible()) {
-        return;
-    }
-
-    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
-    if (nowMs - m_lastMonitorAppendTime < m_monitorAppendIntervalMs) {
-        return;
-    }
-
-    QString displayData;
-    if (isHex) {
-        displayData = data.toHex(' ').toUpper();
-    } else {
-        displayData = QString::fromUtf8(data);
-    }
-
-    addDataToMonitor(displayData, isHex, true);
 }
 
 void MainWindow::onStageCommandSent(const QByteArray& command)
 {
     const QString text = QString::fromUtf8(command).trimmed();
-    addDataToMonitor(text, false, false);
     if (m_stageCommandResultLabel) {
         m_stageCommandResultLabel->setText(QStringLiteral("最近结果: 已发送 %1").arg(text));
         m_stageCommandResultLabel->setStyleSheet(QStringLiteral("color: #1d4ed8;"));
@@ -3516,15 +3429,12 @@ void MainWindow::onStageCommandError(const QString& error)
     }
 
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
-    const QString errorText = QStringLiteral("%1 [错误]: %2").arg(timestamp, error);
-    appendMonitorLog(errorText, QStringLiteral("red"));
+    qWarning().noquote() << QStringLiteral("%1 [Stage][错误] %2").arg(timestamp, error);
 }
 
 void MainWindow::onRecorderDropAlert(const QString& message)
 {
-    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
-    const QString text = QStringLiteral("%1 [丢帧告警]: %2").arg(timestamp, message);
-    appendMonitorLog(text, QStringLiteral("red"));
+    qWarning().noquote() << QStringLiteral("[丢帧告警] %1").arg(message);
 }
 
 void MainWindow::onStageConnectionStateChanged(bool connected)
@@ -3535,17 +3445,15 @@ void MainWindow::onStageConnectionStateChanged(bool connected)
 
 void MainWindow::onCommandSent(const QByteArray& command)
 {
-    // 指令发送成功处理
-    bool isHex = m_hexFormatCheck->isChecked();
-    QString displayData = isHex ? command.toHex(' ').toUpper() : QString::fromUtf8(command);
-    
-    addDataToMonitor(displayData, isHex, false);
-
     const bool isGrpcBackend = (m_backendTypeCombo &&
                                 m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
     if (isGrpcBackend) {
         logGrpcInteraction("send", QString("命令已发送: %1")
                                      .arg(QString::fromUtf8(command).trimmed()));
+    } else {
+        const bool isHex = m_hexFormatCheck && m_hexFormatCheck->isChecked();
+        const QString payload = isHex ? command.toHex(' ').toUpper() : QString::fromUtf8(command);
+        qInfo().noquote() << QStringLiteral("[Serial][send] %1").arg(payload);
     }
 }
 
@@ -3577,12 +3485,9 @@ void MainWindow::onCommandError(const QString& error)
                                 m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
     if (isGrpcBackend) {
         logGrpcInteraction("error", error);
+    } else {
+        qWarning().noquote() << QStringLiteral("[Command][错误] %1").arg(error);
     }
-
-    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
-    QString errorText = QString("%1 [错误]: %2").arg(timestamp).arg(error);
-
-    appendMonitorLog(errorText, QStringLiteral("red"));
 }
 
 void MainWindow::onUpdateTimer()

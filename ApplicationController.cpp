@@ -169,8 +169,8 @@ bool ApplicationController::initialize()
         m_realtimeRecorder.reset(new RealtimeSqlRecorder(this));
     }
     const QString startupTimestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss"));
-    const QString recorderDbPath = QDir(QCoreApplication::applicationDirPath())
-        .filePath(QStringLiteral("data/device_realtime_%1.db").arg(startupTimestamp));
+    const QString datedDir = AppConfig::ensureDatedDataDirectory();
+    const QString recorderDbPath = QDir(datedDir).filePath(QStringLiteral("device_realtime_%1.db").arg(startupTimestamp));
     if (!m_realtimeRecorder->start(recorderDbPath)) {
         qWarning() << "实时SQLite记录器启动失败:" << recorderDbPath;
     } else {
