@@ -105,3 +105,75 @@ void PlotWindowBase::onThemeChanged()
 {
 	applyThemeToAllPlots();
 }
+
+void PlotWindowBase::applyConfiguredOpenGl(QCustomPlot* plot)
+{
+	if (!plot) {
+		return;
+	}
+#ifdef QCUSTOMPLOT_USE_OPENGL
+	bool enabled = true;
+	if (auto* cfg = AppConfig::instance()) {
+		enabled = cfg->qcustomPlotOpenGlEnabled();
+	}
+	if (plot->openGl() != enabled) {
+		plot->setOpenGl(enabled);
+	}
+#endif
+	// 性能档对软渲染同样生效；即便编译期未开 OpenGL 也要应用。
+	applyConfiguredPerformance(plot);
+}
+
+void PlotWindowBase::applyConfiguredOpenGlToTree(QWidget* root)
+{
+	if (!root) {
+		return;
+	}
+	const auto plots = root->findChildren<QCustomPlot*>();
+	for (QCustomPlot* plot : plots) {
+		applyConfiguredOpenGl(plot);
+		// 切换 OpenGL / 性能档后内部 paint buffer 与 hint 标记需重绘才能生效。
+		plot->replot(QCustomPlot::rpQueuedReplot);
+	}
+}
+
+void PlotWindowBase::applyConfiguredPerformance(QCustomPlot* plot)
+{
+	if (!plot) {
+		return;
+	}
+	// 默认按「OpenGL 启用 = Quality 档」推断；若 AppConfig 不可用，按 Quality 处理。
+	bool quality = true;
+	if (auto* cfg = AppConfig::instance()) {
+		quality = cfg->qcustomPlotOpenGlEnabled();
+	}
+
+	if (quality) {
+		// 恢复 QCustomPlot 默认高画质：清掉 perf 档遗留的标志。
+		plot->setNoAntialiasingOnDrag(false);
+		plot->setPlottingHints(QCP::phCacheLabels);
+	} else {
+		// 软渲染性能档：拖拽期不抗锯齿 + 直线段批量快路径。
+		plot->setNoAntialiasingOnDrag(true);
+		plot->setPlottingHints(QCP::phFastPolylines | QCP::phCacheLabels);
+	}
+
+	// 对每条曲线切换抗锯齿；ColorMap 等其它 plottable 不改，保留原视觉。
+	const int count = plot->plottableCount();
+	for (int i = 0; i < count; ++i) {
+		if (auto* graph = qobject_cast<QCPGraph*>(plot->plottable(i))) {
+			graph->setAntialiased(quality);
+		}
+	}
+}
+
+void PlotWindowBase::applyConfiguredPerformanceToTree(QWidget* root)
+{
+	if (!root) {
+		return;
+	}
+	const auto plots = root->findChildren<QCustomPlot*>();
+	for (QCustomPlot* plot : plots) {
+		applyConfiguredPerformance(plot);
+	}
+}

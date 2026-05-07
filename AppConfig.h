@@ -8,6 +8,8 @@
 #include <QSerialPort>
 #endif
 
+#include "AppLogger.h"
+
 /**
  * @brief 应用配置管理类，集中管理所有配置参数
  * 
@@ -91,6 +93,17 @@ public:
 
     int arrayPlotRowHeightPx() const { return m_arrayPlotRowHeightPx; }
     void setArrayPlotRowHeightPx(int px) { m_arrayPlotRowHeightPx = qBound(0, px, 300); }
+
+    /**
+     * QCustomPlot OpenGL 加速开关。
+     * - 默认 true，保持历史行为；用户可通过菜单关闭以规避特定显卡/驱动问题。
+     * - 该值仅在编译时定义了 QCUSTOMPLOT_USE_OPENGL 才真正生效；
+     *   未编译进 OpenGL 时 QCustomPlot 内部会忽略 setOpenGl 的 enable 路径。
+     * - setter 仅在值变化时发出 qcustomPlotOpenGlEnabledChanged 信号，
+     *   PlotWindowManager 据此把 setOpenGl 广播给所有现存 plot 控件。
+     */
+    bool qcustomPlotOpenGlEnabled() const { return m_qcustomPlotOpenGlEnabled; }
+    void setQcustomPlotOpenGlEnabled(bool enabled);
 
     // ========== 检测分析窗口配置 ==========
     int inspectionChannelsPerGroup() const { return m_inspectionChannelsPerGroup; }
@@ -181,7 +194,14 @@ public:
     // 日志配置
     QString logLevel() const { return m_logLevel; }
     void setLogLevel(const QString& level) { m_logLevel = level; }
-    
+
+    AppLogLevel monitorLogMinimumLevel() const { return m_monitorLogMinimumLevel; }
+    void setMonitorLogMinimumLevel(AppLogLevel level) { m_monitorLogMinimumLevel = level; }
+
+signals:
+    /// 仅在 setQcustomPlotOpenGlEnabled 改变值时触发。
+    void qcustomPlotOpenGlEnabledChanged(bool enabled);
+
 private:
     explicit AppConfig(QObject *parent = nullptr);
     ~AppConfig() override = default;
@@ -214,6 +234,7 @@ private:
     int m_maxPlotPoints = 2000;        // 最大绘图点数
     int m_plotRefreshIntervalMs = 50;  // 绘图刷新间隔（毫秒）
     int m_arrayPlotRowHeightPx = 0;    // 阵列图每通道高度（像素，0=使用密度默认值）
+    bool m_qcustomPlotOpenGlEnabled = true; // QCustomPlot OpenGL 加速开关
     int m_inspectionChannelsPerGroup = 8; // 检测分析窗口每组通道数
     
     // 数据统计配置
@@ -253,6 +274,7 @@ private:
 
     // 日志级别: DEBUG/INFO/WARNING/ERROR
     QString m_logLevel = "INFO";
+    AppLogLevel m_monitorLogMinimumLevel = AppLogLevel::Info;
     
     // 样式配置
     Style m_currentStyle = LightStyle;

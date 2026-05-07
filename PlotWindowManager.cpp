@@ -85,6 +85,19 @@ void PlotWindowManager::initialize()
                 });
     }
 
+    // 监听 OpenGL 加速开关的运行时切换：广播到当前所有 plot 窗口。
+    if (AppConfig* config = AppConfig::instance()) {
+        connect(config, &AppConfig::qcustomPlotOpenGlEnabledChanged,
+                this, [this](bool enabled) {
+                    qInfo() << "[PlotWindowManager] QCustomPlot OpenGL ->"
+                            << (enabled ? "enabled" : "disabled")
+                            << ", broadcasting to" << m_windows.size() << "windows";
+                    for (PlotWindowBase* window : std::as_const(m_windows)) {
+                        PlotWindowBase::applyConfiguredOpenGlToTree(window);
+                    }
+                });
+    }
+
     m_isInitialized = true;
     qInfo() << "PlotWindowManager 初始化完成";
 }

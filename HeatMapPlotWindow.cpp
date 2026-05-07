@@ -162,9 +162,7 @@ HeatMapPlotWindow::HeatMapPlotWindow(QWidget *parent)
 
     // 绘图区域
     m_plot = new QCustomPlot(this);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-    m_plot->setOpenGl(true);
-#endif
+    PlotWindowBase::applyConfiguredOpenGl(m_plot);
     mainLayout->addWidget(m_plot, 1);
 
     // 统计信息标签

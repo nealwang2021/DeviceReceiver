@@ -247,7 +247,8 @@ SOURCES += main.cpp \
            HistoryImportService.cpp \
            CrashHandlerWin.cpp \
            BusyOverlay.cpp \
-           ReviewLoadCoordinator.cpp
+           ReviewLoadCoordinator.cpp \
+           OpenGlDiagnostics.cpp
 
 # 头文件列表
 HEADERS += FrameData.h \
@@ -280,7 +281,8 @@ HEADERS += FrameData.h \
            HistoryImportService.h \
            CrashHandlerWin.h \
            BusyOverlay.h \
-           ReviewLoadCoordinator.h
+           ReviewLoadCoordinator.h \
+           OpenGlDiagnostics.h
 
 # UI文件列表
 FORMS += MainWindow.ui

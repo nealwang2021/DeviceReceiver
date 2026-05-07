@@ -202,7 +202,11 @@ private:
      * @param isReceived 是否为接收数据（true：接收，false：发送）
      */
     void addDataToMonitor(const QString& data, bool isHex = false, bool isReceived = true);
-    void appendMonitorLog(const QString& text, const QString& color = QString());
+    void appendMonitorLog(const QString& text, const QString& color = QString(), bool storeEntry = true);
+    void appendAppLogRecord(const AppLogRecord& record);
+    void rebuildMonitorView();
+    QString formatAppLogRecord(const AppLogRecord& record) const;
+    bool shouldDisplayMonitorEntry(const AppLogRecord& record) const;
 
     /**
      * @brief 切换样式（深色/浅色）
@@ -373,11 +377,21 @@ private:
     QListWidget* m_windowList;
     
     // 数据监控组件
+    struct MonitorEntry {
+        bool isAppLog{false};
+        AppLogLevel level{AppLogLevel::Info};
+        QString text;
+        QString color;
+    };
+
     QTextEdit* m_dataMonitor;
+    QComboBox* m_monitorLogLevelCombo = nullptr;
     QLabel* m_frameRateLabel;
     QLabel* m_uiRefreshLabel;
     QLabel* m_dataCountLabel;
     QLabel* m_alarmCountLabel;
+    QVector<MonitorEntry> m_monitorEntries;
+    int m_monitorEntryLimit{2000};
     
     // 浮动面板
     QDockWidget* m_devicePanel;

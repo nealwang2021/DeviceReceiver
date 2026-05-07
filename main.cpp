@@ -5,57 +5,19 @@
 #include "PlotWindowBase.h"
 #include "ApplicationController.h"
 #include "AppConfig.h"
+#include "AppLogger.h"
 #include "CrashHandlerWin.h"
-#include <QFile>
+#include "OpenGlDiagnostics.h"
 #include <QDateTime>
 #include <QFontDatabase>
 #include <QFont>
 #include <QTimer>
 #include <iostream>
-#include <mutex>
-
-static QFile* g_logFile = nullptr;
-static std::mutex g_logMutex;
-
-static void writeUtf8LogLine(const QString& line)
-{
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    if (!g_logFile) {
-        return;
-    }
-
-    const QByteArray utf8 = line.toUtf8();
-    g_logFile->write(utf8);
-    g_logFile->write("\n", 1);
-    g_logFile->flush();
-}
 
 static void crashHandlerLogBridge(const char* utf8Message)
 {
     const QString line = QString::fromUtf8(utf8Message);
-    writeUtf8LogLine(line);
-    fprintf(stderr, "%s\n", utf8Message);
-}
-
-static void realtimeMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
-{
-    Q_UNUSED(context)
-    if (!g_logFile) return;
-
-    QString level;
-    switch (type) {
-    case QtDebugMsg: level = "DEBUG"; break;
-    case QtInfoMsg: level = "INFO"; break;
-    case QtWarningMsg: level = "WARNING"; break;
-    case QtCriticalMsg: level = "CRITICAL"; break;
-    case QtFatalMsg: level = "FATAL"; break;
-    }
-    QString time = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
-    QString full = time + " [" + level + "] " + msg;
-    writeUtf8LogLine(full);
-
-    // also print to standard error so output appears in console
-    fprintf(stderr, "%s\n", full.toLocal8Bit().constData());
+    AppLogger::instance()->logCrashLine(line);
 }
 
 int main(int argc, char *argv[])
@@ -63,8 +25,10 @@ int main(int argc, char *argv[])
     try {
         CrashHandlerWin::setLogCallback(crashHandlerLogBridge);
         CrashHandlerWin::installHandlers();
-        // QCustomPlot 多窗口 OpenGL：共享组 + FBO toImage 前绑定本 buffer 的 context（见 qcustomplot.cpp QCPPaintBufferGlFbo::draw）
-        QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+        // 默认请求桌面 OpenGL。不要设置 AA_UseSoftwareOpenGL，否则 Qt 会走 llvmpipe/opengl32sw，
+        // QCustomPlot::setOpenGl(true) 会因非 opengl32.dll 后端而无法启用硬件加速。
+        QCoreApplication::setAttribute(Qt::AA_UseDesktopOpenGL);
+        QCoreApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
         QApplication app(argc, argv);
         
         // 注册FrameData类型用于跨线程信号槽
@@ -92,20 +56,24 @@ int main(int argc, char *argv[])
         const QString startupTag = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
         CrashHandlerWin::setSessionTag(startupTag);
         QString logPath = QApplication::applicationDirPath() + QString("/realtime_data_%1.log").arg(startupTag);
-        g_logFile = new QFile(logPath, qApp);
-        if (g_logFile->open(QIODevice::Append | QIODevice::Text)) {
-            qInstallMessageHandler(realtimeMessageHandler);
+        if (AppLogger::instance()->initialize(logPath)) {
+            AppLogger::instance()->installQtMessageHandler();
             qInfo() << "日志已打开:" << logPath;
             qInfo() << "Crash dump目录:" << CrashHandlerWin::crashDirectoryPath();
+            qInfo() << "[OpenGL] Qt 启动属性: AA_UseDesktopOpenGL=1 AA_UseSoftwareOpenGL=0";
             const qint64 startupEpochMs = QDateTime::currentMSecsSinceEpoch();
             const QString startupIso = QDateTime::fromMSecsSinceEpoch(startupEpochMs).toString(Qt::ISODateWithMs);
             qInfo().noquote() << QString("=== APP_START startup_iso=%1 startup_epoch_ms=%2 ===")
                                      .arg(startupIso)
                                      .arg(startupEpochMs);
         } else {
-            qWarning() << "无法打开日志文件:" << logPath;
-            delete g_logFile; g_logFile = nullptr;
+            fprintf(stderr, "无法初始化日志文件: %s\n", logPath.toLocal8Bit().constData());
         }
+
+        // 探测 OpenGL 环境（仅日志，不修改 AppConfig）
+        // 必须在 QApplication 构造之后、首个绘图窗口创建之前执行；
+        // 在配置加载之前先做，便于排查"配置开了 OpenGL 但驱动不支持"的场景。
+        OpenGlDiagnostics::logSummary();
 
         // 加载配置文件（与可执行文件同目录，避免 cwd 不同导致布局/状态未加载）
         {
@@ -157,20 +125,18 @@ int main(int argc, char *argv[])
         }
 
         qDebug() << "进入事件循环...";
-        return app.exec();
+        const int exitCode = app.exec();
+        AppLogger::instance()->shutdown();
+        return exitCode;
     } catch (const std::exception& e) {
         std::cerr << "异常：" << e.what() << std::endl;
-        if (g_logFile) {
-            writeUtf8LogLine("异常：" + QString::fromStdString(std::string(e.what())));
-            g_logFile->close();
-        }
+        AppLogger::instance()->logCrashLine("异常：" + QString::fromStdString(std::string(e.what())));
+        AppLogger::instance()->shutdown();
         return -1;
     } catch (...) {
         std::cerr << "未知异常" << std::endl;
-        if (g_logFile) {
-            writeUtf8LogLine("未知异常");
-            g_logFile->close();
-        }
+        AppLogger::instance()->logCrashLine(QStringLiteral("未知异常"));
+        AppLogger::instance()->shutdown();
         return -1;
     }
 }

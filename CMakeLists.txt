@@ -6,6 +6,8 @@ option(ENABLE_GRPC "Enable gRPC client support" ON)
 option(ENABLE_HDF5 "Enable HDF5 export support" ON)
 option(ENABLE_WASM "Enable WebAssembly build" OFF)
 
+include(FetchContent)
+
 # 设置默认Qt路径（如果未通过CMAKE_PREFIX_PATH指定）
 if(NOT DEFINED CMAKE_PREFIX_PATH AND NOT DEFINED QT5_DIR)
     # 尝试自动检测Qt安装
@@ -43,6 +45,17 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/build/release)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
+
+# 日志库：spdlog（FetchContent）
+set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "Build spdlog examples" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "Build spdlog tests" FORCE)
+set(SPDLOG_BUILD_BENCH OFF CACHE BOOL "Build spdlog benchmarks" FORCE)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+)
+FetchContent_MakeAvailable(spdlog)
 
 # 自动检测vcpkg路径（与build_and_run.bat保持一致）
 if(NOT DEFINED VCPKG_ROOT)
@@ -89,6 +102,8 @@ set(SOURCE_FILES
     CrashHandlerWin.cpp
     BusyOverlay.cpp
     ReviewLoadCoordinator.cpp
+    OpenGlDiagnostics.cpp
+    AppLogger.cpp
 )
 
 # 头文件列表
@@ -125,6 +140,8 @@ set(HEADER_FILES
     CrashHandlerWin.h
     BusyOverlay.h
     ReviewLoadCoordinator.h
+    OpenGlDiagnostics.h
+    AppLogger.h
 )
 
 # UI文件
@@ -158,6 +175,7 @@ target_link_libraries(realtime_data
     Qt5::PrintSupport
     Qt5::Sql
     Qt5::Concurrent
+    spdlog::spdlog
 )
 
 if(NOT ENABLE_WASM)

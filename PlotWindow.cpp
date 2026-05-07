@@ -45,9 +45,7 @@ PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
 
     // 初始化绘图控件
     m_plot = new QCustomPlot(this);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-    m_plot->setOpenGl(true);
-#endif
+    PlotWindowBase::applyConfiguredOpenGl(m_plot);
     qDebug() << "created plot" << m_plot;
     // 设置绘图控件大小策略：可扩展
     m_plot->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);

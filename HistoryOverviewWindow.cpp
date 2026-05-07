@@ -4,6 +4,7 @@
 #include "HistoryDataProvider.h"
 #include "HistoryExportService.h"
 #include "HistoryImportService.h"
+#include "PlotWindowBase.h"
 #include <QDebug>
 #include "SelectionState.h"
 #include "qcustomplot.h"
@@ -159,9 +160,7 @@ HistoryOverviewWindow::HistoryOverviewWindow(QWidget* parent)
 
     // QCustomPlot
     m_plot = new QCustomPlot(this);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-    m_plot->setOpenGl(true);
-#endif
+    PlotWindowBase::applyConfiguredOpenGl(m_plot);
     m_plot->setMinimumHeight(120);
     m_plot->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_plot->setInteractions(QCP::Interactions{});
@@ -254,6 +253,14 @@ HistoryOverviewWindow::HistoryOverviewWindow(QWidget* parent)
 
     // 与 onDatabaseOpened 共用一次 queued 刷新，避免启动双次全量 SQL。
     scheduleRefreshOverview();
+
+    // HistoryOverviewWindow 不通过 PlotWindowManager 管理，需要自行订阅 OpenGL 切换。
+    if (AppConfig* cfg = AppConfig::instance()) {
+        connect(cfg, &AppConfig::qcustomPlotOpenGlEnabledChanged,
+                this, [this](bool /*enabled*/) {
+                    PlotWindowBase::applyConfiguredOpenGlToTree(this);
+                });
+    }
 
     updateStatusLabels();
     updateRefreshButtonToolTip();

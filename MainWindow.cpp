@@ -3,6 +3,7 @@
 #include "PlotWindowManager.h"
 #include "PlotWindowBase.h"
 #include "AppConfig.h"
+#include "AppLogger.h"
 #include "SerialReceiver.h"
 #include "DataCacheManager.h"
 #include "HistoryOverviewWindow.h"
@@ -45,6 +46,7 @@
 #include <QDialogButtonBox>
 #include <QDateTimeEdit>
 #include <QDir>
+#include <utility>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QScrollArea>
@@ -448,6 +450,38 @@ void MainWindow::initUI()
             setStyle(AppConfig::LightStyle);
         });
         connect(switchStyleAction, &QAction::triggered, this, &MainWindow::switchStyle);
+
+        // 渲染菜单：QCustomPlot OpenGL 加速开关
+        QMenu* renderMenu = menuBar->addMenu(QStringLiteral("渲染(&R)"));
+        QAction* openGlAction = renderMenu->addAction(QStringLiteral("启用 OpenGL 加速(&G)"));
+        openGlAction->setCheckable(true);
+        bool openGlCompiledIn = false;
+#ifdef QCUSTOMPLOT_USE_OPENGL
+        openGlCompiledIn = true;
+#endif
+        if (!openGlCompiledIn) {
+            openGlAction->setEnabled(false);
+            openGlAction->setToolTip(QStringLiteral("当前编译未启用 QCUSTOMPLOT_USE_OPENGL，运行时切换无效"));
+        } else {
+            openGlAction->setToolTip(QStringLiteral("切换 QCustomPlot 的 OpenGL 渲染后端；遇到显卡/驱动异常时可关闭"));
+        }
+        if (AppConfig* cfg = AppConfig::instance()) {
+            openGlAction->setChecked(cfg->qcustomPlotOpenGlEnabled());
+            // 用户点击 → 写入 AppConfig（AppConfig 内部去重 emit 信号）→ PlotWindowManager 广播
+            connect(openGlAction, &QAction::toggled, this, [](bool checked) {
+                if (auto* c = AppConfig::instance()) {
+                    c->setQcustomPlotOpenGlEnabled(checked);
+                }
+            });
+            // AppConfig 反向同步（例如外部代码改动了配置时，菜单勾选状态保持一致）
+            connect(cfg, &AppConfig::qcustomPlotOpenGlEnabledChanged,
+                    openGlAction, [openGlAction](bool enabled) {
+                        if (openGlAction->isChecked() != enabled) {
+                            QSignalBlocker blocker(openGlAction);
+                            openGlAction->setChecked(enabled);
+                        }
+                    });
+        }
         
         // 工具栏
         QToolBar* toolBar = addToolBar("工具");
@@ -1197,6 +1231,36 @@ void MainWindow::initUI()
         
         QWidget* monitorWidget = new QWidget();
         QVBoxLayout* monitorLayout = new QVBoxLayout(monitorWidget);
+
+        auto* monitorControlLayout = new QHBoxLayout();
+        monitorControlLayout->setContentsMargins(0, 0, 0, 0);
+        auto* monitorLogLevelLabel = new QLabel(QStringLiteral("日志等级:"), monitorWidget);
+        m_monitorLogLevelCombo = new QComboBox(monitorWidget);
+        m_monitorLogLevelCombo->addItem(QStringLiteral("Debug"), static_cast<int>(AppLogLevel::Debug));
+        m_monitorLogLevelCombo->addItem(QStringLiteral("Info"), static_cast<int>(AppLogLevel::Info));
+        m_monitorLogLevelCombo->addItem(QStringLiteral("Warning"), static_cast<int>(AppLogLevel::Warning));
+        m_monitorLogLevelCombo->addItem(QStringLiteral("Critical"), static_cast<int>(AppLogLevel::Critical));
+        m_monitorLogLevelCombo->setToolTip(QStringLiteral("仅过滤 qDebug/qInfo/qWarning/qCritical 全局日志；收发数据始终显示"));
+        if (AppConfig* cfg = AppConfig::instance()) {
+            const int idx = m_monitorLogLevelCombo->findData(static_cast<int>(cfg->monitorLogMinimumLevel()));
+            if (idx >= 0) {
+                m_monitorLogLevelCombo->setCurrentIndex(idx);
+            }
+        }
+        connect(m_monitorLogLevelCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this](int index) {
+                    if (!m_monitorLogLevelCombo) {
+                        return;
+                    }
+                    const auto level = static_cast<AppLogLevel>(m_monitorLogLevelCombo->itemData(index).toInt());
+                    if (AppConfig* cfg = AppConfig::instance()) {
+                        cfg->setMonitorLogMinimumLevel(level);
+                    }
+                    rebuildMonitorView();
+                });
+        monitorControlLayout->addWidget(monitorLogLevelLabel);
+        monitorControlLayout->addWidget(m_monitorLogLevelCombo);
+        monitorControlLayout->addStretch();
         
         m_dataMonitor = new QTextEdit();
         m_dataMonitor->setReadOnly(true);
@@ -1215,8 +1279,16 @@ void MainWindow::initUI()
         statusLayout->addWidget(m_alarmCountLabel);
         statusLayout->addStretch();
         
+        monitorLayout->addLayout(monitorControlLayout);
         monitorLayout->addWidget(m_dataMonitor);
         monitorLayout->addLayout(statusLayout);
+
+        connect(AppLogger::instance(), &AppLogger::logRecordEmitted,
+                this, &MainWindow::appendAppLogRecord,
+                Qt::QueuedConnection);
+        for (const AppLogRecord& record : AppLogger::instance()->recentRecords()) {
+            appendAppLogRecord(record);
+        }
         
         qDebug() << "[MainWindow::initUI] 添加monitorPanel到DockWidget";
         m_monitorPanel->setWidget(monitorWidget);
@@ -2782,7 +2854,7 @@ void MainWindow::addDataToMonitor(const QString& data, bool isHex, bool isReceiv
     scrollBar->setValue(scrollBar->maximum());
 }
 
-void MainWindow::appendMonitorLog(const QString& text, const QString& color)
+void MainWindow::appendMonitorLog(const QString& text, const QString& color, bool storeEntry)
 {
     if (!m_dataMonitor || text.isEmpty()) {
         return;
@@ -2797,6 +2869,17 @@ void MainWindow::appendMonitorLog(const QString& text, const QString& color)
         normalized = decoded;
     }
 
+    if (storeEntry) {
+        MonitorEntry entry;
+        entry.isAppLog = false;
+        entry.text = normalized;
+        entry.color = color;
+        m_monitorEntries.append(entry);
+        while (m_monitorEntries.size() > m_monitorEntryLimit) {
+            m_monitorEntries.removeFirst();
+        }
+    }
+
     if (color.isEmpty()) {
         m_dataMonitor->append(normalized);
     } else {
@@ -2807,6 +2890,62 @@ void MainWindow::appendMonitorLog(const QString& text, const QString& color)
     if (QScrollBar* scrollBar = m_dataMonitor->verticalScrollBar()) {
         scrollBar->setValue(scrollBar->maximum());
     }
+}
+
+void MainWindow::appendAppLogRecord(const AppLogRecord& record)
+{
+    const QString text = formatAppLogRecord(record);
+    if (text.isEmpty()) {
+        return;
+    }
+
+    MonitorEntry entry;
+    entry.isAppLog = true;
+    entry.level = record.level;
+    entry.text = text;
+    entry.color = AppLogger::levelColor(record.level);
+    m_monitorEntries.append(entry);
+    while (m_monitorEntries.size() > m_monitorEntryLimit) {
+        m_monitorEntries.removeFirst();
+    }
+
+    if (!shouldDisplayMonitorEntry(record)) {
+        return;
+    }
+    appendMonitorLog(text, entry.color, false);
+}
+
+void MainWindow::rebuildMonitorView()
+{
+    if (!m_dataMonitor) {
+        return;
+    }
+
+    m_dataMonitor->clear();
+    for (const MonitorEntry& entry : std::as_const(m_monitorEntries)) {
+        if (entry.isAppLog && !AppLogger::passesLevel(entry.level, AppConfig::instance()->monitorLogMinimumLevel())) {
+            continue;
+        }
+        appendMonitorLog(entry.text, entry.color, false);
+    }
+}
+
+QString MainWindow::formatAppLogRecord(const AppLogRecord& record) const
+{
+    const QString timestamp = record.timestamp.isValid()
+        ? record.timestamp.toString(QStringLiteral("hh:mm:ss.zzz"))
+        : QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
+    return QStringLiteral("%1 [%2] %3")
+        .arg(timestamp, AppLogger::levelName(record.level), record.message);
+}
+
+bool MainWindow::shouldDisplayMonitorEntry(const AppLogRecord& record) const
+{
+    AppLogLevel minimum = AppLogLevel::Info;
+    if (AppConfig* cfg = AppConfig::instance()) {
+        minimum = cfg->monitorLogMinimumLevel();
+    }
+    return AppLogger::passesLevel(record.level, minimum);
 }
 
 // 槽函数实现

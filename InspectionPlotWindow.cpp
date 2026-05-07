@@ -226,9 +226,7 @@ QWidget* InspectionPlotWindow::buildTimeBaseColumn(QCustomPlot*& plotOut)
     lay->setSpacing(0);
 
     plotOut = new QCustomPlot(col);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-    plotOut->setOpenGl(true);
-#endif
+    PlotWindowBase::applyConfiguredOpenGl(plotOut);
     stylePlot(plotOut);
     plotOut->yAxis->setRangeReversed(true);
     plotOut->legend->setVisible(false);
@@ -249,9 +247,7 @@ QWidget* InspectionPlotWindow::buildImpedanceColumn()
 
     // --- impedance plot ---
     m_impedancePlot = new QCustomPlot(col);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-    m_impedancePlot->setOpenGl(true);
-#endif
+    PlotWindowBase::applyConfiguredOpenGl(m_impedancePlot);
     stylePlot(m_impedancePlot);
     m_impedancePlot->xAxis->setLabel(QStringLiteral("实部"));
     m_impedancePlot->yAxis->setLabel(QStringLiteral("虚部"));

@@ -433,6 +433,7 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_arrayPlotRowHeightPx = qBound(0,
         settings.value("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx).toInt(), 300);
     qInfo() << "[AppConfig] Plot/ArrayRowHeightPx =" << m_arrayPlotRowHeightPx;
+    m_qcustomPlotOpenGlEnabled = settings.value("Plot/UseOpenGl", m_qcustomPlotOpenGlEnabled).toBool();
 
     // 检测分析窗口
     m_inspectionChannelsPerGroup = qBound(1,
@@ -469,6 +470,10 @@ bool AppConfig::loadFromFile(const QString& filename)
     
     // 日志配置
     m_logLevel = settings.value("Log/Level", m_logLevel).toString();
+    m_monitorLogMinimumLevel = AppLogger::levelFromString(
+        settings.value("Log/MonitorMinimumLevel",
+                       AppLogger::levelToConfigString(m_monitorLogMinimumLevel)).toString(),
+        m_monitorLogMinimumLevel);
     
     qInfo() << "配置文件加载成功：" << filename
             << "Plot/ArrayRowHeightPx=" << m_arrayPlotRowHeightPx;
@@ -503,6 +508,7 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("Plot/MaxPoints", m_maxPlotPoints);
     settings.setValue("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs);
     settings.setValue("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx);
+    settings.setValue("Plot/UseOpenGl", m_qcustomPlotOpenGlEnabled);
 
     // 检测分析窗口
     settings.setValue("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup);
@@ -533,6 +539,7 @@ bool AppConfig::saveToFile(const QString& filename)
     
     // 保存日志配置
     settings.setValue("Log/Level", m_logLevel);
+    settings.setValue("Log/MonitorMinimumLevel", AppLogger::levelToConfigString(m_monitorLogMinimumLevel));
     
     settings.sync();
     
@@ -562,6 +569,7 @@ void AppConfig::loadDefaults()
     m_maxPlotPoints = 2000;
     m_plotRefreshIntervalMs = 50;
     m_arrayPlotRowHeightPx = 0;
+    m_qcustomPlotOpenGlEnabled = true;
     m_inspectionChannelsPerGroup = 8;
     m_statsIntervalMs = 1000;
     m_temperatureAlarmThreshold = 80.0f;
@@ -576,9 +584,19 @@ void AppConfig::loadDefaults()
     m_mainWindowGeometry.clear();
     m_savedPlotWindowTypes.clear();
     m_logLevel = "INFO";
+    m_monitorLogMinimumLevel = AppLogLevel::Info;
     m_currentStyle = LightStyle;  // 确保默认使用浅色主题
     m_defaultExportDirectory = "exports";
     m_defaultExportFormat = "hdf5";
     
     qInfo() << "已加载默认配置（浅色主题）";
+}
+
+void AppConfig::setQcustomPlotOpenGlEnabled(bool enabled)
+{
+    if (m_qcustomPlotOpenGlEnabled == enabled) {
+        return;
+    }
+    m_qcustomPlotOpenGlEnabled = enabled;
+    emit qcustomPlotOpenGlEnabledChanged(m_qcustomPlotOpenGlEnabled);
 }

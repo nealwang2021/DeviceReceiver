@@ -184,9 +184,7 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     
     // 创建QCustomPlot实例
     m_plot = new QCustomPlot(this);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-    m_plot->setOpenGl(true);
-#endif
+    PlotWindowBase::applyConfiguredOpenGl(m_plot);
     m_plot->plotLayout()->setRowSpacing(1);
 
     m_plotScrollArea = new QScrollArea(this);

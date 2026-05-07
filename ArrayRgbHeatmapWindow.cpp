@@ -137,9 +137,7 @@ void ArrayRgbHeatmapWindow::initUi()
         layout->setContentsMargins(6, 6, 6, 6);
 
         plot = new QCustomPlot(group);
-#ifdef QCUSTOMPLOT_USE_OPENGL
-        plot->setOpenGl(true);
-#endif
+        PlotWindowBase::applyConfiguredOpenGl(plot);
         plot->setMinimumHeight(300);
         plot->axisRect()->setupFullAxesBox(true);
         plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
