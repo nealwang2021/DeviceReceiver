@@ -8,7 +8,11 @@
 # - 支持 CSV 回放与纯模拟数据
 # - 支持可配置 sequence 行为，用于复现/验证 frame_sequence 冲突问题
 #
-# 常用启动：
+# 打包为单机 exe（无需目标机安装 Python）：
+#   Windows: 于仓库根目录执行 package_grpc_test_server.bat
+#   输出: build\release\grpc_test_server.exe（可选同步至 build_cmake\build\release\）
+#
+# 常用启动（开发机，需 Python）：
 #   python grpc_test_server.py
 #   python grpc_test_server.py --no-csv --interval 50
 #
@@ -24,7 +28,8 @@
 #
 # 参数摘要：
 # - --host / --port：监听地址（默认 0.0.0.0:50051）
-# - --csv / --no-csv：CSV 回放开关
+# - --db / -d：SQLite replay（aligned_frames 表）；与 --csv 共存时优先 DB
+# - --csv / --no-csv：CSV 回放或纯模拟
 # - --cells / --interval / --noise：模拟数据通道数、帧间隔、噪声
 # - --seq-mode / --seq-cycle：sequence 生成策略
 #
@@ -47,7 +52,11 @@ import threading
 import time
 from concurrent import futures
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller --onefile：依赖与 proto 放在 sys._MEIPASS 下
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    SCRIPT_DIR = sys._MEIPASS
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 for candidate in [
     os.path.join(SCRIPT_DIR, "proto", "generated_py"),
     SCRIPT_DIR,
@@ -61,6 +70,28 @@ import grpc
 from google.protobuf import empty_pb2
 import device_pb2
 import device_pb2_grpc
+
+
+def resolve_user_data_path(path: str) -> str:
+    """
+    将用户传入的 DB/CSV 路径解析为可读绝对路径。
+    相对路径顺序：当前工作目录 -> 可执行文件所在目录（便于 PyInstaller 打包后 exe 与数据同目录分发）。
+    """
+    raw = (path or "").strip().strip('"').strip("'")
+    if not raw:
+        return ""
+    if os.path.isabs(raw):
+        return os.path.normpath(raw)
+    rel = raw.replace("/", os.sep)
+    candidates = [os.path.normpath(os.path.join(os.getcwd(), rel))]
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.normpath(os.path.join(exe_dir, rel)))
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    # 均不存在时返回 cwd 拼接路径，便于 sqlite/csv 报错信息符合“相对当前目录”习惯
+    return candidates[0]
 
 
 def _to_int(value, default_value=0):
@@ -494,17 +525,35 @@ class AcquisitionDeviceServicer(device_pb2_grpc.AcquisitionDeviceServicer):
 
 
 def parse_args():
-    preferred_csv = r"D:\WS\qtpro\DeviceReceiver\build_cmake\build\release\data\back0410采集\device_realtime_20260410_143418_aligned.csv"
-    fallback_csv = os.path.join(SCRIPT_DIR, "proto", "display_aligned_20260327_171739.csv")
-    default_csv = preferred_csv if os.path.isfile(preferred_csv) else fallback_csv
-    parser = argparse.ArgumentParser(description="Mock gRPC server for device.proto AcquisitionDevice")
+    # 默认仅当仓库/打包内带有该 CSV 时才回放；否则走纯模拟（无 Python 的测试机无需额外文件）
+    bundled_demo_csv = os.path.join(SCRIPT_DIR, "proto", "display_aligned_20260327_171739.csv")
+    default_csv = bundled_demo_csv if os.path.isfile(bundled_demo_csv) else ""
+    epilog = """
+示例（打包后的 grpc_test_server.exe 同样适用）:
+  grpc_test_server.exe --db D:\\data\\device_realtime.db
+  grpc_test_server.exe -d .\\data\\session.db --no-csv
+  grpc_test_server.exe --db device_realtime.db --host 127.0.0.1 --port 50051
+说明: --db 指定含 aligned_frames 表的 SQLite；仅回放数据库时可加 --no-csv 避免回退到默认 CSV。
+""".strip()
+    parser = argparse.ArgumentParser(
+        description="Mock gRPC server for device.proto AcquisitionDevice",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog,
+    )
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=50051)
     parser.add_argument("--cells", type=int, default=40)
     parser.add_argument("--interval", type=int, default=100)
     parser.add_argument("--noise", type=float, default=0.03)
     parser.add_argument("--csv", default=default_csv, help="CSV replay source path")
-    parser.add_argument("--db", default="", help="SQLite replay source path (aligned_frames table)")
+    parser.add_argument(
+        "-d",
+        "--db",
+        dest="db",
+        default="",
+        metavar="PATH",
+        help="SQLite replay: path to .db with aligned_frames (tried before CSV; use --no-csv for DB-only)",
+    )
     parser.add_argument("--no-csv", action="store_true", help="Disable CSV replay and use synthetic data")
     parser.add_argument(
         "--seq-mode",
@@ -525,7 +574,8 @@ def main():
     args = parse_args()
 
     csv_path = "" if args.no_csv else args.csv
-    db_path = args.db.strip() if args.db else ""
+    csv_path = resolve_user_data_path(csv_path) if csv_path else ""
+    db_path = resolve_user_data_path(args.db) if args.db.strip() else ""
     generator = FrameGenerator(
         cell_count=args.cells,
         noise=args.noise,
@@ -544,6 +594,10 @@ def main():
     server.start()
 
     print(f"[grpc_test_server] AcquisitionDevice listening on {bind_addr}")
+    if db_path:
+        print(f"[grpc_test_server] db path (resolved): {db_path}")
+    if csv_path:
+        print(f"[grpc_test_server] csv path (resolved): {csv_path}")
     print("[grpc_test_server] methods: ListDevices/OpenDevice/StartSampling/SubscribeProcessedFrames")
     print(
         f"[grpc_test_server] seq_mode={args.seq_mode}"

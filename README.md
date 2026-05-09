@@ -202,35 +202,40 @@ build_cmake\build\release\realtime_data.exe
 
 `grpc_test_server.py` 当前基于 `proto/device.proto` 的 `AcquisitionDevice` 服务实现（非旧版 DeviceDataService）。
 
-**回放行为说明：**
+**打包产物 `grpc_test_server.exe`（与脚本参数一致）：**
 
-- 默认启用 CSV 回放：`proto/display_aligned_20260327_171739.csv`
-- 使用 `--no-csv` 可切换为纯模拟数据
-- 非 CSV 模式默认通道数为 `40`（可通过 `--cells` 覆盖）
-- CSV 模式为保证前端持续刷新，时间戳采用实时单调递增时钟
-- 支持 `--seq-mode` 调整 `ProcessedFrameReply.sequence` 行为（用于冲突复现与修复验证）
+- 使用 `package_grpc_test_server.bat` 生成的单文件 exe **不内置演示 CSV**；需要 CSV 回放时请用 `--csv` 传入本机文件路径。
+- 使用 Python 直接运行 `grpc_test_server.py` 时：若仓库内存在 `proto/display_aligned_20260327_171739.csv`，会作为默认 CSV 数据源；否则默认走**纯模拟**（与 exe 常见场景一致）。
 
-**Sequence 模式（用于验证 frame_sequence 冲突）：**
+**常用命令行参数一览：**
 
-- `--seq-mode monotonic`：单调递增（基线）
-- `--seq-mode reset-on-start`：每次 `StartSampling` 后从 1 重新开始
-- `--seq-mode cycle --seq-cycle N`：按 `0..N-1` 周期回绕
-- `--seq-mode always-zero`：恒 0（强冲突复现场景）
+| 参数 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--host` | — | `0.0.0.0` | 监听地址（仅本机可填 `127.0.0.1`） |
+| `--port` | — | `50051` | 监听端口（与主程序被测设备 gRPC 端口一致） |
+| `--db` | `-d` | （空） | SQLite 回放：`aligned_frames` 表所在 `.db` 路径；**与 CSV 同时存在时优先 DB** |
+| `--csv` | — | 见上文 | CSV 回放文件路径；**仅 DB 回放时建议加 `--no-csv`**，避免 DB 打开失败时回落到 CSV |
+| `--no-csv` | — | — | 关闭 CSV，未指定 `--db` 时使用**纯合成波形** |
+| `--interval` | — | `100` | 流式帧周期（**毫秒**），与服务端 `sleep` 一致，数值越小推送越快 |
+| `--cells` | — | `40` | 合成数据通道数（无 DB/CSV 或需覆盖时） |
+| `--noise` | — | `0.03` | 合成数据幅度噪声 |
+| `--seq-mode` | — | `monotonic` | `ProcessedFrameReply.sequence` 策略，见下表 |
+| `--seq-cycle` | — | `8` | 仅在 `--seq-mode cycle` 时有效，周期长度 |
 
-**验证示例:**
+**`--seq-mode`（验证 `frame_sequence` / 写库唯一性）：**
 
-```cmd
-REM 基线：不应触发 sequence 冲突
-python grpc_test_server.py --seq-mode monotonic
+| 取值 | 含义 |
+|------|------|
+| `monotonic` | 单调递增（基线） |
+| `reset-on-start` | 每次 `StartSampling` 后从 1 重新计数 |
+| `cycle` | 配合 `--seq-cycle N`，在 `0..N-1` 上循环 |
+| `always-zero` | 恒为 0（强冲突复现） |
 
-REM 复现旧问题：重复 sequence
-python grpc_test_server.py --seq-mode always-zero
+**路径说明：** `--db` / `--csv` 为相对路径时，会依次尝试**当前工作目录**、**exe 所在目录**（便于 exe 与数据文件同目录分发）。
 
-REM 模拟现场：采样重启导致 sequence 回退
-python grpc_test_server.py --seq-mode reset-on-start
-```
+**回放与时戳：** DB/CSV 回放下，帧内时间戳采用**实时单调时钟**，避免历史时间轴导致客户端增量停滞。
 
-**基本用法:**
+**打包并生成 exe：**
 
 ```cmd
 package_grpc_test_server.bat
@@ -239,9 +244,28 @@ package_grpc_test_server.bat
 **输出位置:**
 
 - `build/release/grpc_test_server.exe`
-- 如果存在 `build/debug/`，脚本会同步复制一份到 `build/debug/grpc_test_server.exe`
+- 若存在 `build/debug/`，会同步复制到 `build/debug/grpc_test_server.exe`
+- 若存在 `build_cmake/build/release/`，脚本会再同步一份，便于与 `realtime_data.exe` 同目录部署
 
 > 主程序优先启动 `grpc_test_server.exe`；仅在找不到 EXE 时，才回退到 Python 脚本模式（用于开发调试）。
+
+**`grpc_test_server.exe` 示例：SQLite 回放 + 更高帧率 + 单调 sequence**
+
+```cmd
+grpc_test_server.exe --db "D:\WS\qtpro\DeviceReceiver\build_cmake\build\data_20260428_realtime\device_realtime_20260428_150043.db" --interval 6 --seq-mode monotonic
+```
+
+在 Git Bash 等环境下也可使用：`./grpc_test_server.exe`，参数与上表相同。
+
+（路径含空格时请保留双引号；仅回放数据库时推荐加上 `--no-csv`，例如：`grpc_test_server.exe --no-csv --db "..." --interval 6 --seq-mode monotonic`。）
+
+**Python 开发机验证示例（与 exe 参数相同）：**
+
+```cmd
+python grpc_test_server.py --seq-mode monotonic
+python grpc_test_server.py --seq-mode always-zero
+python grpc_test_server.py --seq-mode reset-on-start
+```
 
 #### 🎯 `**stage_grpc_test_server.py` / `run_stage_grpc_test_server.bat` — 三轴台 StageService 测试服务**
 
