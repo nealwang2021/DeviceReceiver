@@ -10,6 +10,7 @@
 
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QDoubleSpinBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
@@ -34,8 +35,6 @@ constexpr int kDisplayChannels = 40;
 constexpr qint64 kRealtimeLiveWindowMs = 3600LL * 1000LL;
 /// 热力图横向像素列数硬顶，避免超大 visible 列表时 QImage/QPainter 过慢
 constexpr int kHeatmapMaxVisibleColumns = 12000;
-constexpr double kAmpMin = 0.05;
-constexpr double kAmpMax = 0.3;
 constexpr double kVerySmallValue = 1e-12;
 
 double clamp01(double v)
@@ -102,6 +101,11 @@ ArrayRgbHeatmapWindow::ArrayRgbHeatmapWindow(QWidget* parent)
         // 后续 selectionChanged 信号会再次触发 loadReviewFromDb。
         loadReviewFromDb();
     }
+
+    m_ampMin = AppConfig::instance()->arrayRgbHeatmapAmpMin();
+    m_ampMax = AppConfig::instance()->arrayRgbHeatmapAmpMax();
+    connect(AppConfig::instance(), &AppConfig::arrayRgbHeatmapAmpRangeChanged,
+            this, &ArrayRgbHeatmapWindow::onAmpRangeChanged);
 }
 
 ArrayRgbHeatmapWindow::~ArrayRgbHeatmapWindow() = default;
@@ -125,10 +129,27 @@ void ArrayRgbHeatmapWindow::initUi()
     m_clearButton = new QPushButton(QStringLiteral("清空"), this);
     m_exportButton = new QPushButton(QStringLiteral("导出PNG"), this);
 
+    auto* ampLabel = new QLabel(QStringLiteral("归一化范围:"), this);
+    m_ampMinSpin = new QDoubleSpinBox(this);
+    m_ampMinSpin->setDecimals(4);
+    m_ampMinSpin->setRange(0.0001, 10.0);
+    m_ampMinSpin->setSingleStep(0.005);
+    m_ampMinSpin->setMaximumWidth(90);
+    m_ampMinSpin->setToolTip(QStringLiteral("归一化下限（log 参考值）"));
+    m_ampMaxSpin = new QDoubleSpinBox(this);
+    m_ampMaxSpin->setDecimals(4);
+    m_ampMaxSpin->setRange(0.0001, 10.0);
+    m_ampMaxSpin->setSingleStep(0.005);
+    m_ampMaxSpin->setMaximumWidth(90);
+    m_ampMaxSpin->setToolTip(QStringLiteral("归一化上限（log 参考值）"));
+
     controlLayout->addWidget(xAxisLabel);
     controlLayout->addWidget(m_xAxisModeCombo);
     controlLayout->addWidget(m_clearButton);
     controlLayout->addWidget(m_exportButton);
+    controlLayout->addWidget(ampLabel);
+    controlLayout->addWidget(m_ampMinSpin);
+    controlLayout->addWidget(m_ampMaxSpin);
     controlLayout->addStretch();
 
     auto createPlotGroup = [this](const QString& title, QCustomPlot*& plot, QCPItemPixmap*& item) {
@@ -177,6 +198,21 @@ void ArrayRgbHeatmapWindow::initUi()
             this, &ArrayRgbHeatmapWindow::onClearClicked);
     connect(m_exportButton, &QPushButton::clicked,
             this, &ArrayRgbHeatmapWindow::onExportClicked);
+
+    // 幅度范围控件：变更时写入 AppConfig，setter 会 emit arrayRgbHeatmapAmpRangeChanged 同步所有窗口
+    auto* cfg = AppConfig::instance();
+    m_ampMinSpin->setValue(cfg->arrayRgbHeatmapAmpMin());
+    m_ampMaxSpin->setValue(cfg->arrayRgbHeatmapAmpMax());
+    connect(m_ampMinSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double v) {
+                AppConfig::instance()->setArrayRgbHeatmapAmpMin(v);
+                scheduleRebuild();
+            });
+    connect(m_ampMaxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [this](double v) {
+                AppConfig::instance()->setArrayRgbHeatmapAmpMax(v);
+                scheduleRebuild();
+            });
 
     m_channelCount = displayChannelCount();
     m_rebuildTimer = new QTimer(this);
@@ -393,8 +429,8 @@ QColor ArrayRgbHeatmapWindow::colorFromAmpPhase(double amp, double phaseDeg) con
         phaseNorm += 360.0;
     }
 
-    const double minLogAmp = std::log10(kAmpMin);
-    const double maxLogAmp = std::log10(kAmpMax);
+    const double minLogAmp = std::log10(m_ampMin);
+    const double maxLogAmp = std::log10(m_ampMax);
     double logAmp = std::log10(std::max(amp, kVerySmallValue));
     logAmp = qBound(minLogAmp, logAmp, maxLogAmp);
     const double value = clamp01((logAmp - minLogAmp) / (maxLogAmp - minLogAmp));
@@ -743,6 +779,21 @@ void ArrayRgbHeatmapWindow::scheduleRebuild()
     m_rebuildPending = true;
     const int waitMs = qMax(1, m_rebuildMinIntervalMs - static_cast<int>(elapsed));
     m_rebuildTimer->start(waitMs);
+}
+
+void ArrayRgbHeatmapWindow::onAmpRangeChanged()
+{
+    AppConfig* cfg = AppConfig::instance();
+    if (!cfg) return;
+    m_ampMin = cfg->arrayRgbHeatmapAmpMin();
+    m_ampMax = cfg->arrayRgbHeatmapAmpMax();
+    {
+        const QSignalBlocker b1(m_ampMinSpin);
+        const QSignalBlocker b2(m_ampMaxSpin);
+        m_ampMinSpin->setValue(m_ampMin);
+        m_ampMaxSpin->setValue(m_ampMax);
+    }
+    scheduleRebuild();
 }
 
 void ArrayRgbHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames)

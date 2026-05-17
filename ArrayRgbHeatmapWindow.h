@@ -10,6 +10,7 @@
 #include <QElapsedTimer>
 
 class QComboBox;
+class QDoubleSpinBox;
 class QPushButton;
 class QCustomPlot;
 class QCPItemPixmap;
@@ -32,6 +33,7 @@ private slots:
     void onClearClicked();
     void onExportClicked();
     void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
+    void onAmpRangeChanged();
 
 private:
     enum class XAxisMode {
@@ -98,6 +100,8 @@ private:
     QCPItemPixmap* m_realImagPixmap{nullptr};
 
     QComboBox* m_xAxisModeCombo{nullptr};
+    QDoubleSpinBox* m_ampMinSpin{nullptr};
+    QDoubleSpinBox* m_ampMaxSpin{nullptr};
     QPushButton* m_clearButton{nullptr};
     QPushButton* m_exportButton{nullptr};
     QLabel* m_statusLabel{nullptr};
@@ -108,6 +112,8 @@ private:
     qint64 m_lastSequence{-1};
     qint64 m_lastTimestamp{-1};
     int m_channelCount{40};
+    double m_ampMin{0.05};
+    double m_ampMax{0.3};
     QTimer* m_rebuildTimer{nullptr};
     int m_rebuildMinIntervalMs{80};
     QElapsedTimer m_rebuildThrottle;

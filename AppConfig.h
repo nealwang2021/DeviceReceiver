@@ -118,6 +118,12 @@ public:
     bool qcustomPlotOpenGlEnabled() const { return m_qcustomPlotOpenGlEnabled; }
     void setQcustomPlotOpenGlEnabled(bool enabled);
 
+    double arrayRgbHeatmapAmpMin() const { return m_arrayRgbHeatmapAmpMin; }
+    void setArrayRgbHeatmapAmpMin(double v);
+
+    double arrayRgbHeatmapAmpMax() const { return m_arrayRgbHeatmapAmpMax; }
+    void setArrayRgbHeatmapAmpMax(double v);
+
     // ========== 检测分析窗口配置 ==========
     int inspectionChannelsPerGroup() const { return m_inspectionChannelsPerGroup; }
     void setInspectionChannelsPerGroup(int n) { m_inspectionChannelsPerGroup = qBound(1, n, 256); }
@@ -214,6 +220,8 @@ public:
 signals:
     /// 仅在 setQcustomPlotOpenGlEnabled 改变值时触发。
     void qcustomPlotOpenGlEnabledChanged(bool enabled);
+    /// 仅在 arrayRgbHeatmapAmpMin 或 arrayRgbHeatmapAmpMax 改变值时触发。
+    void arrayRgbHeatmapAmpRangeChanged();
 
 private:
     explicit AppConfig(QObject *parent = nullptr);
@@ -248,6 +256,8 @@ private:
     int m_plotRefreshIntervalMs = 50;  // 绘图刷新间隔（毫秒）
     int m_arrayPlotRowHeightPx = 0;    // 阵列图每通道高度（像素，0=使用密度默认值）
     bool m_qcustomPlotOpenGlEnabled = true; // QCustomPlot OpenGL 加速开关
+    double m_arrayRgbHeatmapAmpMin = 0.05;
+    double m_arrayRgbHeatmapAmpMax = 0.3;
     int m_inspectionChannelsPerGroup = 8; // 检测分析窗口每组通道数
     
     // 数据统计配置

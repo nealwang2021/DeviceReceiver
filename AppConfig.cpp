@@ -488,6 +488,10 @@ bool AppConfig::loadFromFile(const QString& filename)
         settings.value("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx).toInt(), 300);
     qInfo() << "[AppConfig] Plot/ArrayRowHeightPx =" << m_arrayPlotRowHeightPx;
     m_qcustomPlotOpenGlEnabled = settings.value("Plot/UseOpenGl", m_qcustomPlotOpenGlEnabled).toBool();
+    m_arrayRgbHeatmapAmpMin = qBound(1e-4,
+        settings.value("Plot/AmpMin", m_arrayRgbHeatmapAmpMin).toDouble(), m_arrayRgbHeatmapAmpMax - 1e-6);
+    m_arrayRgbHeatmapAmpMax = qBound(m_arrayRgbHeatmapAmpMin + 1e-6,
+        settings.value("Plot/AmpMax", m_arrayRgbHeatmapAmpMax).toDouble(), 100.0);
 
     // 检测分析窗口
     m_inspectionChannelsPerGroup = qBound(1,
@@ -563,6 +567,8 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs);
     settings.setValue("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx);
     settings.setValue("Plot/UseOpenGl", m_qcustomPlotOpenGlEnabled);
+    settings.setValue("Plot/AmpMin", m_arrayRgbHeatmapAmpMin);
+    settings.setValue("Plot/AmpMax", m_arrayRgbHeatmapAmpMax);
 
     // 检测分析窗口
     settings.setValue("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup);
@@ -624,6 +630,8 @@ void AppConfig::loadDefaults()
     m_plotRefreshIntervalMs = 50;
     m_arrayPlotRowHeightPx = 0;
     m_qcustomPlotOpenGlEnabled = true;
+    m_arrayRgbHeatmapAmpMin = 0.05;
+    m_arrayRgbHeatmapAmpMax = 0.3;
     m_inspectionChannelsPerGroup = 8;
     m_statsIntervalMs = 1000;
     m_temperatureAlarmThreshold = 80.0f;
@@ -653,4 +661,24 @@ void AppConfig::setQcustomPlotOpenGlEnabled(bool enabled)
     }
     m_qcustomPlotOpenGlEnabled = enabled;
     emit qcustomPlotOpenGlEnabledChanged(m_qcustomPlotOpenGlEnabled);
+}
+
+void AppConfig::setArrayRgbHeatmapAmpMin(double v)
+{
+    const double clamped = qBound(1e-4, v, m_arrayRgbHeatmapAmpMax - 1e-6);
+    if (qFuzzyCompare(m_arrayRgbHeatmapAmpMin, clamped)) {
+        return;
+    }
+    m_arrayRgbHeatmapAmpMin = clamped;
+    emit arrayRgbHeatmapAmpRangeChanged();
+}
+
+void AppConfig::setArrayRgbHeatmapAmpMax(double v)
+{
+    const double clamped = qBound(m_arrayRgbHeatmapAmpMin + 1e-6, v, 100.0);
+    if (qFuzzyCompare(m_arrayRgbHeatmapAmpMax, clamped)) {
+        return;
+    }
+    m_arrayRgbHeatmapAmpMax = clamped;
+    emit arrayRgbHeatmapAmpRangeChanged();
 }
