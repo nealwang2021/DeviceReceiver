@@ -464,7 +464,7 @@ void ApplicationController::stop()
 
 PlotWindowBase* ApplicationController::plotWindow() const
 {
-    return m_plotWindow.get();
+    return m_plotWindow.data();
 }
 
 bool ApplicationController::initCacheManager()
@@ -615,7 +615,8 @@ bool ApplicationController::initDefaultPlotWindow()
     if (!mdiArea) {
         qCritical() << "无法获取主窗口的MDI区域";
         // 回退：创建独立窗口
-        m_plotWindow.reset(m_plotWindowManager->createWindow(windowType));
+        m_plotWindow.clear();
+        m_plotWindow = m_plotWindowManager->createWindow(windowType);
         if (!m_plotWindow) {
             qCritical() << "创建默认绘图窗口失败";
             return false;
@@ -631,10 +632,10 @@ bool ApplicationController::initDefaultPlotWindow()
         return false;
     }
     
-    // 存储引用（但不接管所有权，因为MDI区域会管理窗口）
-    // 注意：QScopedPointer需要释放所有权，因为MDI区域已经管理窗口
-    m_plotWindow.take(); // 释放之前可能持有的指针
-    m_plotWindow.reset(plotWindow); // 存储引用，但后续不会删除，因为MDI区域管理
+    // QPointer 不持有所有权，MDI 区域（QMdiSubWindow + WA_DeleteOnClose）负责生命周期。
+    // QPointer 在 MDI 关闭子窗口时自动置空，cleanup() 中无需（也不会）重复删除。
+    m_plotWindow.clear();
+    m_plotWindow = plotWindow;
     
     // 强制立即显示窗口
     if (mdiArea) {
@@ -881,15 +882,17 @@ void ApplicationController::disconnectStageBackend()
                                   Qt::BlockingQueuedConnection);
     }
 
-    m_stageReceiver.reset();
-
+    // 必须先在 stage 线程退出后，才能安全销毁 moveToThread 到该线程的 m_stageReceiver。
+    // 否则析构在错误线程上下文执行，属未定义行为。
     if (m_stageThread) {
         if (m_stageThread->isRunning()) {
             m_stageThread->quit();
             m_stageThread->wait(3000);
         }
-        m_stageThread.reset();
     }
+
+    m_stageReceiver.reset();
+    m_stageThread.reset();
 
     emit stageConnectionStateChanged(false);
     qInfo() << "三轴台 Stage 后端已断开";
@@ -1007,10 +1010,9 @@ void ApplicationController::cleanup()
                                 .arg(m_stageThread != nullptr)
                                 .arg(m_stageThread ? m_stageThread->isRunning() : false);
 
-    if (m_realtimeRecorder) {
-        m_realtimeRecorder->stop();
-        m_realtimeRecorder.reset();
-    }
+    // ⚠ 不在此时 stop/reset RealtimeSqlRecorder：采集线程仍在运行，DirectConnection
+    // 的 frameReceived lambda 仍会访问 m_realtimeRecorder。等串口线程完全退出后再处理。
+    // （Recorder 的 stop/reset 已移至串口线程 wait 之后）
 
     // 先断开三轴台（信号指向 MainWindow，须在销毁主窗口前）
     writeLifecycleBreadcrumb(
@@ -1070,6 +1072,12 @@ void ApplicationController::cleanup()
                                     .arg(timer.elapsed());
     }
 
+    // 串口线程已退出，frameReceived 信号不再发射，可安全停止 Recorder。
+    if (m_realtimeRecorder) {
+        m_realtimeRecorder->stop();
+        m_realtimeRecorder.reset();
+    }
+
     // 串口线程退出后再销毁接收器对象。
     writeLifecycleBreadcrumb(
         "ApplicationController::cleanup:before-reset-serial-receiver",
@@ -1088,14 +1096,31 @@ void ApplicationController::cleanup()
         });
     m_dataProcessor.reset();
 
-    // 销毁绘图窗口
-    writeLifecycleBreadcrumb(
-        "ApplicationController::cleanup:before-reset-plot-window",
-        QStringLiteral("cleanup 即将 reset 绘图窗口"),
-        QJsonObject{
-            {QStringLiteral("hasPlotWindow"), m_plotWindow != nullptr},
-        });
-    m_plotWindow.reset();
+    // 销毁默认绘图窗口。
+    // MDI 路径：QMdiSubWindow(WA_DeleteOnClose) 已管理生命周期，QPointer 已自动置空。
+    // 独立窗口路径：无 MDI 父窗口，需手动删除。
+    if (m_plotWindow) {
+        QMdiSubWindow* mdiParent = qobject_cast<QMdiSubWindow*>(m_plotWindow->parentWidget());
+        const bool ownedByMdi = mdiParent && mdiParent->testAttribute(Qt::WA_DeleteOnClose);
+        writeLifecycleBreadcrumb(
+            "ApplicationController::cleanup:before-reset-plot-window",
+            QStringLiteral("cleanup 即将删除绘图窗口"),
+            QJsonObject{
+                {QStringLiteral("hasPlotWindow"), true},
+                {QStringLiteral("ownedByMdi"), ownedByMdi},
+            });
+        if (!ownedByMdi) {
+            delete m_plotWindow;
+        }
+        m_plotWindow.clear();
+    } else {
+        writeLifecycleBreadcrumb(
+            "ApplicationController::cleanup:before-reset-plot-window",
+            QStringLiteral("cleanup 绘图窗口已由 MDI 销毁，跳过"),
+            QJsonObject{
+                {QStringLiteral("hasPlotWindow"), false},
+            });
+    }
 
     // 销毁主界面窗口
     writeLifecycleBreadcrumb(

@@ -2,6 +2,7 @@
 #define APPLICATIONCONTROLLER_H
 
 #include <QObject>
+#include <QPointer>
 #include <QScopedPointer>
 #include "StagePoseLatch.h"
 
@@ -185,7 +186,7 @@ private:
     QScopedPointer<IReceiverBackend> m_serialReceiver;
     QScopedPointer<QThread> m_stageThread;
     QScopedPointer<IReceiverBackend> m_stageReceiver;
-    QScopedPointer<PlotWindowBase> m_plotWindow;  // 向后兼容的默认窗口
+    QPointer<PlotWindowBase> m_plotWindow;  // 向后兼容的默认窗口（MDI 路径下由 QMdiSubWindow 持有所有权，此处仅跟踪）
     QScopedPointer<DataProcessor> m_dataProcessor;
     PlotWindowManager* m_plotWindowManager = nullptr;  // 绘图窗口管理器
     QScopedPointer<MainWindow> m_mainWindow;  // 主界面窗口

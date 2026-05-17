@@ -675,7 +675,14 @@ void RealtimeSqlRecorder::stop()
 
     emit stopWorker();
     m_workerThread.quit();
-    m_workerThread.wait(5000);
+    const bool finished = m_workerThread.wait(5000);
+    if (!finished) {
+        qCritical() << "RealtimeSqlRecorder: 工作线程 5 秒内未退出，强制终止（可能丢失少量数据）";
+        m_workerThread.terminate();
+        m_workerThread.wait(2000);
+    }
+    // 正常情况下 QThread::finished → deleteLater 已安排析构；
+    // terminate 路径下 worker 对象泄漏，但避免了对仍在运行的线程析构 QObject 的 UB。
     m_worker = nullptr;
 
     const quint64 droppedAll = m_droppedFrames.load(std::memory_order_relaxed);

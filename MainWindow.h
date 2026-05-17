@@ -368,7 +368,7 @@ private:
     QPushButton* m_tileWindowsButton;
     QPushButton* m_cascadeWindowsButton;
     QListWidget* m_windowList;
-    
+
     // 数据监控组件
     struct MonitorEntry {
         bool isAppLog{false};

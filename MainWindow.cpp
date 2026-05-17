@@ -1215,7 +1215,7 @@ void MainWindow::initUI()
         plotLayout->addWidget(createGroup);
         plotLayout->addWidget(controlGroup2);
         plotLayout->addWidget(listGroup);
-        
+
         m_plotPanel->setWidget(plotWidget);
         addDockWidget(Qt::LeftDockWidgetArea, m_plotPanel);
 

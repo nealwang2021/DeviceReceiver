@@ -1,4 +1,5 @@
 #include "PlotWindowManager.h"
+#include <QPointer>
 #include "PlotWindowBase.h"
 #include "PlotWindow.h"
 #include "HeatMapPlotWindow.h"
@@ -205,9 +206,12 @@ PlotWindowBase* PlotWindowManager::createWindowInMdiArea(QMdiArea* mdiArea, Plot
     subWindow->resize(600, 400);
     subWindow->show();
 
-    connect(subWindow, &QMdiSubWindow::destroyed, this, [this, plotWindow]() {
+    // QPointer 自保护：若 PlotWindowManager 先于 subWindow 销毁，lambda 安全空返。
+    QPointer<PlotWindowManager> self(this);
+    connect(subWindow, &QMdiSubWindow::destroyed, this, [self, plotWindow]() {
+        if (!self) return;
         qDebug() << "[PlotWindowManager] subWindow destroyed, unregistering" << plotWindow;
-        unregisterWindow(plotWindow);
+        self->unregisterWindow(plotWindow);
     });
 
     qInfo() << "在MDI区域创建窗口:" << plotWindow->windowTitle();
@@ -226,8 +230,10 @@ void PlotWindowManager::registerWindow(PlotWindowBase* window)
     qDebug() << "registering window" << window << "title" << window->windowTitle();
     m_windows.append(window);
 
-    connect(window, &QObject::destroyed, this, [this, window]() {
-        unregisterWindow(window);
+    QPointer<PlotWindowManager> self(this);
+    connect(window, &QObject::destroyed, this, [self, window]() {
+        if (!self) return;
+        self->unregisterWindow(window);
     });
 
     connect(this, &PlotWindowManager::dataUpdated,

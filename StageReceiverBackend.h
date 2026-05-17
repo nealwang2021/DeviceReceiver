@@ -8,6 +8,7 @@
 #include <QtGlobal>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 #ifdef HAS_GRPC
@@ -115,11 +116,12 @@ private:
     QTimer* m_mockTimer      = nullptr;
     QTimer* m_reconnectTimer = nullptr;
     std::thread m_streamThread;
+    std::mutex m_streamStateMutex;  // 保护 m_streamCtx（跨流线程 / stopStreamThread 访问）
 
 #ifdef HAS_GRPC
     std::shared_ptr<grpc::Channel>                m_channel;
     std::unique_ptr<stage::StageService::Stub>    m_stub;
-    std::unique_ptr<grpc::ClientContext>          m_streamCtx;
+    std::unique_ptr<grpc::ClientContext>          m_streamCtx;  // GUARDED_BY(m_streamStateMutex)
 #endif
 };
 

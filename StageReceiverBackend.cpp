@@ -1021,8 +1021,12 @@ void StageReceiverBackend::stopStreamThread()
     m_stopStream.store(true);
 
 #ifdef HAS_GRPC
-    if (m_streamCtx) {
-        m_streamCtx->TryCancel();
+    // TryCancel() 终止阻塞中的 Read() 调用；与 streamLoop 中写入 m_streamCtx 互斥。
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        if (m_streamCtx) {
+            m_streamCtx->TryCancel();
+        }
     }
 #endif
 
@@ -1031,7 +1035,11 @@ void StageReceiverBackend::stopStreamThread()
     }
 
 #ifdef HAS_GRPC
-    m_streamCtx.reset();
+    // streamLoop 已退出，reset 仍放在锁内以保持一致性。
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        m_streamCtx.reset();
+    }
 #endif
 }
 
@@ -1046,7 +1054,10 @@ void StageReceiverBackend::streamLoop(int intervalMs)
     }
 
     auto ctx = std::make_unique<grpc::ClientContext>();
-    m_streamCtx = std::move(ctx);
+    {
+        std::lock_guard<std::mutex> lock(m_streamStateMutex);
+        m_streamCtx = std::move(ctx);
+    }
 
     stage::PositionStreamRequest req;
     req.set_intervalms(qMax(10, intervalMs));
