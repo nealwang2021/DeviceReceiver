@@ -13,6 +13,7 @@
 #include <QTimer>
 #include "FrameData.h"
 #include "IReceiverBackend.h"
+#include "BackendParamDescriptor.h"
 
 // 串口数据接收线程类（独立线程运行，避免阻塞UI）
 class SerialReceiver : public IReceiverBackend
@@ -24,6 +25,8 @@ public:
 
     // 测试用：对外暴露解析函数以便单元测试调用
     Q_INVOKABLE FrameData parseRawFrameForTest(const QByteArray& rawFrame);
+
+    QVector<BackendParamDescriptor> configParameters() const override;
 
 public slots:
     // 传输无关后端接口实现
@@ -68,6 +71,7 @@ private slots:
 private:
     void processSerialBuffer();  // 处理串口粘包/拆包
     FrameData parseRawData(const QByteArray& rawFrame); // 解析原始数据为结构体
+    void emitDeviceStatus();
     
     /**
      * @brief 将十六进制字符串转换为字节数组
@@ -83,6 +87,7 @@ private:
     QByteArray m_serialBuffer;   // 串口缓存（处理粘包）
     QTimer* m_mockTimer;         // 模拟数据定时器
     bool m_paused = false;       // 采集暂停标记
+    QString m_portName;          // 当前串口名称（用于状态上报）
 
     // 帧协议配置（根据硬件修改）
     const int FRAME_LENGTH = 22;                   // 固定帧长度（含 AA55 + uint64 frameId + 3x float 传感器占位字段）

@@ -39,6 +39,15 @@ GrpcReceiverBackend::~GrpcReceiverBackend()
 }
 
 // ============================================================
+// 静态配置参数
+// ============================================================
+
+QVector<BackendParamDescriptor> GrpcReceiverBackend::configParameters() const
+{
+    return {};
+}
+
+// ============================================================
 // IReceiverBackend 接口实现
 // ============================================================
 
@@ -67,6 +76,7 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
         setConnected(true);
         const QString detail = QStringLiteral("gRPC Mock 模式已就绪");
         emitBackendStatus("connected", detail);
+        emitDeviceStatus();
         return finishConnect(true, detail);
     }
 
@@ -271,6 +281,7 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
                                .arg(m_endpoint)
                                .arg(useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure"));
     emitBackendStatus("connected", detail);
+    emitDeviceStatus();
     return finishConnect(true, detail);
 #else
     const QString error = QStringLiteral("当前构建未启用 gRPC 支持（请以 CONFIG+=grpc_client 重新编译）");
@@ -320,6 +331,7 @@ void GrpcReceiverBackend::disconnectBackend()
 #endif
 
     setConnected(false);
+    emitDeviceStatus();
     emitBackendStatus("disconnected", "gRPC 后端已断开");
     qWarning() << "[Breadcrumb] GrpcReceiverBackend::disconnectBackend end";
     m_disconnectInProgress.store(false);
@@ -343,11 +355,13 @@ void GrpcReceiverBackend::startAcquisition(int intervalMs)
         // Mock 模式：启动定时器
         m_mockTimer->setInterval(qMax(10, intervalMs));
         m_mockTimer->start();
+        emitDeviceStatus();
     } else {
         // Real 模式：启动流线程 + 断线检查定时器
         startStreamThread(intervalMs);
         m_reconnectTimer->setInterval(5000);
         m_reconnectTimer->start();
+        emitDeviceStatus();
     }
 }
 
@@ -357,6 +371,7 @@ void GrpcReceiverBackend::stopAcquisition()
         m_mockTimer->stop();
     }
     stopStreamThread();
+    emitDeviceStatus();
 }
 
 void GrpcReceiverBackend::setPaused(bool paused)
@@ -856,5 +871,14 @@ void GrpcReceiverBackend::emitBackendStatus(const QString& status, const QString
     pkt.insert("endpoint", m_endpoint);
     pkt.insert("detail",   detail);
     emit dataReceived(QJsonDocument(pkt).toJson(QJsonDocument::Compact), false);
+}
+
+void GrpcReceiverBackend::emitDeviceStatus()
+{
+    QJsonObject s;
+    s["protocol"] = QStringLiteral("grpc");
+    s["endpoint"] = m_endpoint;
+    s["mock"] = m_mockMode.load();
+    emit backendStatusChanged(s);
 }
 

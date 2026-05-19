@@ -1,6 +1,7 @@
 #include "SerialReceiver.h"
 #include <QDateTime>
 #include <QDebug>
+#include <QJsonObject>
 #include <QRandomGenerator>
 #include <QTimer>
 #include <QRegularExpression>
@@ -27,6 +28,11 @@ SerialReceiver::~SerialReceiver()
 {
     disconnectBackend();
     m_mockTimer->stop();
+}
+
+QVector<BackendParamDescriptor> SerialReceiver::configParameters() const
+{
+    return {};
 }
 
 bool SerialReceiver::connectBackend(const QString& endpoint)
@@ -71,6 +77,7 @@ void SerialReceiver::stopAcquisition()
 
 bool SerialReceiver::openSerial(const QString& portName, int baudRate)
 {
+    m_portName = portName;
 #ifndef QT_COMPILE_FOR_WASM
     m_mockTimer->stop();
     m_paused = false;
@@ -84,6 +91,7 @@ bool SerialReceiver::openSerial(const QString& portName, int baudRate)
     if (m_serialPort->open(QIODevice::ReadWrite)) {
         qInfo() << QString("串口[%1]打开成功，波特率：%2").arg(portName).arg(baudRate);
         m_serialBuffer.clear();
+        emitDeviceStatus();
         return true;
     } else {
         QString err = QString("串口[%1]打开失败：%2").arg(portName).arg(m_serialPort->errorString());
@@ -93,6 +101,7 @@ bool SerialReceiver::openSerial(const QString& portName, int baudRate)
     }
 #else
     qInfo() << QString("WebAssembly环境：模拟打开串口[%1]，波特率：%2").arg(portName).arg(baudRate);
+    emitDeviceStatus();
     return true;
 #endif
 }
@@ -108,6 +117,7 @@ void SerialReceiver::closeSerial()
 #else
     qInfo() << "WebAssembly环境：模拟关闭串口";
 #endif
+    emitDeviceStatus();
 }
 
 bool SerialReceiver::isSerialOpen() const
@@ -438,4 +448,12 @@ QByteArray SerialReceiver::hexStringToByteArray(const QString& hex)
     }
     
     return byteArray;
+}
+
+void SerialReceiver::emitDeviceStatus()
+{
+    QJsonObject s;
+    s["protocol"] = QStringLiteral("serial");
+    s["port"] = m_portName;
+    emit backendStatusChanged(s);
 }
