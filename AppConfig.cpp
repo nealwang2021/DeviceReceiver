@@ -466,21 +466,30 @@ bool AppConfig::loadFromFile(const QString& filename)
         m_stageGrpcEndpoint = defaultGrpcEndpoint(50052);
     }
 
-    // 优先读 [Receiver] 下的配置，兼容历史版本中存放在 [Serial] 下的写法
-    if (settings.contains("Receiver/UseMockData")) {
-        m_useMockData = settings.value("Receiver/UseMockData").toBool();
-    } else {
-        m_useMockData = settings.value("Serial/UseMockData", m_useMockData).toBool();
-    }
-    if (settings.contains("Receiver/MockDataIntervalMs")) {
-        m_mockDataIntervalMs = settings.value("Receiver/MockDataIntervalMs").toInt();
-    } else {
-        m_mockDataIntervalMs = settings.value("Serial/MockDataIntervalMs", m_mockDataIntervalMs).toInt();
-    }
-    m_mockDataIntervalMs = qBound(10, m_mockDataIntervalMs, 60000);
     m_grpcConnectTimeoutMs = settings.value("Receiver/GrpcConnectTimeoutMs", m_grpcConnectTimeoutMs).toInt();
     m_grpcConnectTimeoutMs = qBound(500, m_grpcConnectTimeoutMs, 30000);
-    
+
+    // 加载多频涡流配置
+    m_multiFreqBaseFrequencyHz = settings.value("MultiFreq/BaseFrequencyHz", m_multiFreqBaseFrequencyHz).toInt();
+    m_multiFreqAverageCycleCount = settings.value("MultiFreq/AverageCycleCount", m_multiFreqAverageCycleCount).toInt();
+    m_multiFreqNormalizeScale = settings.value("MultiFreq/NormalizeScale", m_multiFreqNormalizeScale).toDouble();
+    {
+        const QString factorsStr = settings.value("MultiFreq/FrequencyFactors", QString()).toString();
+        if (!factorsStr.isEmpty()) {
+            m_multiFreqFrequencyFactors.clear();
+            for (const QString& part : factorsStr.split(',', Qt::SkipEmptyParts)) {
+                bool ok = false;
+                int f = part.trimmed().toInt(&ok);
+                if (ok && f > 0) {
+                    m_multiFreqFrequencyFactors.append(f);
+                }
+            }
+        }
+        if (m_multiFreqFrequencyFactors.isEmpty()) {
+            m_multiFreqFrequencyFactors = {1, 2, 4, 8};
+        }
+    }
+
     // 加载绘图配置
     m_maxPlotPoints = settings.value("Plot/MaxPoints", m_maxPlotPoints).toInt();
     m_plotRefreshIntervalMs = settings.value("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs).toInt();
@@ -558,10 +567,20 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("Receiver/BackendType", m_receiverBackendType);
     settings.setValue("Receiver/GrpcEndpoint", m_grpcEndpoint);
     settings.setValue("Receiver/StageGrpcEndpoint", m_stageGrpcEndpoint);
-    settings.setValue("Receiver/UseMockData", m_useMockData);
-    settings.setValue("Receiver/MockDataIntervalMs", m_mockDataIntervalMs);
     settings.setValue("Receiver/GrpcConnectTimeoutMs", m_grpcConnectTimeoutMs);
-    
+
+    // 保存多频涡流配置
+    settings.setValue("MultiFreq/BaseFrequencyHz", m_multiFreqBaseFrequencyHz);
+    settings.setValue("MultiFreq/AverageCycleCount", m_multiFreqAverageCycleCount);
+    settings.setValue("MultiFreq/NormalizeScale", m_multiFreqNormalizeScale);
+    {
+        QStringList factorParts;
+        for (int f : m_multiFreqFrequencyFactors) {
+            factorParts.append(QString::number(f));
+        }
+        settings.setValue("MultiFreq/FrequencyFactors", factorParts.join(','));
+    }
+
     // 保存绘图配置
     settings.setValue("Plot/MaxPoints", m_maxPlotPoints);
     settings.setValue("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs);
@@ -623,9 +642,11 @@ void AppConfig::loadDefaults()
     m_receiverBackendType = "grpc";
     m_grpcEndpoint = defaultGrpcEndpoint(50051);
     m_stageGrpcEndpoint = defaultGrpcEndpoint(50052);
-    m_useMockData = false;
-    m_mockDataIntervalMs = 100;
     m_grpcConnectTimeoutMs = 6000;
+    m_multiFreqBaseFrequencyHz = 100;
+    m_multiFreqAverageCycleCount = 10;
+    m_multiFreqNormalizeScale = 1.0;
+    m_multiFreqFrequencyFactors = {1, 2, 4, 8};
     m_maxPlotPoints = 2000;
     m_plotRefreshIntervalMs = 50;
     m_arrayPlotRowHeightPx = 0;
@@ -681,4 +702,28 @@ void AppConfig::setArrayRgbHeatmapAmpMax(double v)
     }
     m_arrayRgbHeatmapAmpMax = clamped;
     emit arrayRgbHeatmapAmpRangeChanged();
+}
+
+void AppConfig::setMultiFreqBaseFrequencyHz(int hz)
+{
+    static const QList<int> valid = {1, 2, 5, 10, 20, 50, 100, 200, 500, 1000};
+    if (!valid.contains(hz)) return;
+    m_multiFreqBaseFrequencyHz = hz;
+}
+
+void AppConfig::setMultiFreqAverageCycleCount(int count)
+{
+    m_multiFreqAverageCycleCount = qBound(1, count, 1000);
+}
+
+void AppConfig::setMultiFreqNormalizeScale(double scale)
+{
+    m_multiFreqNormalizeScale = qBound(0.01, scale, 100.0);
+}
+
+void AppConfig::setMultiFreqFrequencyFactors(const QList<int>& factors)
+{
+    if (!factors.isEmpty()) {
+        m_multiFreqFrequencyFactors = factors;
+    }
 }

@@ -73,15 +73,22 @@ public:
     QString stageGrpcEndpoint() const { return m_stageGrpcEndpoint; }
     void setStageGrpcEndpoint(const QString& endpoint) { m_stageGrpcEndpoint = endpoint; }
     
-    bool useMockData() const { return m_useMockData; }
-    void setUseMockData(bool use) { m_useMockData = use; }
-    
-    int mockDataIntervalMs() const { return m_mockDataIntervalMs; }
-    void setMockDataIntervalMs(int ms) { m_mockDataIntervalMs = ms; }
-
     int grpcConnectTimeoutMs() const { return m_grpcConnectTimeoutMs; }
     void setGrpcConnectTimeoutMs(int ms) { m_grpcConnectTimeoutMs = ms; }
-    
+
+    // ========== 多频涡流配置 ==========
+    int multiFreqBaseFrequencyHz() const { return m_multiFreqBaseFrequencyHz; }
+    void setMultiFreqBaseFrequencyHz(int hz);
+
+    int multiFreqAverageCycleCount() const { return m_multiFreqAverageCycleCount; }
+    void setMultiFreqAverageCycleCount(int count);
+
+    double multiFreqNormalizeScale() const { return m_multiFreqNormalizeScale; }
+    void setMultiFreqNormalizeScale(double scale);
+
+    QList<int> multiFreqFrequencyFactors() const { return m_multiFreqFrequencyFactors; }
+    void setMultiFreqFrequencyFactors(const QList<int>& factors);
+
 #ifndef QT_COMPILE_FOR_WASM
     // ========== 串口高级配置（仅在非WASM环境下可用）==========
     QSerialPort::DataBits dataBits() const { return m_dataBits; }
@@ -239,10 +246,14 @@ private:
     QString m_receiverBackendType = "grpc";
     QString m_grpcEndpoint;            // 构造时填默认本机 IPv6 + 端口
     QString m_stageGrpcEndpoint;
-    bool m_useMockData = false;        // 是否使用模拟数据
-    int m_mockDataIntervalMs = 100;    // 模拟数据间隔；gRPC 真机时为 Subscribe 请求的 interval_ms（毫秒）
     int m_grpcConnectTimeoutMs = 6000; // gRPC 单次连接等待超时（毫秒）
-    
+
+    // 多频涡流配置
+    int m_multiFreqBaseFrequencyHz = 100;
+    int m_multiFreqAverageCycleCount = 10;
+    double m_multiFreqNormalizeScale = 1.0;
+    QList<int> m_multiFreqFrequencyFactors = {1, 2, 4, 8};
+
 #ifndef QT_COMPILE_FOR_WASM
     // 串口高级配置（仅在非WASM环境下可用）
     QSerialPort::DataBits m_dataBits = QSerialPort::Data8;

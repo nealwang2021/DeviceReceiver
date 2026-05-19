@@ -516,6 +516,7 @@ void MainWindow::initUI()
         m_backendTypeCombo = new QComboBox();
         m_backendTypeCombo->addItem(QStringLiteral("串口（被测设备）"), "serial");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（被测设备数据）"), "grpc");
+        m_backendTypeCombo->addItem(QStringLiteral("gRPC（多频涡流）"), "multifreq-grpc");
         // 三轴台测试装置为独立 gRPC，不在此列出（见右侧「三轴台测试装置」面板）
         m_grpcEndpointEdit = new QLineEdit();
         m_grpcEndpointEdit->setPlaceholderText(QStringLiteral("被测设备 gRPC，如 127.0.0.1:50051 或 [::1]:50051"));
@@ -566,7 +567,36 @@ void MainWindow::initUI()
         
         mockLayout->addWidget(m_useMockDataCheck);
         mockLayout->addLayout(intervalLayout);
-        
+
+        // ---- 多频涡流参数组（仅 multifreq-grpc 可见）----
+        m_multifreqGroupBox = new QGroupBox(QStringLiteral("多频涡流参数"));
+        QFormLayout* mfLayout = new QFormLayout(m_multifreqGroupBox);
+
+        m_mfBaseFreqCombo = new QComboBox();
+        m_mfBaseFreqCombo->addItems({"1", "2", "5", "10", "20", "50", "100", "200", "500", "1000"});
+        m_mfBaseFreqCombo->setCurrentText("100");
+        mfLayout->addRow(QStringLiteral("基频(Hz):"), m_mfBaseFreqCombo);
+
+        m_mfAvgCycleSpin = new QSpinBox();
+        m_mfAvgCycleSpin->setRange(1, 1000);
+        m_mfAvgCycleSpin->setValue(10);
+        mfLayout->addRow(QStringLiteral("平均周期数:"), m_mfAvgCycleSpin);
+
+        m_mfNormScaleSpin = new QDoubleSpinBox();
+        m_mfNormScaleSpin->setRange(0.01, 100.0);
+        m_mfNormScaleSpin->setDecimals(4);
+        m_mfNormScaleSpin->setValue(1.0);
+        m_mfNormScaleSpin->setSingleStep(0.1);
+        mfLayout->addRow(QStringLiteral("归一化系数:"), m_mfNormScaleSpin);
+
+        m_mfFreqFactorsEdit = new QLineEdit();
+        m_mfFreqFactorsEdit->setText("1,2,4,8");
+        m_mfFreqFactorsEdit->setPlaceholderText(QStringLiteral("逗号分隔整数，如 1,2,4,8"));
+        mfLayout->addRow(QStringLiteral("倍频系数:"), m_mfFreqFactorsEdit);
+
+        m_multifreqGroupBox->setVisible(false);
+        deviceLayout->addWidget(m_multifreqGroupBox);
+
         // 控制按钮组
         QGroupBox* controlGroup = new QGroupBox(QStringLiteral("被测设备采集"));
         controlGroup->setToolTip(QStringLiteral("启动/停止的是被测设备主数据通道（串口或 gRPC）；三轴台为独立连接"));
@@ -1186,7 +1216,7 @@ void MainWindow::initUI()
         
         m_windowTypeCombo = new QComboBox();
         m_windowTypeCombo->addItems({QStringLiteral("组合图"), QStringLiteral("热力图"), QStringLiteral("阵列图"),
-                                     QStringLiteral("脉冲衰减"), QStringLiteral("检测分析"), QStringLiteral("阵列热力图")});
+                                     QStringLiteral("脉冲衰减"), QStringLiteral("阵列热力图")});
         m_createWindowButton = new QPushButton("新建窗口");
         
         createLayout->addRow("窗口类型:", m_windowTypeCombo);
@@ -1724,9 +1754,24 @@ void MainWindow::loadConfigToUI()
     m_baudRateCombo->setCurrentText(QString::number(config->baudRate()));
     
     // 加载模拟数据配置
-    m_useMockDataCheck->setChecked(config->useMockData());
-    m_mockIntervalSpin->setValue(config->mockDataIntervalMs());
-    
+    m_useMockDataCheck->setChecked(false);
+    m_mockIntervalSpin->setValue(100);
+
+    // 加载多频涡流配置
+    {
+        const int baseHz = config->multiFreqBaseFrequencyHz();
+        const int bfIdx = m_mfBaseFreqCombo->findText(QString::number(baseHz));
+        if (bfIdx >= 0) m_mfBaseFreqCombo->setCurrentIndex(bfIdx);
+    }
+    m_mfAvgCycleSpin->setValue(config->multiFreqAverageCycleCount());
+    m_mfNormScaleSpin->setValue(config->multiFreqNormalizeScale());
+    {
+        const QList<int> factors = config->multiFreqFrequencyFactors();
+        QStringList parts;
+        for (int f : factors) { parts.append(QString::number(f)); }
+        m_mfFreqFactorsEdit->setText(parts.join(','));
+    }
+
     // 加载发送配置
     m_hexFormatCheck->setChecked(config->sendAsHex());
     m_autoNewlineCheck->setChecked(config->autoSendNewline());
@@ -1777,9 +1822,23 @@ void MainWindow::saveConfigFromUI()
     config->setBaudRate(m_baudRateCombo->currentText().toInt());
     
     // 保存模拟数据配置
-    config->setUseMockData(m_useMockDataCheck->isChecked());
-    config->setMockDataIntervalMs(m_mockIntervalSpin->value());
-    
+    // 保存多频涡流配置
+    config->setMultiFreqBaseFrequencyHz(m_mfBaseFreqCombo->currentText().toInt());
+    config->setMultiFreqAverageCycleCount(m_mfAvgCycleSpin->value());
+    config->setMultiFreqNormalizeScale(m_mfNormScaleSpin->value());
+    {
+        const QStringList parts = m_mfFreqFactorsEdit->text().split(',', Qt::SkipEmptyParts);
+        QList<int> factors;
+        for (const QString& p : parts) {
+            bool ok = false;
+            int f = p.trimmed().toInt(&ok);
+            if (ok && f > 0) factors.append(f);
+        }
+        if (!factors.isEmpty()) {
+            config->setMultiFreqFrequencyFactors(factors);
+        }
+    }
+
     // 保存发送配置
     config->setSendAsHex(m_hexFormatCheck->isChecked());
     config->setAutoSendNewline(m_autoNewlineCheck->isChecked());
@@ -1841,8 +1900,6 @@ QStringList MainWindow::collectCurrentPlotWindowTypes() const
         const QString title = widget->windowTitle();
         if (title.contains(QStringLiteral("阵列热力图"))) {
             types.append(QString::number(static_cast<int>(PlotWindowManager::ArrayHeatmapPlot)));
-        } else if (title.contains(QStringLiteral("检测分析"))) {
-            types.append(QString::number(static_cast<int>(PlotWindowManager::InspectionPlot)));
         } else if (title.contains(QStringLiteral("脉冲"))) {
             types.append(QString::number(static_cast<int>(PlotWindowManager::PulsedDecayPlot)));
         } else if (title.contains(QStringLiteral("阵列"))) {
@@ -2971,34 +3028,40 @@ void MainWindow::onBackendTypeChanged(int index)
     Q_UNUSED(index)
     const QString backendType = m_backendTypeCombo->currentData().toString();
     const bool isGrpc = (backendType.compare("grpc", Qt::CaseInsensitive) == 0);
+    const bool isMultiFreq = (backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
+    const bool isGrpcLike = isGrpc || isMultiFreq;
 
-    if (isGrpc) {
+    if (isGrpcLike) {
         m_useMockDataCheck->setText(QStringLiteral("被测设备 gRPC 本地模拟"));
     } else {
         m_useMockDataCheck->setText(QStringLiteral("启用模拟数据"));
     }
 
-    m_grpcEndpointEdit->setEnabled(isGrpc);
+    m_grpcEndpointEdit->setEnabled(isGrpcLike);
 
     for (QWidget* field : m_serialOnlyFields) {
         if (!field) {
             continue;
         }
-        field->setVisible(!isGrpc);
-        field->setEnabled(!isGrpc);
+        field->setVisible(!isGrpcLike);
+        field->setEnabled(!isGrpcLike);
     }
     for (QWidget* label : m_serialOnlyLabels) {
         if (!label) {
             continue;
         }
-        label->setVisible(!isGrpc);
+        label->setVisible(!isGrpcLike);
+    }
+
+    if (m_multifreqGroupBox) {
+        m_multifreqGroupBox->setVisible(isMultiFreq);
     }
 
     if (m_grpcTestGroup) {
-        m_grpcTestGroup->setVisible(true);
+        m_grpcTestGroup->setVisible(isGrpc);  // 仅阵列涡流 gRPC 显示自检面板
     }
 
-    if (!isGrpc) {
+    if (!isGrpcLike) {
         updateSerialPortList();
     }
 
@@ -3271,8 +3334,7 @@ void MainWindow::onCreateWindowClicked()
     case 1: type = PlotWindowManager::HeatmapPlot; break;
     case 2: type = PlotWindowManager::ArrayPlot; break;
     case 3: type = PlotWindowManager::PulsedDecayPlot; break;
-    case 4: type = PlotWindowManager::InspectionPlot; break;
-    case 5: type = PlotWindowManager::ArrayHeatmapPlot; break;
+    case 4: type = PlotWindowManager::ArrayHeatmapPlot; break;
     default:
         qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
         type = PlotWindowManager::CombinedPlot;

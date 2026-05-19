@@ -3,6 +3,7 @@
 #include "IReceiverBackend.h"
 #include "SerialReceiver.h"
 #include "GrpcReceiverBackend.h"
+#include "GrpcMultiFreqBackend.h"
 #include "StageReceiverBackend.h"
 #include "PlotWindowBase.h"
 #include "PlotWindow.h"
@@ -140,8 +141,8 @@ void ApplicationController::reloadRuntimeConfig()
         m_config.backendType = QStringLiteral("grpc");
     }
     m_config.grpcEndpoint = config->grpcEndpoint();
-    m_config.useMockData = config->useMockData();
-    m_config.mockDataIntervalMs = config->mockDataIntervalMs();
+    m_config.useMockData = false;
+    m_config.mockDataIntervalMs = 100;
     m_config.grpcConnectTimeoutMs = config->grpcConnectTimeoutMs();
     m_config.defaultExportDirectory = config->defaultExportDirectory();
     m_config.defaultExportFormat = config->defaultExportFormat();
@@ -537,6 +538,10 @@ bool ApplicationController::initReceiverBackend()
         auto* grpc = new GrpcReceiverBackend;
         grpc->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
         m_serialReceiver.reset(grpc);
+    } else if (backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0) {
+        auto* mf = new GrpcMultiFreqBackend;
+        mf->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
+        m_serialReceiver.reset(mf);
     } else {
         m_serialReceiver.reset(new SerialReceiver);
     }
@@ -566,6 +571,10 @@ bool ApplicationController::initReceiverBackend()
 
     if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
         QObject::connect(grpcBackend, &GrpcReceiverBackend::connectAttemptFinished,
+                         this, &ApplicationController::handleGrpcConnectAttemptFinished,
+                         Qt::QueuedConnection);
+    } else if (auto* mfBackend = qobject_cast<GrpcMultiFreqBackend*>(m_serialReceiver.get())) {
+        QObject::connect(mfBackend, &GrpcMultiFreqBackend::connectAttemptFinished,
                          this, &ApplicationController::handleGrpcConnectAttemptFinished,
                          Qt::QueuedConnection);
     }

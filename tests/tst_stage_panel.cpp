@@ -101,7 +101,7 @@ void StagePanelTest::test_connect_and_read_position()
 
     AppConfig::instance()->loadFromFile(fixtureIni);
     {
-        const bool useMock = AppConfig::instance()->useMockData();
+        const bool useMock = false;
         const QString backendType = AppConfig::instance()->receiverBackendType();
         panelStepLog(QStringLiteral("test_connect_and_read_position: AppConfig loaded, backendType=%1, useMockData=%2")
                      .arg(backendType, useMock ? QStringLiteral("true") : QStringLiteral("false")));
