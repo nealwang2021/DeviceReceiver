@@ -13,6 +13,7 @@
 #include <QFile>
 #include <QDateTime>
 #include "AppConfig.h"
+#include "BackendParamDescriptor.h"
 
 // 前置声明
 class ApplicationController;
@@ -31,6 +32,8 @@ class QProcess;
 class QJsonObject;
 class QDoubleSpinBox;
 class QGroupBox;
+class QFormLayout;
+class QVBoxLayout;
 class QShowEvent;
 class HistoryOverviewWindow;
 
@@ -104,9 +107,6 @@ private slots:
     // 设备控制槽函数
     void onConnectClicked();
     void onDisconnectClicked();
-    void onPauseClicked();
-    void onResumeClicked();
-    void onUseMockDataChanged(bool use);
     void onBackendTypeChanged(int index);
     
     // 指令发送槽函数
@@ -140,11 +140,6 @@ private slots:
                                        qint64 receivedFramesSinceLast,
                                        int dispatchedFrames,
                                        qint64 unconsumedFramesTotal);
-    void onStartGrpcTestServerClicked();
-    void onStopGrpcTestServerClicked();
-    void onRunGrpcSelfTestClicked();
-    void onGrpcSelfTestTimeout();
-    void onGrpcTestServerStartTimeout();
 
 private:
     /**
@@ -212,18 +207,42 @@ private:
      */
     void setStyle(AppConfig::Style style);
 
+    void handleStageBackendPacket(const QJsonObject& packet);
+    void updateStagePanelUiState();
+    void sendStageCommandText(const QString& command);
+    /// 主窗口限制在当前屏幕工作区内（横向/竖向不超出可用区域），并在换屏时更新
+    void applyScreenGeometryConstraints();
+
+
+    // === DEPRECATED 类型定义（待 .cpp 重构完成后移除）===
     enum class GrpcLabelTone {
         Neutral,
         Warning,
         Success,
         Error,
     };
-
     struct GrpcLabelState {
         QString text;
         GrpcLabelTone tone = GrpcLabelTone::Neutral;
     };
+#ifndef QT_COMPILE_FOR_WASM
+    struct GrpcTestServerLaunchCandidate {
+        QString program;
+        QStringList arguments;
+        QString displayName;
+        QString workingDirectory;
+    };
+#endif
 
+    // === DEPRECATED 方法声明（待 .cpp 重构完成后移除）===
+    void onStartGrpcTestServerClicked();
+    void onStopGrpcTestServerClicked();
+    void onRunGrpcSelfTestClicked();
+    void onGrpcSelfTestTimeout();
+    void onGrpcTestServerStartTimeout();
+    void onPauseClicked();
+    void onResumeClicked();
+    void onUseMockDataChanged(bool use);
     void updateGrpcTestUiState();
     void resetGrpcSelfTestLabelStates();
     void setGrpcLabelState(GrpcLabelState& target, const QString& text, GrpcLabelTone tone);
@@ -232,28 +251,22 @@ private:
     void applyGrpcSelfTestLabelStates();
     void startGrpcSelfTest(bool autoTriggered);
     void handleGrpcBackendPacket(const QJsonObject& packet);
-    void handleStageBackendPacket(const QJsonObject& packet);
     void finalizeGrpcSelfTest();
-    void updateStagePanelUiState();
-    void sendStageCommandText(const QString& command);
-    /// 主窗口限制在当前屏幕工作区内（横向/竖向不超出可用区域），并在换屏时更新
-    void applyScreenGeometryConstraints();
     void setGrpcTestServiceStatus(const QString& text, const QString& color);
     QString resolveGrpcTestServerExecutablePath() const;
     QString resolveGrpcTestServerScriptPath() const;
     QString resolveGrpcTestServerPythonExecutablePath(const QString& scriptPath) const;
-#ifndef QT_COMPILE_FOR_WASM
-    struct GrpcTestServerLaunchCandidate {
-        QString program;
-        QStringList arguments;
-        QString displayName;
-        QString workingDirectory;
-    };
     QList<GrpcTestServerLaunchCandidate> buildGrpcTestServerLaunchCandidates(const QString& port) const;
     void tryStartNextGrpcTestServerCandidate();
-#endif
     int grpcEndpointPort() const;
     void logGrpcInteraction(const QString& category, const QString& detail) const;
+    // === END DEPRECATED ===
+
+    // 动态参数与设备状态
+    void rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& params);
+    void onBackendStatusChanged(const QJsonObject& status);
+    QVariant configValue(const QString& key, const QVariant& fallback) const;
+    void setConfigValue(const QString& key, const QVariant& value);
 
     /**
      * @brief 获取默认样式
@@ -290,23 +303,82 @@ private:
     QComboBox* m_stopBitsCombo;
     QComboBox* m_parityCombo;
     QComboBox* m_flowControlCombo;
+
+    // === DEPRECATED: 以下成员待 .cpp 重构完成后移除 ===
     QCheckBox* m_useMockDataCheck;
     QSpinBox* m_mockIntervalSpin;
-    QPushButton* m_connectButton;
-    QPushButton* m_disconnectButton;
+
+    // 多频涡流参数控件 (DEPRECATED)
+    QGroupBox* m_multifreqGroupBox = nullptr;
+    QComboBox* m_mfBaseFreqCombo = nullptr;
+    QSpinBox* m_mfAvgCycleSpin = nullptr;
+    QDoubleSpinBox* m_mfNormScaleSpin = nullptr;
+    QLineEdit* m_mfFreqFactorsEdit = nullptr;
+
     QPushButton* m_pauseButton;
     QPushButton* m_resumeButton;
+
+    // gRPC 测试面板 (DEPRECATED)
     QPushButton* m_startGrpcTestServerButton;
     QPushButton* m_stopGrpcTestServerButton;
     QPushButton* m_runGrpcSelfTestButton;
     QComboBox* m_grpcModeCombo;
-    QLabel* m_connectionStatusLabel;
     QLabel* m_grpcTestServiceStatusLabel;
     QLabel* m_grpcSelfTestStatusLabel;
     QLabel* m_grpcSelfTestTxStatusLabel;
     QLabel* m_grpcSelfTestRxStatusLabel;
     QLabel* m_grpcModeSwitchStatusLabel;
     QLabel* m_grpcPeriodicDataStatusLabel;
+    QGroupBox* m_grpcTestGroup = nullptr;
+    QTimer* m_grpcSelfTestTimeoutTimer;
+
+    // gRPC 自检状态 (DEPRECATED)
+    bool m_grpcSelfTestPending;
+    bool m_grpcSelfTestCommandAcked;
+    bool m_grpcSelfTestModeSwitchAcked;
+    bool m_grpcSelfTestStreamReceived;
+    bool m_autoSelfTestTriggeredForConnection;
+    qint64 m_grpcPeriodicPacketCount;
+    qint64 m_grpcPeriodicIntervalSumMs;
+    qint64 m_lastGrpcStreamTimestampMs;
+    qint64 m_lastGrpcStreamPayloadTimestampMs;
+    QStringList m_grpcSelfTestPendingAcks;
+    QString m_grpcSelfTestTargetMode;
+
+    GrpcLabelState m_grpcSelfTestOverallState;
+    GrpcLabelState m_grpcSelfTestTxState;
+    GrpcLabelState m_grpcSelfTestRxState;
+    GrpcLabelState m_grpcModeSwitchState;
+    GrpcLabelState m_grpcPeriodicDataState;
+
+#ifndef QT_COMPILE_FOR_WASM
+    QProcess* m_grpcTestServerProcess;
+    QTimer* m_grpcTestServerStartTimeoutTimer;
+    QList<GrpcTestServerLaunchCandidate> m_grpcTestServerLaunchQueue;
+    QStringList m_grpcTestServerStartErrors;
+    QString m_grpcTestServerCurrentDisplayName;
+    bool m_grpcTestServerLaunchInProgress;
+    bool m_grpcTestServerStopRequested;
+#endif
+    // === END DEPRECATED ===
+
+    // gRPC 参数区域（动态生成，proto 驱动）
+    QGroupBox* m_grpcParamGroup = nullptr;
+    QFormLayout* m_grpcParamLayout = nullptr;
+    QVector<QWidget*> m_grpcParamWidgets;
+    QVector<BackendParamDescriptor> m_currentBackendParams;
+
+    // 设备状态面板
+    QGroupBox* m_deviceStatusGroup = nullptr;
+    QVBoxLayout* m_deviceStatusLayout = nullptr;
+    QLabel* m_deviceStatusDeviceLabel = nullptr;
+    QLabel* m_deviceStatusStateLabel = nullptr;
+    QLabel* m_deviceStatusEndpointLabel = nullptr;
+    QLabel* m_deviceStatusDetailsLabel = nullptr;
+
+    QPushButton* m_connectButton;
+    QPushButton* m_disconnectButton;
+    QLabel* m_connectionStatusLabel;
 
     // Stage 专用控制组件
     QLineEdit* m_stageEndpointEdit = nullptr;
@@ -400,12 +472,9 @@ private:
     /// 视图菜单「历史总览」项
     QAction* m_showOverviewPanelAction = nullptr;
 
-    QGroupBox* m_grpcTestGroup = nullptr;
-    
     // 定时器
     QTimer* m_updateTimer;
-    QTimer* m_grpcSelfTestTimeoutTimer;
-    
+
     // 状态变量
     bool m_isConnected;
     bool m_connectionInProgress;
@@ -413,32 +482,6 @@ private:
     int m_frameCount;
     int m_alarmCount;
     qint64 m_lastUpdateTime;
-    qint64 m_lastGrpcStreamTimestampMs;
-    bool m_grpcSelfTestPending;
-    bool m_grpcSelfTestCommandAcked;
-    bool m_grpcSelfTestModeSwitchAcked;
-    bool m_grpcSelfTestStreamReceived;
-    bool m_autoSelfTestTriggeredForConnection;
-    qint64 m_grpcPeriodicPacketCount;
-    qint64 m_grpcPeriodicIntervalSumMs;
-    qint64 m_lastGrpcStreamPayloadTimestampMs;
-    QStringList m_grpcSelfTestPendingAcks;
-    QString m_grpcSelfTestTargetMode;
-    GrpcLabelState m_grpcSelfTestOverallState;
-    GrpcLabelState m_grpcSelfTestTxState;
-    GrpcLabelState m_grpcSelfTestRxState;
-    GrpcLabelState m_grpcModeSwitchState;
-    GrpcLabelState m_grpcPeriodicDataState;
-
-#ifndef QT_COMPILE_FOR_WASM
-    QProcess* m_grpcTestServerProcess;
-    QTimer* m_grpcTestServerStartTimeoutTimer;
-    QList<GrpcTestServerLaunchCandidate> m_grpcTestServerLaunchQueue;
-    QStringList m_grpcTestServerStartErrors;
-    QString m_grpcTestServerCurrentDisplayName;
-    bool m_grpcTestServerLaunchInProgress;
-    bool m_grpcTestServerStopRequested;
-#endif
 };
 
 #endif // MAINWINDOW_H
