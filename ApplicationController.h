@@ -202,8 +202,6 @@ private:
         int baudRate = 115200;           // 波特率
         QString backendType = "serial"; // serial/grpc（被测设备；不含 stage）
         QString grpcEndpoint = "127.0.0.1:50051";
-        bool useMockData = true;         // 是否使用模拟数据
-        int mockDataIntervalMs = 100;    // 模拟/gRPC Subscribe 帧间隔（毫秒，勿用 1000 除非刻意 1Hz）
         int grpcConnectTimeoutMs = 6000; // gRPC 单次连接等待超时（毫秒）
         int initialWindowCount = 1;      // 初始窗口数量
         PlotType initialWindowType = CombinedPlot; // 初始窗口类型

@@ -141,8 +141,6 @@ void ApplicationController::reloadRuntimeConfig()
         m_config.backendType = QStringLiteral("grpc");
     }
     m_config.grpcEndpoint = config->grpcEndpoint();
-    m_config.useMockData = false;
-    m_config.mockDataIntervalMs = 100;
     m_config.grpcConnectTimeoutMs = config->grpcConnectTimeoutMs();
     m_config.defaultExportDirectory = config->defaultExportDirectory();
     m_config.defaultExportFormat = config->defaultExportFormat();
@@ -235,12 +233,6 @@ void ApplicationController::start()
     
     reloadRuntimeConfig();
 
-#ifdef QT_COMPILE_FOR_WASM
-    // WebAssembly环境下强制使用模拟数据，因为没有真实串口
-    m_config.useMockData = true;
-    qInfo() << "WebAssembly环境：强制使用模拟数据";
-#endif
-    
     // 确保串口线程在运行状态
     if (m_config.backendType.compare(m_activeBackendType, Qt::CaseInsensitive) != 0) {
         qInfo() << "检测到后端类型变化，重建接收后端:" << m_activeBackendType << "->" << m_config.backendType;
@@ -267,13 +259,12 @@ void ApplicationController::start()
         return;
     }
 
-    // 启动数据接收，支持重试/切换到模拟数据
+    // 启动数据接收
     bool startedReceiving = false;
     m_isPaused = false;
     const bool isGrpcBackend = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isGrpcLikeBackend = isGrpcBackend;
 
-    if (isGrpcLikeBackend) {
+    if (isGrpcBackend) {
         if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
             grpcBackend->setShutdownMode(false);
         }
@@ -285,21 +276,12 @@ void ApplicationController::start()
         m_connectInProgress = true;
         emit connectionInProgressChanged(true);
 
-        QMetaObject::invokeMethod(m_serialReceiver.get(), "setMockMode",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(bool, m_config.useMockData));
         startGrpcBackendConnectAsync(m_config.grpcEndpoint);
         return;
     }
 
-    if (m_config.useMockData && !isGrpcLikeBackend) {
-        QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, m_config.mockDataIntervalMs));
-        qInfo() << "已启动模拟数据，间隔" << m_config.mockDataIntervalMs << "ms";
-        startedReceiving = true;
-    } else {
-        // 非 gRPC 后端保留同步重试路径
+    {
+        // 串口后端同步连接重试路径
         while (true) {
             bool connected = false;
             const QString endpoint = QString("%1|%2").arg(m_config.serialPort).arg(m_config.baudRate);
@@ -313,7 +295,7 @@ void ApplicationController::start()
                 qInfo() << "后端连接成功" << m_config.backendType << endpoint;
                 QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
                                           Qt::QueuedConnection,
-                                          Q_ARG(int, m_config.mockDataIntervalMs));
+                                          Q_ARG(int, 100));
                 startedReceiving = true;
                 break;
             }
@@ -321,23 +303,13 @@ void ApplicationController::start()
             QMessageBox msgBox;
             msgBox.setWindowTitle("后端连接失败");
             msgBox.setText(QString("无法连接后端 %1").arg(endpoint));
-            msgBox.setInformativeText("请选择重试、使用模拟数据或取消。");
+            msgBox.setInformativeText("请选择重试或取消。");
             QPushButton* retryBtn = msgBox.addButton("重试", QMessageBox::AcceptRole);
-            QPushButton* mockBtn = msgBox.addButton("使用模拟数据", QMessageBox::DestructiveRole);
             msgBox.addButton(QMessageBox::Cancel);
             msgBox.exec();
 
             if (msgBox.clickedButton() == retryBtn) {
                 continue;
-            }
-            if (msgBox.clickedButton() == mockBtn) {
-                m_config.useMockData = true;
-                QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
-                                          Qt::QueuedConnection,
-                                          Q_ARG(int, m_config.mockDataIntervalMs));
-                qInfo() << "切换到模拟数据，间隔" << m_config.mockDataIntervalMs << "ms";
-                startedReceiving = true;
-                break;
             }
 
             qInfo() << "用户取消后端连接，放弃启动数据接收";
@@ -744,7 +716,7 @@ void ApplicationController::startGrpcBackendConnectAsync(const QString& endpoint
         return;
     }
 
-    qInfo() << "开始异步连接 gRPC 后端:" << endpoint << "mock=" << m_config.useMockData;
+    qInfo() << "开始异步连接 gRPC 后端:" << endpoint;
     QMetaObject::invokeMethod(m_serialReceiver.get(), "connectBackend",
                               Qt::QueuedConnection,
                               Q_ARG(QString, endpoint));
@@ -760,7 +732,7 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
         qInfo() << "后端连接成功 grpc" << m_config.grpcEndpoint << detail;
         QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
                                   Qt::QueuedConnection,
-                                  Q_ARG(int, m_config.mockDataIntervalMs));
+                                  Q_ARG(int, 100));
         if (m_plotWindowManager) {
             m_plotWindowManager->leaveStopGuard();
             m_plotWindowManager->startUpdates();
@@ -779,24 +751,12 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
     msgBox.setText(QString("无法连接后端 %1").arg(m_config.grpcEndpoint));
     if (!detail.trimmed().isEmpty()) {
         msgBox.setInformativeText(detail);
-    } else {
-        msgBox.setInformativeText("请选择重试、使用模拟数据或取消。");
     }
     QPushButton* retryBtn = msgBox.addButton("重试", QMessageBox::AcceptRole);
-    QPushButton* mockBtn = msgBox.addButton("使用模拟数据", QMessageBox::DestructiveRole);
     msgBox.addButton(QMessageBox::Cancel);
     msgBox.exec();
 
     if (msgBox.clickedButton() == retryBtn) {
-        startGrpcBackendConnectAsync(m_config.grpcEndpoint);
-        return;
-    }
-
-    if (msgBox.clickedButton() == mockBtn) {
-        m_config.useMockData = true;
-        QMetaObject::invokeMethod(m_serialReceiver.get(), "setMockMode",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(bool, true));
         startGrpcBackendConnectAsync(m_config.grpcEndpoint);
         return;
     }
@@ -968,11 +928,10 @@ void ApplicationController::resumeAcquisition()
                               Qt::BlockingQueuedConnection,
                               Q_ARG(bool, false));
     if (m_isRunning &&
-        (m_config.useMockData ||
-         m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0)) {
+        m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0) {
         QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
                                   Qt::QueuedConnection,
-                                  Q_ARG(int, m_config.mockDataIntervalMs));
+                                  Q_ARG(int, 100));
     }
     m_isPaused = false;
     emit paused(false);
