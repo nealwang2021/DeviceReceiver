@@ -76,7 +76,7 @@ private:
     std::atomic<bool> m_connected  {false};
     std::atomic<bool> m_paused     {false};
     std::atomic<bool> m_stopStream {false};
-    std::atomic<bool> m_mockMode   {true};
+    std::atomic<bool> m_mockMode   {false};
     std::atomic<qint64> m_lastRealtimePacketMs {0};
     std::atomic<qint64> m_streamStartMs {0};
     std::atomic<qint64> m_lastFrameReceivedMs {0};
