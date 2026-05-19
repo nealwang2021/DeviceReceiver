@@ -77,6 +77,7 @@ set(SOURCE_FILES
     DataCacheManager.cpp
     SerialReceiver.cpp
     GrpcReceiverBackend.cpp
+    GrpcMultiFreqBackend.cpp
     StageReceiverBackend.cpp
     PlotWindow.cpp
     PlotWindowBase.cpp
@@ -114,6 +115,7 @@ set(HEADER_FILES
     IReceiverBackend.h
     SerialReceiver.h
     GrpcReceiverBackend.h
+    GrpcMultiFreqBackend.h
     StageReceiverBackend.h
     PlotWindow.h
     PlotWindowBase.h
@@ -124,6 +126,7 @@ set(HEADER_FILES
     InspectionPlotWindow.h
     DataProcessor.h
     ApplicationController.h
+    BackendParamDescriptor.h
     AppConfig.h
     PlotDataHub.h
     StagePoseLatch.h
@@ -273,6 +276,8 @@ if(ENABLE_GRPC)
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/device.grpc.pb.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/stage.pb.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/stage.grpc.pb.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/multifreq_eddy.pb.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/multifreq_eddy.grpc.pb.cc
             )
             
             # 链接gRPC库（Windows MSVC）
