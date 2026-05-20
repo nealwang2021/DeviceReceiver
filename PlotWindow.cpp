@@ -492,16 +492,10 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
                 });
         scaleLayout->addWidget(m_mfRawRadio);
         scaleLayout->addWidget(m_mfNormRadio);
-        scaleLayout->addStretch();
-        impLayout->addWidget(scaleRow);
-
-        // 频率勾选
-        auto* freqRow = new QWidget(impCol);
-        auto* freqRowLayout = new QHBoxLayout(freqRow);
-        freqRowLayout->setContentsMargins(0, 0, 0, 0);
-        freqRowLayout->addWidget(new QLabel(QStringLiteral("频率:"), freqRow));
-        m_mfFreqCheckArea = new QScrollArea(freqRow);
-        m_mfFreqCheckArea->setFixedHeight(32);
+        // 频率勾选并入第一行
+        scaleLayout->addWidget(new QLabel(QStringLiteral("频率:"), scaleRow));
+        m_mfFreqCheckArea = new QScrollArea(scaleRow);
+        m_mfFreqCheckArea->setFixedHeight(28);
         m_mfFreqCheckArea->setFrameShape(QFrame::NoFrame);
         m_mfFreqCheckArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         m_mfFreqCheckContainer = new QWidget();
@@ -509,15 +503,15 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfFreqCheckLayout->setContentsMargins(0, 0, 0, 0);
         m_mfFreqCheckLayout->setSpacing(4);
         m_mfFreqCheckArea->setWidget(m_mfFreqCheckContainer);
-        freqRowLayout->addWidget(m_mfFreqCheckArea, 1);
-        impLayout->addWidget(freqRow);
+        scaleLayout->addWidget(m_mfFreqCheckArea, 1);
+        impLayout->addWidget(scaleRow);
 
-        // 曲线保留时间
-        auto* retentionRow = new QWidget(impCol);
-        auto* retentionLayout = new QHBoxLayout(retentionRow);
-        retentionLayout->setContentsMargins(0, 0, 0, 0);
-        retentionLayout->addWidget(new QLabel(QStringLiteral("曲线保留:"), retentionRow));
-        m_mfRetentionSpin = new QDoubleSpinBox(retentionRow);
+        // 第二行：曲线保留 + 圆边界
+        auto* row2 = new QWidget(impCol);
+        auto* row2Layout = new QHBoxLayout(row2);
+        row2Layout->setContentsMargins(0, 0, 0, 0);
+        row2Layout->addWidget(new QLabel(QStringLiteral("曲线保留:"), row2));
+        m_mfRetentionSpin = new QDoubleSpinBox(row2);
         m_mfRetentionSpin->setRange(0.1, 60.0);
         m_mfRetentionSpin->setDecimals(1);
         m_mfRetentionSpin->setSingleStep(1.0);
@@ -529,29 +523,22 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
                     auto snap = PlotDataHub::instance()->snapshot();
                     if (snap) { updateMultiFreqPlots(snap); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); }
                 });
-        retentionLayout->addWidget(m_mfRetentionSpin);
-        retentionLayout->addStretch();
-        impLayout->addWidget(retentionRow);
-
-        // 圆边框
-        auto* circleRow = new QWidget(impCol);
-        auto* circleLayout = new QHBoxLayout(circleRow);
-        circleLayout->setContentsMargins(0, 0, 0, 0);
-        circleLayout->addWidget(new QLabel(QStringLiteral("圆边界 R:"), circleRow));
-        m_mfCircleRadiusSpin = new QDoubleSpinBox(circleRow);
+        row2Layout->addWidget(m_mfRetentionSpin);
+        row2Layout->addWidget(new QLabel(QStringLiteral("圆边界 R:"), row2));
+        m_mfCircleRadiusSpin = new QDoubleSpinBox(row2);
         m_mfCircleRadiusSpin->setRange(0, 100000);
         m_mfCircleRadiusSpin->setDecimals(1);
         m_mfCircleRadiusSpin->setSingleStep(10);
         m_mfCircleRadiusSpin->setValue(500);
         connect(m_mfCircleRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
                 this, [this](double) { updateCircleBoundary(); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); });
-        circleLayout->addWidget(m_mfCircleRadiusSpin);
-        m_mfCircleShowCheck = new QCheckBox(QStringLiteral("显示"), circleRow);
+        row2Layout->addWidget(m_mfCircleRadiusSpin);
+        m_mfCircleShowCheck = new QCheckBox(QStringLiteral("显示"), row2);
         m_mfCircleShowCheck->setChecked(false);
         connect(m_mfCircleShowCheck, &QCheckBox::toggled, this, &PlotWindow::onMfCircleToggled);
-        circleLayout->addWidget(m_mfCircleShowCheck);
-        circleLayout->addStretch();
-        impLayout->addWidget(circleRow);
+        row2Layout->addWidget(m_mfCircleShowCheck);
+        row2Layout->addStretch();
+        impLayout->addWidget(row2);
 
         // 圆边框 ellipse（默认隐藏）
         m_mfCircleItem = new QCPItemEllipse(m_mfImpedancePlot);
