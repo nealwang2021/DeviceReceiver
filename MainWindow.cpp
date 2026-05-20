@@ -1146,8 +1146,8 @@ void MainWindow::initUI()
         statusLayout->addWidget(m_alarmCountLabel);
         statusLayout->addStretch();
         
-        monitorLayout->addLayout(monitorControlLayout);
         monitorLayout->addWidget(m_dataMonitor);
+        monitorLayout->addLayout(monitorControlLayout);
         monitorLayout->addLayout(statusLayout);
 
         connect(AppLogger::instance(), &AppLogger::logRecordEmitted,
