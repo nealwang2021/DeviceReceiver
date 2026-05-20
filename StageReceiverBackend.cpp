@@ -1,7 +1,10 @@
 #include "StageReceiverBackend.h"
 #include "GrpcEndpointUtils.h"
 
+#include <QAbstractSocket>
 #include <QDateTime>
+#include <QHostAddress>
+#include <QHostInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
@@ -13,6 +16,7 @@
 
 #ifdef HAS_GRPC
 #include <chrono>
+#include <thread>
 #endif
 
 namespace {
@@ -145,15 +149,24 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
     }
 
 #ifdef HAS_GRPC
-    // 依次尝试 TLS 和明文（与 GrpcReceiverBackend 一致的回退策略）
-    const int maxPass = m_useTls ? 2 : 1;  // TLS 失败时回退到明文
-    const int connectTimeoutMs = 5000;
-    bool connected = false;
+    // ---- Real 模式：与 GrpcReceiverBackend 完全一致的连接策略 ----
+    const int connectTimeoutMs = 6000;
 
-    for (int pass = 0; pass < maxPass; ++pass) {
+    // extract host/port from parsed endpoint for DNS fallback
+    QString parsedHost;
+    int parsedPort = 0;
+    {
+        QString unused;
+        GrpcEndpointUtils::parseChannelEndpoint(endpoint, &unused, nullptr, &parsedHost, &parsedPort);
+    }
+
+    auto tryConnect = [this, connectTimeoutMs](const QString& target, bool tls,
+                                               const QString& tlsOverrideHost,
+                                               QString* errorOut) -> bool {
+        if (errorOut) errorOut->clear();
+
         std::shared_ptr<grpc::ChannelCredentials> creds;
-        const bool tryTls = (pass == 0 && m_useTls);
-        if (tryTls) {
+        if (tls) {
             creds = grpc::SslCredentials(grpc::SslCredentialsOptions());
         } else {
             creds = grpc::InsecureChannelCredentials();
@@ -161,22 +174,89 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
 
         grpc::ChannelArguments args;
         args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
+        if (tls && !tlsOverrideHost.trimmed().isEmpty()) {
+            args.SetSslTargetNameOverride(tlsOverrideHost.toStdString());
+        }
 
-        m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), creds, args);
-        if (!m_channel) continue;
+        m_channel = grpc::CreateCustomChannel(target.toStdString(), creds, args);
+        if (!m_channel) {
+            if (errorOut) *errorOut = QStringLiteral("CreateChannel failed");
+            return false;
+        }
 
-        const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(connectTimeoutMs);
-        if (m_channel->WaitForConnected(deadline)) {
-            connected = true;
-            m_useTls = tryTls;  // 记录实际使用的模式
-            break;
+        constexpr int kPollMs = 100;
+        int waited = 0;
+        grpc_connectivity_state lastState = m_channel->GetState(true);
+        while (waited < connectTimeoutMs) {
+            lastState = m_channel->GetState(true);
+            if (lastState == GRPC_CHANNEL_READY) return true;
+            const int slice = qMin(kPollMs, connectTimeoutMs - waited);
+            std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+            waited += slice;
+        }
+        if (errorOut) {
+            *errorOut = QStringLiteral("WaitForConnected timeout, state=%1").arg(static_cast<int>(lastState));
         }
         m_channel.reset();
+        return false;
+    };
+
+    // Attempt order: TLS first, then insecure
+    struct Attempt { bool tls; QString label; };
+    QVector<Attempt> ordered;
+    ordered.append({m_useTls, m_useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")});
+    ordered.append({!m_useTls, !m_useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")});
+    // dedup
+    QVector<Attempt> deduped;
+    for (const auto& a : ordered) {
+        bool dup = false;
+        for (const auto& b : deduped) { if (a.tls == b.tls) { dup = true; break; } }
+        if (!dup) deduped.append(a);
+    }
+
+    bool connected = false;
+    QStringList failures;
+    for (const auto& attempt : deduped) {
+        QString reason;
+        qInfo() << "[Stage] 尝试连接:" << attempt.label << m_endpoint;
+        if (tryConnect(m_endpoint, attempt.tls, QString(), &reason)) {
+            connected = true;
+            m_useTls = attempt.tls;
+            break;
+        }
+        failures << QStringLiteral("%1 -> %2").arg(attempt.label, reason);
+    }
+
+    // DNS 解析 → 逐个 IPv4 地址重试（ngrok 等域名需要此步骤）
+    QHostAddress testAddr;
+    const bool isLiteralIp = testAddr.setAddress(parsedHost);
+    if (!connected && !parsedHost.trimmed().isEmpty() && !isLiteralIp) {
+        const QHostInfo hostInfo = QHostInfo::fromName(parsedHost);
+        if (hostInfo.error() == QHostInfo::NoError) {
+            for (const QHostAddress& addr : hostInfo.addresses()) {
+                if (addr.protocol() != QAbstractSocket::IPv4Protocol) continue;
+                const QString ipTarget = QStringLiteral("%1:%2").arg(addr.toString()).arg(parsedPort);
+                for (const auto& attempt : deduped) {
+                    QString reason;
+                    const QString label = QStringLiteral("%1/ip=%2").arg(attempt.label, addr.toString());
+                    qInfo() << "[Stage] 尝试连接:" << label << ipTarget;
+                    if (tryConnect(ipTarget, attempt.tls,
+                                   attempt.tls ? parsedHost : QString(), &reason)) {
+                        connected = true;
+                        m_useTls = attempt.tls;
+                        m_endpoint = ipTarget;
+                        break;
+                    }
+                    failures << QStringLiteral("%1 -> %2").arg(label, reason);
+                }
+                if (connected) break;
+            }
+        }
     }
 
     if (!connected) {
-        emit commandError(QStringLiteral("Stage gRPC 连接超时: %1 (尝试了 TLS+明文)")
-                              .arg(m_endpoint));
+        emit commandError(QStringLiteral("Stage gRPC 连接失败: %1 (尝试: %2)")
+                              .arg(m_endpoint, failures.join(QStringLiteral(" | "))));
         return false;
     }
 
@@ -188,6 +268,7 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
     }
 
     setConnected(true);
+    qInfo() << "[Stage] 已连接:" << m_endpoint;
     emitBackendStatus(
         QStringLiteral("connected"),
         QStringLiteral("已连接 StageService（grpc=%1, stage=%2:%3）")
