@@ -5,6 +5,26 @@
 #include <QVector>
 #include <QMetaType>
 
+/// 多频涡流单频点检测结果（对应 multifreq_eddy.proto FrequencyPointResult）
+struct MultiFreqPointResult
+{
+    int     frequencyFactor = 0;
+    double  frequencyHz = 0.0;
+    double  voltageReal = 0.0;
+    double  voltageImag = 0.0;
+    double  currentReal = 0.0;
+    double  currentImag = 0.0;
+    double  impedanceReal_raw = 0.0;
+    double  impedanceImag_raw = 0.0;
+    double  impedanceMagnitude = 0.0;
+    double  impedancePhaseDeg = 0.0;
+    double  normalizedImpedanceReal = 0.0;
+    double  normalizedImpedanceImag = 0.0;
+    double  voltageMagnitude = 0.0;
+    double  currentMagnitude = 0.0;
+    bool    valid = false;
+};
+
 // 实时数据帧结构体（与硬件协议对应）
 struct FrameData
 {
@@ -17,7 +37,8 @@ struct FrameData
     enum DetectionMode : uint8_t {
         Legacy = 0,
         MultiChannelReal = 1,    // 多通道实数（如漏磁模式）
-        MultiChannelComplex = 2  // 多通道复数（如涡流模式）
+        MultiChannelComplex = 2, // 多通道复数（如涡流模式）
+        MultiFreqEddy = 3        // 多频涡流（频点阻抗）
     } detectMode;
 
     // 通道数
@@ -50,6 +71,9 @@ struct FrameData
     int stageYPulse = 0;           // Y 轴 pulse
     int stageZPulse = 0;           // Z 轴 pulse
 
+    // 多频涡流：每帧 N 个频点的阻抗检测结果
+    QVector<MultiFreqPointResult> mfFreqPoints;
+
     FrameData() :
         timestamp(0),
         sequence(0),
@@ -71,7 +95,8 @@ struct FrameData
         stageZMm(0.0),
         stageXPulse(0),
         stageYPulse(0),
-        stageZPulse(0)
+        stageZPulse(0),
+        mfFreqPoints()
     {
     }
 };

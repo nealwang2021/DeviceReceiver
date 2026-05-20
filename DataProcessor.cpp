@@ -66,6 +66,20 @@ void DataProcessor::calcStats()
                 channelVal = std::hypot(re, im);
                 hasValidValue = std::isfinite(channelVal);
             }
+        } else if (frame.detectMode == FrameData::MultiFreqEddy) {
+            // MultiFreq 模式：取所有有效频点阻抗幅值的均值
+            double sumMag = 0.0;
+            int validPts = 0;
+            for (const auto& pt : frame.mfFreqPoints) {
+                if (pt.valid && std::isfinite(pt.impedanceMagnitude)) {
+                    sumMag += pt.impedanceMagnitude;
+                    validPts++;
+                }
+            }
+            if (validPts > 0) {
+                channelVal = sumMag / validPts;
+                hasValidValue = true;
+            }
         }
 
         if (!hasValidValue) {
