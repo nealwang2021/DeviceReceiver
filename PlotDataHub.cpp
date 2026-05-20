@@ -67,10 +67,61 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
     reserveMatrixTail(next->complexImag, frames.size());
     reserveMatrixTail(next->complexMag, frames.size());
     reserveMatrixTail(next->complexPhase, frames.size());
+    reserveMatrixTail(next->mfImpedanceReal, frames.size());
+    reserveMatrixTail(next->mfImpedanceImag, frames.size());
+    reserveMatrixTail(next->mfImpedanceMag, frames.size());
+    reserveMatrixTail(next->mfImpedancePhase, frames.size());
+    reserveMatrixTail(next->mfNormImpedanceReal, frames.size());
+    reserveMatrixTail(next->mfNormImpedanceImag, frames.size());
 
     for (const FrameData& frame : frames) {
         if (frame.detectMode == FrameData::Legacy) {
             continue;
+        }
+
+        if (frame.detectMode == FrameData::MultiFreqEddy) {
+            const int nPoints = frame.mfFreqPoints.size();
+            if (nPoints <= 0) {
+                continue;
+            }
+            const bool modeChanged = (next->mode != FrameData::MultiFreqEddy);
+            const bool freqCountChanged = (next->mfFreqPointCount != nPoints);
+            if (modeChanged || freqCountChanged || next->timeMs.isEmpty()) {
+                next->mode = FrameData::MultiFreqEddy;
+                next->channelCount = 0;
+                next->mfFreqPointCount = nPoints;
+                next->timeMs.clear();
+                next->mfFreqFactors.resize(nPoints);
+                next->mfFreqHz.resize(nPoints);
+                next->mfImpedanceReal.resize(nPoints);
+                next->mfImpedanceImag.resize(nPoints);
+                next->mfImpedanceMag.resize(nPoints);
+                next->mfImpedancePhase.resize(nPoints);
+                next->mfNormImpedanceReal.resize(nPoints);
+                next->mfNormImpedanceImag.resize(nPoints);
+                reserveMatrixTail(next->mfImpedanceReal, frames.size());
+                reserveMatrixTail(next->mfImpedanceImag, frames.size());
+                reserveMatrixTail(next->mfImpedanceMag, frames.size());
+                reserveMatrixTail(next->mfImpedancePhase, frames.size());
+                reserveMatrixTail(next->mfNormImpedanceReal, frames.size());
+                reserveMatrixTail(next->mfNormImpedanceImag, frames.size());
+            }
+
+            const double t = static_cast<double>(frame.timestamp);
+            next->timeMs.append(t);
+
+            for (int i = 0; i < nPoints; ++i) {
+                const MultiFreqPointResult& pt = frame.mfFreqPoints[i];
+                next->mfFreqFactors[i] = pt.frequencyFactor;
+                next->mfFreqHz[i] = pt.frequencyHz;
+                next->mfImpedanceReal[i].append(pt.impedanceReal_raw);
+                next->mfImpedanceImag[i].append(pt.impedanceImag_raw);
+                next->mfImpedanceMag[i].append(pt.impedanceMagnitude);
+                next->mfImpedancePhase[i].append(pt.impedancePhaseDeg);
+                next->mfNormImpedanceReal[i].append(pt.normalizedImpedanceReal);
+                next->mfNormImpedanceImag[i].append(pt.normalizedImpedanceImag);
+            }
+            continue; // MultiFreqEddy handled, skip per-channel logic below
         }
 
         const int ch = qBound(0, static_cast<int>(frame.channelCount), 200);
@@ -91,6 +142,16 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
             next->complexPhase.clear();
             next->rowDisplayIndex.clear();
             next->rowSourceChannel.clear();
+            next->mfFreqPointCount = 0;
+            next->mfFreqFactors.clear();
+            next->mfFreqHz.clear();
+            next->mfImpedanceReal.clear();
+            next->mfImpedanceImag.clear();
+            next->mfImpedanceMag.clear();
+            next->mfImpedancePhase.clear();
+            next->mfNormImpedanceReal.clear();
+            next->mfNormImpedanceImag.clear();
+            next->mfImpedancePhase.clear();
 
             if (frame.detectMode == FrameData::MultiChannelReal) {
                 next->realAmp.resize(ch);
@@ -155,6 +216,12 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
     trimFrontMatrix(next->complexImag, m_maxPoints);
     trimFrontMatrix(next->complexMag, m_maxPoints);
     trimFrontMatrix(next->complexPhase, m_maxPoints);
+    trimFrontMatrix(next->mfImpedanceReal, m_maxPoints);
+    trimFrontMatrix(next->mfImpedanceImag, m_maxPoints);
+    trimFrontMatrix(next->mfImpedanceMag, m_maxPoints);
+    trimFrontMatrix(next->mfImpedancePhase, m_maxPoints);
+    trimFrontMatrix(next->mfNormImpedanceReal, m_maxPoints);
+    trimFrontMatrix(next->mfNormImpedanceImag, m_maxPoints);
 
     next->version += 1;
     m_snapshot = next;

@@ -25,6 +25,17 @@ struct PlotSnapshot
     // Optional row identity metadata for UI labels.
     QVector<int> rowDisplayIndex;
     QVector<int> rowSourceChannel;
+
+    // MultiFreq mode data — one row per frequency point, one column per time step.
+    int mfFreqPointCount = 0;
+    QVector<int> mfFreqFactors;
+    QVector<double> mfFreqHz;
+    QVector<QVector<double>> mfImpedanceReal;
+    QVector<QVector<double>> mfImpedanceImag;
+    QVector<QVector<double>> mfImpedanceMag;
+    QVector<QVector<double>> mfImpedancePhase;
+    QVector<QVector<double>> mfNormImpedanceReal;
+    QVector<QVector<double>> mfNormImpedanceImag;
 };
 
 class PlotDataHub
