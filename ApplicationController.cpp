@@ -701,6 +701,8 @@ void ApplicationController::connectReceiverToMainWindow()
                      m_mainWindow.get(), &MainWindow::onCommandError, Qt::QueuedConnection);
     QObject::connect(m_serialReceiver.get(), &IReceiverBackend::connectionStateChanged,
                      m_mainWindow.get(), &MainWindow::updateConnectionStatus, Qt::QueuedConnection);
+    QObject::connect(m_serialReceiver.get(), &IReceiverBackend::backendStatusChanged,
+                     m_mainWindow.get(), &MainWindow::onBackendStatusChanged, Qt::QueuedConnection);
 }
 
 void ApplicationController::startGrpcBackendConnectAsync(const QString& endpoint)

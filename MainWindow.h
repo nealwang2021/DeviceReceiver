@@ -264,9 +264,12 @@ private:
 
     // 动态参数与设备状态
     void rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& params);
-    void onBackendStatusChanged(const QJsonObject& status);
     QVariant configValue(const QString& key, const QVariant& fallback) const;
     void setConfigValue(const QString& key, const QVariant& value);
+
+public:
+    /// 接收后端的 backendStatusChanged 信号
+    void onBackendStatusChanged(const QJsonObject& status);
 
     /**
      * @brief 获取默认样式

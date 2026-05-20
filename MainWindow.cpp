@@ -5,8 +5,11 @@
 #include "AppConfig.h"
 #include "AppLogger.h"
 #include "SerialReceiver.h"
+#include "GrpcReceiverBackend.h"
+#include "GrpcMultiFreqBackend.h"
 #include "DataCacheManager.h"
 #include "HistoryOverviewWindow.h"
+#include <QSettings>
 
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -207,55 +210,20 @@ void MainWindow::updateConnectionStatus(bool connected)
 {
     m_isConnected = connected;
     m_connectionInProgress = false;
-    
+
     if (connected) {
         m_connectionStatusLabel->setText("已连接");
         m_connectionStatusLabel->setStyleSheet("color: green;");
         m_connectButton->setEnabled(false);
         m_disconnectButton->setEnabled(true);
-        m_pauseButton->setEnabled(true);
-        m_resumeButton->setEnabled(false);
     } else {
         m_connectionStatusLabel->setText("未连接");
         m_connectionStatusLabel->setStyleSheet("color: red;");
         m_connectButton->setEnabled(true);
         m_disconnectButton->setEnabled(false);
-        m_pauseButton->setEnabled(false);
-        m_resumeButton->setEnabled(false);
-
-        const bool interruptedSelfTest = m_grpcSelfTestPending;
-        m_autoSelfTestTriggeredForConnection = false;
-        if (m_grpcSelfTestPending) {
-            m_grpcSelfTestPending = false;
-            m_grpcSelfTestTimeoutTimer->stop();
-        }
-        m_grpcSelfTestCommandAcked = false;
-        m_grpcSelfTestModeSwitchAcked = false;
-        m_grpcSelfTestStreamReceived = false;
-        m_grpcSelfTestPendingAcks.clear();
-        m_grpcSelfTestTargetMode.clear();
-        resetGrpcSelfTestLabelStates();
-        if (interruptedSelfTest) {
-            setGrpcLabelState(m_grpcSelfTestOverallState, QStringLiteral("连接断开"), GrpcLabelTone::Error);
-        }
-        m_grpcPeriodicPacketCount = 0;
-        m_grpcPeriodicIntervalSumMs = 0;
-        m_lastGrpcStreamPayloadTimestampMs = 0;
-        m_lastGrpcStreamTimestampMs = 0;
     }
-
-    const bool isGrpcBackend = (m_backendTypeCombo &&
-                                m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isGrpcRealMode = (isGrpcBackend && m_useMockDataCheck && !m_useMockDataCheck->isChecked());
-
-    if (isGrpcBackend) {
-        logGrpcInteraction("connect-state", connected ? "客户端状态: 已连接" : "客户端状态: 已断开");
-    }
-
-    // 当前 device.proto 协议未提供通用 SendCommand，自动 selftest 会产生误导性错误日志，默认关闭。
 
     updateStagePanelUiState();
-    updateGrpcTestUiState();
 }
 
 void MainWindow::onConnectionProgressChanged(bool inProgress)
@@ -272,28 +240,10 @@ void MainWindow::onConnectionProgressChanged(bool inProgress)
     m_connectionStatusLabel->setStyleSheet(QStringLiteral("color: #d97706;"));
     m_connectButton->setEnabled(false);
     m_disconnectButton->setEnabled(false);
-    m_pauseButton->setEnabled(false);
-    m_resumeButton->setEnabled(false);
-    updateGrpcTestUiState();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-#ifndef QT_COMPILE_FOR_WASM
-    if (m_grpcTestServerProcess && m_grpcTestServerProcess->state() != QProcess::NotRunning) {
-        m_grpcTestServerLaunchInProgress = false;
-        m_grpcTestServerStopRequested = true;
-        m_grpcTestServerLaunchQueue.clear();
-        m_grpcTestServerStartErrors.clear();
-        m_grpcTestServerCurrentDisplayName.clear();
-        if (m_grpcTestServerStartTimeoutTimer) {
-            m_grpcTestServerStartTimeoutTimer->stop();
-        }
-        m_grpcTestServerProcess->terminate();
-        m_grpcTestServerProcess->kill();
-    }
-#endif
-
     // 保存界面配置、面板可见性和窗口状态
     saveConfigFromUI();
 
@@ -552,165 +502,57 @@ void MainWindow::initUI()
         addSerialOnlyRow("校验位:", m_parityCombo);
         addSerialOnlyRow("流控制:", m_flowControlCombo);
         
-        // 模拟数据组
-        QGroupBox* mockGroup = new QGroupBox("模拟数据");
-        QVBoxLayout* mockLayout = new QVBoxLayout(mockGroup);
-        
-        m_useMockDataCheck = new QCheckBox("启用模拟数据");
-        QHBoxLayout* intervalLayout = new QHBoxLayout();
-        intervalLayout->addWidget(new QLabel("间隔(ms):"));
-        m_mockIntervalSpin = new QSpinBox();
-        m_mockIntervalSpin->setRange(10, 5000);
-        m_mockIntervalSpin->setValue(100);
-        intervalLayout->addWidget(m_mockIntervalSpin);
-        intervalLayout->addStretch();
-        
-        mockLayout->addWidget(m_useMockDataCheck);
-        mockLayout->addLayout(intervalLayout);
-
-        // ---- 多频涡流参数组（仅 multifreq-grpc 可见）----
-        m_multifreqGroupBox = new QGroupBox(QStringLiteral("多频涡流参数"));
-        QFormLayout* mfLayout = new QFormLayout(m_multifreqGroupBox);
-
-        m_mfBaseFreqCombo = new QComboBox();
-        m_mfBaseFreqCombo->addItems({"1", "2", "5", "10", "20", "50", "100", "200", "500", "1000"});
-        m_mfBaseFreqCombo->setCurrentText("100");
-        mfLayout->addRow(QStringLiteral("基频(Hz):"), m_mfBaseFreqCombo);
-
-        m_mfAvgCycleSpin = new QSpinBox();
-        m_mfAvgCycleSpin->setRange(1, 1000);
-        m_mfAvgCycleSpin->setValue(10);
-        mfLayout->addRow(QStringLiteral("平均周期数:"), m_mfAvgCycleSpin);
-
-        m_mfNormScaleSpin = new QDoubleSpinBox();
-        m_mfNormScaleSpin->setRange(0.01, 100.0);
-        m_mfNormScaleSpin->setDecimals(4);
-        m_mfNormScaleSpin->setValue(1.0);
-        m_mfNormScaleSpin->setSingleStep(0.1);
-        mfLayout->addRow(QStringLiteral("归一化系数:"), m_mfNormScaleSpin);
-
-        m_mfFreqFactorsEdit = new QLineEdit();
-        m_mfFreqFactorsEdit->setText("1,2,4,8");
-        m_mfFreqFactorsEdit->setPlaceholderText(QStringLiteral("逗号分隔整数，如 1,2,4,8"));
-        mfLayout->addRow(QStringLiteral("倍频系数:"), m_mfFreqFactorsEdit);
-
-        m_multifreqGroupBox->setVisible(false);
-        deviceLayout->addWidget(m_multifreqGroupBox);
+        // (mockGroup and multi-freq group removed — replaced by dynamic gRPC param UI)
 
         // 控制按钮组
         QGroupBox* controlGroup = new QGroupBox(QStringLiteral("被测设备采集"));
         controlGroup->setToolTip(QStringLiteral("启动/停止的是被测设备主数据通道（串口或 gRPC）；三轴台为独立连接"));
         QVBoxLayout* controlLayout = new QVBoxLayout(controlGroup);
-        QHBoxLayout* controlRow1Layout = new QHBoxLayout();
-        QHBoxLayout* controlRow2Layout = new QHBoxLayout();
+        QHBoxLayout* controlRowLayout = new QHBoxLayout();
         QHBoxLayout* controlStatusLayout = new QHBoxLayout();
-        
+
         m_connectButton = new QPushButton("连接");
         m_disconnectButton = new QPushButton("断开");
-        m_pauseButton = new QPushButton("暂停采集");
-        m_resumeButton = new QPushButton("恢复采集");
         m_disconnectButton->setEnabled(false);
-        m_pauseButton->setEnabled(false);
-        m_resumeButton->setEnabled(false);
         m_connectionStatusLabel = new QLabel("未连接");
         m_connectionStatusLabel->setStyleSheet("color: red;");
 
-        for (QPushButton* button : {m_connectButton, m_disconnectButton, m_pauseButton, m_resumeButton}) {
+        for (QPushButton* button : {m_connectButton, m_disconnectButton}) {
             button->setMinimumWidth(0);
             button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         }
 
-        controlRow1Layout->addWidget(m_connectButton);
-        controlRow1Layout->addWidget(m_disconnectButton);
-        controlRow1Layout->addWidget(m_pauseButton);
-
-        controlRow2Layout->addWidget(m_resumeButton);
-        controlRow2Layout->addStretch();
+        controlRowLayout->addWidget(m_connectButton);
+        controlRowLayout->addWidget(m_disconnectButton);
+        controlRowLayout->addStretch();
 
         controlStatusLayout->addWidget(m_connectionStatusLabel);
         controlStatusLayout->addStretch();
-        
-        controlLayout->addLayout(controlRow1Layout);
-        controlLayout->addLayout(controlRow2Layout);
+
+        controlLayout->addLayout(controlRowLayout);
         controlLayout->addLayout(controlStatusLayout);
 
-        QGroupBox* grpcTestGroup = new QGroupBox(QStringLiteral("被测设备 gRPC 测试验证"));
-        m_grpcTestGroup = grpcTestGroup;
-        QVBoxLayout* grpcTestLayout = new QVBoxLayout(grpcTestGroup);
+        // gRPC 参数组（动态生成，后端驱动）
+        m_grpcParamGroup = new QGroupBox(QStringLiteral("gRPC 参数"));
+        m_grpcParamLayout = new QFormLayout(m_grpcParamGroup);
+        m_grpcParamGroup->setVisible(false);
 
-        QHBoxLayout* grpcServiceLayout = new QHBoxLayout();
-        grpcServiceLayout->addWidget(new QLabel("测试服务:"));
-        m_grpcTestServiceStatusLabel = new QLabel("未启动");
-        m_grpcTestServiceStatusLabel->setStyleSheet("color: gray;");
-        grpcServiceLayout->addWidget(m_grpcTestServiceStatusLabel);
-        grpcServiceLayout->addStretch();
+        // 设备状态组
+        m_deviceStatusGroup = new QGroupBox(QStringLiteral("设备状态"));
+        m_deviceStatusLayout = new QVBoxLayout(m_deviceStatusGroup);
+        m_deviceStatusDeviceLabel = new QLabel(QStringLiteral("未连接"));
+        m_deviceStatusStateLabel = new QLabel();
+        m_deviceStatusEndpointLabel = new QLabel();
+        m_deviceStatusDetailsLabel = new QLabel();
+        m_deviceStatusLayout->addWidget(m_deviceStatusDeviceLabel);
+        m_deviceStatusLayout->addWidget(m_deviceStatusStateLabel);
+        m_deviceStatusLayout->addWidget(m_deviceStatusEndpointLabel);
+        m_deviceStatusLayout->addWidget(m_deviceStatusDetailsLabel);
 
-        QHBoxLayout* grpcSelfTestLayout = new QHBoxLayout();
-        grpcSelfTestLayout->addWidget(new QLabel("收发自检:"));
-        m_grpcSelfTestStatusLabel = new QLabel("未执行");
-        grpcSelfTestLayout->addWidget(m_grpcSelfTestStatusLabel);
-        grpcSelfTestLayout->addStretch();
-
-        QHBoxLayout* grpcResultLayout = new QHBoxLayout();
-        m_grpcSelfTestTxStatusLabel = new QLabel("发送(Ping): 待验证");
-        m_grpcSelfTestRxStatusLabel = new QLabel("接收(流数据): 待验证");
-        grpcResultLayout->addWidget(m_grpcSelfTestTxStatusLabel);
-        grpcResultLayout->addWidget(m_grpcSelfTestRxStatusLabel);
-        grpcResultLayout->addStretch();
-
-        QHBoxLayout* grpcModeLayout = new QHBoxLayout();
-        grpcModeLayout->addWidget(new QLabel("目标模式:"));
-        m_grpcModeCombo = new QComboBox();
-        m_grpcModeCombo->addItem("complex (复数)", "complex");
-        m_grpcModeCombo->addItem("real (幅值/相位)", "real");
-        m_grpcModeCombo->addItem("legacy (旧模式)", "legacy");
-        grpcModeLayout->addWidget(m_grpcModeCombo);
-        grpcModeLayout->addStretch();
-
-        QHBoxLayout* grpcModeStatusLayout = new QHBoxLayout();
-        grpcModeStatusLayout->addWidget(new QLabel("模式切换:"));
-        m_grpcModeSwitchStatusLabel = new QLabel("待验证");
-        grpcModeStatusLayout->addWidget(m_grpcModeSwitchStatusLabel);
-        grpcModeStatusLayout->addStretch();
-
-        QHBoxLayout* grpcPeriodicLayout = new QHBoxLayout();
-        grpcPeriodicLayout->addWidget(new QLabel("周期数据:"));
-        m_grpcPeriodicDataStatusLabel = new QLabel("待验证");
-        grpcPeriodicLayout->addWidget(m_grpcPeriodicDataStatusLabel);
-        grpcPeriodicLayout->addStretch();
-
-        resetGrpcSelfTestLabelStates();
-        applyGrpcSelfTestLabelStates();
-
-        QHBoxLayout* grpcActionLayout = new QHBoxLayout();
-        m_startGrpcTestServerButton = new QPushButton("启动测试服务");
-        m_stopGrpcTestServerButton = new QPushButton("停止测试服务");
-        m_runGrpcSelfTestButton = new QPushButton("立即自检");
-        m_stopGrpcTestServerButton->setEnabled(false);
-        m_runGrpcSelfTestButton->setEnabled(false);
-        grpcActionLayout->addWidget(m_startGrpcTestServerButton);
-        grpcActionLayout->addWidget(m_stopGrpcTestServerButton);
-        grpcActionLayout->addWidget(m_runGrpcSelfTestButton);
-        grpcActionLayout->addStretch();
-
-    #ifdef QT_COMPILE_FOR_WASM
-        m_startGrpcTestServerButton->setEnabled(false);
-        m_stopGrpcTestServerButton->setEnabled(false);
-        m_grpcTestServiceStatusLabel->setText("WASM 不支持本地服务");
-    #endif
-
-        grpcTestLayout->addLayout(grpcServiceLayout);
-        grpcTestLayout->addLayout(grpcSelfTestLayout);
-        grpcTestLayout->addLayout(grpcResultLayout);
-        grpcTestLayout->addLayout(grpcModeLayout);
-        grpcTestLayout->addLayout(grpcModeStatusLayout);
-        grpcTestLayout->addLayout(grpcPeriodicLayout);
-        grpcTestLayout->addLayout(grpcActionLayout);
-        
         deviceLayout->addWidget(serialGroup);
-        deviceLayout->addWidget(mockGroup);
+        deviceLayout->addWidget(m_grpcParamGroup);
         deviceLayout->addWidget(controlGroup);
-        deviceLayout->addWidget(grpcTestGroup);
+        deviceLayout->addWidget(m_deviceStatusGroup);
         // 与「三轴台测试装置」一致：停靠条内用纵向滚动条承载内容。
         // 须限制 QScrollArea 最大高度：否则其 minimumSizeHint 会随子控件总高度变大，主窗口最小尺寸被撑出屏幕（看起来像「滚动未生效」）。
         auto* deviceScroll = new QScrollArea();
@@ -1405,10 +1247,7 @@ void MainWindow::initConnections()
     // 设备控制信号槽
     connect(m_connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_disconnectButton, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
-    connect(m_pauseButton, &QPushButton::clicked, this, &MainWindow::onPauseClicked);
-    connect(m_resumeButton, &QPushButton::clicked, this, &MainWindow::onResumeClicked);
-    connect(m_useMockDataCheck, &QCheckBox::toggled, this, &MainWindow::onUseMockDataChanged);
-        connect(m_backendTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(m_backendTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onBackendTypeChanged);
 
     connect(m_stageApplyEndpointButton, &QPushButton::clicked, this, [this]() {
@@ -1752,24 +1591,18 @@ void MainWindow::loadConfigToUI()
     }
 
     m_baudRateCombo->setCurrentText(QString::number(config->baudRate()));
-    
-    // 加载模拟数据配置
-    m_useMockDataCheck->setChecked(false);
-    m_mockIntervalSpin->setValue(100);
 
-    // 加载多频涡流配置
-    {
-        const int baseHz = config->multiFreqBaseFrequencyHz();
-        const int bfIdx = m_mfBaseFreqCombo->findText(QString::number(baseHz));
-        if (bfIdx >= 0) m_mfBaseFreqCombo->setCurrentIndex(bfIdx);
-    }
-    m_mfAvgCycleSpin->setValue(config->multiFreqAverageCycleCount());
-    m_mfNormScaleSpin->setValue(config->multiFreqNormalizeScale());
-    {
-        const QList<int> factors = config->multiFreqFrequencyFactors();
-        QStringList parts;
-        for (int f : factors) { parts.append(QString::number(f)); }
-        m_mfFreqFactorsEdit->setText(parts.join(','));
+    // 加载动态参数配置
+    for (int i = 0; i < m_currentBackendParams.size() && i < m_grpcParamWidgets.size(); ++i) {
+        const auto& p = m_currentBackendParams[i];
+        QWidget* w = m_grpcParamWidgets[i];
+        QVariant val = configValue(p.key, p.defaultValue);
+        switch (p.type) {
+        case ParamInt: if (auto* s = qobject_cast<QSpinBox*>(w)) s->setValue(val.toInt()); break;
+        case ParamDouble: if (auto* s = qobject_cast<QDoubleSpinBox*>(w)) s->setValue(val.toDouble()); break;
+        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) c->setCurrentText(val.toString()); break;
+        case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) e->setText(val.toString()); break;
+        }
     }
 
     // 加载发送配置
@@ -1820,22 +1653,16 @@ void MainWindow::saveConfigFromUI()
     }
 
     config->setBaudRate(m_baudRateCombo->currentText().toInt());
-    
-    // 保存模拟数据配置
-    // 保存多频涡流配置
-    config->setMultiFreqBaseFrequencyHz(m_mfBaseFreqCombo->currentText().toInt());
-    config->setMultiFreqAverageCycleCount(m_mfAvgCycleSpin->value());
-    config->setMultiFreqNormalizeScale(m_mfNormScaleSpin->value());
-    {
-        const QStringList parts = m_mfFreqFactorsEdit->text().split(',', Qt::SkipEmptyParts);
-        QList<int> factors;
-        for (const QString& p : parts) {
-            bool ok = false;
-            int f = p.trimmed().toInt(&ok);
-            if (ok && f > 0) factors.append(f);
-        }
-        if (!factors.isEmpty()) {
-            config->setMultiFreqFrequencyFactors(factors);
+
+    // 保存动态参数配置
+    for (int i = 0; i < m_currentBackendParams.size() && i < m_grpcParamWidgets.size(); ++i) {
+        const auto& p = m_currentBackendParams[i];
+        QWidget* w = m_grpcParamWidgets[i];
+        switch (p.type) {
+        case ParamInt: setConfigValue(p.key, qobject_cast<QSpinBox*>(w)->value()); break;
+        case ParamDouble: setConfigValue(p.key, qobject_cast<QDoubleSpinBox*>(w)->value()); break;
+        case ParamEnum: setConfigValue(p.key, qobject_cast<QComboBox*>(w)->currentText().toInt()); break;
+        case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) setConfigValue(p.key, e->text()); break;
         }
     }
 
@@ -2960,20 +2787,13 @@ void MainWindow::onConnectClicked()
         if (m_connectionInProgress) {
             return;
         }
-        const bool isGrpcBackend = (m_backendTypeCombo &&
-                                    m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-        if (isGrpcBackend) {
-            logGrpcInteraction("connect", QString("点击连接，endpoint=%1 mock=%2")
-                                             .arg(m_grpcEndpointEdit->text().trimmed(),
-                                                  m_useMockDataCheck->isChecked() ? "true" : "false"));
-        }
         saveConfigFromUI();
         AppConfig* config = AppConfig::instance();
         if (config) {
             config->saveToFile(AppConfig::defaultConfigFilePath());
         }
         m_appController->reloadRuntimeConfig();
-        onConnectionProgressChanged(isGrpcBackend);
+        onConnectionProgressChanged(true);
         m_appController->start();
     }
 }
@@ -2981,11 +2801,6 @@ void MainWindow::onConnectClicked()
 void MainWindow::onDisconnectClicked()
 {
     if (m_appController) {
-        const bool isGrpcBackend = (m_backendTypeCombo &&
-                                    m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-        if (isGrpcBackend) {
-            logGrpcInteraction("connect", "点击断开");
-        }
         m_appController->stopWithReason(QStringLiteral("ui_disconnect_click"));
         updateConnectionStatus(false);
     }
@@ -3031,63 +2846,143 @@ void MainWindow::onBackendTypeChanged(int index)
     const bool isMultiFreq = (backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
     const bool isGrpcLike = isGrpc || isMultiFreq;
 
-    if (isGrpcLike) {
-        m_useMockDataCheck->setText(QStringLiteral("被测设备 gRPC 本地模拟"));
-    } else {
-        m_useMockDataCheck->setText(QStringLiteral("启用模拟数据"));
-    }
-
     m_grpcEndpointEdit->setEnabled(isGrpcLike);
 
     for (QWidget* field : m_serialOnlyFields) {
-        if (!field) {
-            continue;
-        }
-        field->setVisible(!isGrpcLike);
-        field->setEnabled(!isGrpcLike);
+        if (field) { field->setVisible(!isGrpcLike); field->setEnabled(!isGrpcLike); }
     }
     for (QWidget* label : m_serialOnlyLabels) {
-        if (!label) {
-            continue;
-        }
-        label->setVisible(!isGrpcLike);
+        if (label) label->setVisible(!isGrpcLike);
     }
+    if (!isGrpcLike) updateSerialPortList();
 
-    if (m_multifreqGroupBox) {
-        m_multifreqGroupBox->setVisible(isMultiFreq);
+    // Rebuild gRPC params from backend descriptors
+    QVector<BackendParamDescriptor> params;
+    if (isGrpc) {
+        GrpcReceiverBackend tmp;
+        params = tmp.configParameters();
+    } else if (isMultiFreq) {
+        GrpcMultiFreqBackend tmp;
+        params = tmp.configParameters();
     }
-
-    if (m_grpcTestGroup) {
-        m_grpcTestGroup->setVisible(isGrpc);  // 仅阵列涡流 gRPC 显示自检面板
-    }
-
-    if (!isGrpcLike) {
-        updateSerialPortList();
-    }
-
-    m_grpcSelfTestPending = false;
-    m_grpcSelfTestTimeoutTimer->stop();
-    m_grpcSelfTestPendingAcks.clear();
-    m_grpcSelfTestCommandAcked = false;
-    m_grpcSelfTestModeSwitchAcked = false;
-    m_grpcSelfTestStreamReceived = false;
-    m_grpcPeriodicPacketCount = 0;
-    m_grpcPeriodicIntervalSumMs = 0;
-    m_lastGrpcStreamPayloadTimestampMs = 0;
-    m_lastGrpcStreamTimestampMs = 0;
-    setGrpcLabelState(m_grpcSelfTestTxState, QStringLiteral("发送(Ping): 待验证"), GrpcLabelTone::Neutral);
-    setGrpcLabelState(m_grpcSelfTestRxState, QStringLiteral("接收(流数据): 待验证"), GrpcLabelTone::Neutral);
-    setGrpcLabelState(m_grpcModeSwitchState, QStringLiteral("待验证"), GrpcLabelTone::Neutral);
-    setGrpcLabelState(m_grpcPeriodicDataState, QStringLiteral("待验证"), GrpcLabelTone::Neutral);
+    rebuildGrpcParamUI(params);
 
     saveConfigFromUI();
     if (m_appController) {
         m_appController->applyReceiverBackendFromConfig();
     }
-
-    updateStagePanelUiState();
-    updateGrpcTestUiState();
 }
+
+// ===== 动态参数与设备状态方法 =====
+
+void MainWindow::rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& params)
+{
+    m_currentBackendParams = params;
+    for (QWidget* w : m_grpcParamWidgets) {
+        m_grpcParamLayout->removeWidget(w);
+        w->deleteLater();
+    }
+    m_grpcParamWidgets.clear();
+    while (m_grpcParamLayout->rowCount() > 0)
+        m_grpcParamLayout->removeRow(0);
+
+    if (params.isEmpty()) {
+        m_grpcParamGroup->setVisible(false);
+        return;
+    }
+
+    for (const auto& p : params) {
+        QWidget* w = nullptr;
+        switch (p.type) {
+        case ParamInt: {
+            auto* spin = new QSpinBox(m_grpcParamGroup);
+            spin->setRange((int)p.minVal, (int)p.maxVal);
+            spin->setSingleStep((int)p.stepVal);
+            spin->setValue(p.defaultValue.toInt());
+            QObject::connect(spin, QOverload<int>::of(&QSpinBox::valueChanged),
+                    this, [this]() { saveConfigFromUI(); });
+            w = spin; break;
+        }
+        case ParamDouble: {
+            auto* spin = new QDoubleSpinBox(m_grpcParamGroup);
+            spin->setRange(p.minVal, p.maxVal);
+            spin->setSingleStep(p.stepVal);
+            spin->setDecimals(4);
+            spin->setValue(p.defaultValue.toDouble());
+            QObject::connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                    this, [this]() { saveConfigFromUI(); });
+            w = spin; break;
+        }
+        case ParamEnum: {
+            auto* combo = new QComboBox(m_grpcParamGroup);
+            combo->addItems(p.enumOptions);
+            combo->setCurrentText(p.defaultValue.toString());
+            QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                    this, [this]() { saveConfigFromUI(); });
+            w = combo; break;
+        }
+        case ParamIntList: {
+            auto* edit = new QLineEdit(m_grpcParamGroup);
+            edit->setText(p.defaultValue.toString());
+            edit->setPlaceholderText(QStringLiteral("逗号分隔整数"));
+            QObject::connect(edit, &QLineEdit::textChanged,
+                    this, [this]() { saveConfigFromUI(); });
+            w = edit; break;
+        }
+        }
+        if (w) {
+            m_grpcParamLayout->addRow(p.label + ":", w);
+            m_grpcParamWidgets.append(w);
+        }
+    }
+    m_grpcParamGroup->setVisible(true);
+}
+
+void MainWindow::onBackendStatusChanged(const QJsonObject& status)
+{
+    if (m_deviceStatusDeviceLabel) {
+        m_deviceStatusDeviceLabel->setText(status.value("device").toString(QStringLiteral("未知")));
+    }
+    if (m_deviceStatusStateLabel) {
+        m_deviceStatusStateLabel->setText(status.value("state").toString());
+    }
+    if (m_deviceStatusEndpointLabel) {
+        m_deviceStatusEndpointLabel->setText(status.value("endpoint").toString());
+    }
+    if (m_deviceStatusDetailsLabel) {
+        m_deviceStatusDetailsLabel->setText(status.value("details").toString());
+    }
+}
+
+QVariant MainWindow::configValue(const QString& key, const QVariant& fallback) const
+{
+    AppConfig* cfg = AppConfig::instance();
+    if (!cfg) return fallback;
+    const int slash = key.indexOf('/');
+    if (slash < 0) return fallback;
+    QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+    const QString fullKey = key.left(slash) + "/" + key.mid(slash + 1);
+    return settings.value(fullKey, fallback);
+}
+
+void MainWindow::setConfigValue(const QString& key, const QVariant& value)
+{
+    AppConfig* cfg = AppConfig::instance();
+    if (!cfg) return;
+    if (key == "MultiFreq/BaseFrequencyHz") cfg->setMultiFreqBaseFrequencyHz(value.toInt());
+    else if (key == "MultiFreq/AverageCycleCount") cfg->setMultiFreqAverageCycleCount(value.toInt());
+    else if (key == "MultiFreq/NormalizeScale") cfg->setMultiFreqNormalizeScale(value.toDouble());
+    else if (key == "MultiFreq/FrequencyFactors") {
+        QList<int> factors;
+        for (const QString& p : value.toString().split(',', Qt::SkipEmptyParts)) {
+            bool ok; int f = p.trimmed().toInt(&ok);
+            if (ok && f > 0) factors.append(f);
+        }
+        if (!factors.isEmpty()) cfg->setMultiFreqFrequencyFactors(factors);
+    }
+}
+
+// ===== DEPRECATED gRPC 自检 / 测试服务方法 (空桩) =====
 
 void MainWindow::onStartGrpcTestServerClicked()
 {
@@ -3247,15 +3142,6 @@ void MainWindow::onGrpcSelfTestTimeout()
 
 void MainWindow::onSendClicked()
 {
-    const bool isGrpcBackend = (m_backendTypeCombo &&
-                                m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isGrpcRealMode = (isGrpcBackend && m_useMockDataCheck && !m_useMockDataCheck->isChecked());
-    if (isGrpcRealMode) {
-        QMessageBox::information(this, "提示",
-                                 "gRPC 真机模式下未提供通用 SendCommand，请使用自检或专用控制面板。");
-        return;
-    }
-
     QString command = m_commandInput->toPlainText().trimmed();
     if (command.isEmpty()) {
         QMessageBox::warning(this, "警告", "指令不能为空");
@@ -3263,10 +3149,10 @@ void MainWindow::onSendClicked()
     }
 
     const bool isHex = m_hexFormatCheck->isChecked();
-    
+
     // 添加到历史记录
     addCommandToHistory(command);
-    
+
     // 获取换行符
     QString newline = "";
     if (m_autoNewlineCheck->isChecked()) {
@@ -3277,11 +3163,7 @@ void MainWindow::onSendClicked()
         case 2: newline = "\n"; break;
         }
     }
-    
-    if (isGrpcBackend) {
-        logGrpcInteraction("send", QString("发送命令: %1 (isHex=%2)").arg(command, isHex ? "true" : "false"));
-    }
-    
+
     // 通过 ApplicationController 转发指令到串口模块（线程安全）
     if (m_appController) {
         QString outCmd = command;
