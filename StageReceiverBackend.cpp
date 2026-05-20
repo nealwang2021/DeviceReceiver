@@ -145,9 +145,15 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
     }
 
 #ifdef HAS_GRPC
-    {
+    // 依次尝试 TLS 和明文（与 GrpcReceiverBackend 一致的回退策略）
+    const int maxPass = m_useTls ? 2 : 1;  // TLS 失败时回退到明文
+    const int connectTimeoutMs = 5000;
+    bool connected = false;
+
+    for (int pass = 0; pass < maxPass; ++pass) {
         std::shared_ptr<grpc::ChannelCredentials> creds;
-        if (m_useTls) {
+        const bool tryTls = (pass == 0 && m_useTls);
+        if (tryTls) {
             creds = grpc::SslCredentials(grpc::SslCredentialsOptions());
         } else {
             creds = grpc::InsecureChannelCredentials();
@@ -157,18 +163,20 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
         args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
 
         m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), creds, args);
-    }
-    if (!m_channel) {
-        emit commandError(QStringLiteral("创建 Stage gRPC Channel 失败"));
-        return false;
+        if (!m_channel) continue;
+
+        const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(connectTimeoutMs);
+        if (m_channel->WaitForConnected(deadline)) {
+            connected = true;
+            m_useTls = tryTls;  // 记录实际使用的模式
+            break;
+        }
+        m_channel.reset();
     }
 
-    const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(5000);
-    if (!m_channel->WaitForConnected(deadline)) {
-        emit commandError(QStringLiteral("Stage gRPC 连接超时: %1 (TLS=%2)")
-                              .arg(m_endpoint)
-                              .arg(m_useTls ? QStringLiteral("是") : QStringLiteral("否")));
-        m_channel.reset();
+    if (!connected) {
+        emit commandError(QStringLiteral("Stage gRPC 连接超时: %1 (尝试了 TLS+明文)")
+                              .arg(m_endpoint));
         return false;
     }
 
