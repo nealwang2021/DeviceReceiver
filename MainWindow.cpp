@@ -649,9 +649,6 @@ void MainWindow::initUI()
         QFrame* posFrame = new QFrame();
         posFrame->setObjectName(QStringLiteral("stage_positionFrame"));
         posFrame->setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
-        posFrame->setStyleSheet(QStringLiteral(
-            "QFrame#stage_positionFrame { background: palette(base); border: 1px solid palette(mid); "
-            "border-radius: 4px; padding: 4px; }"));
         QVBoxLayout* posFrameLay = new QVBoxLayout(posFrame);
         posFrameLay->setContentsMargins(6, 6, 6, 6);
         QLabel* posCaption = new QLabel(QStringLiteral("当前位置 (mm / pulse 由下位机返回)"));
@@ -659,7 +656,6 @@ void MainWindow::initUI()
         capFont.setPointSizeF(capFont.pointSizeF() * 0.95);
         capFont.setBold(false);
         posCaption->setFont(capFont);
-        posCaption->setStyleSheet(QStringLiteral("color: palette(mid);"));
         m_stagePositionLabel = new QLabel(QStringLiteral("X: —   Y: —   Z: —"));
         m_stagePositionLabel->setObjectName(QStringLiteral("stage_positionLabel"));
         m_stagePositionLabel->setWordWrap(true);
