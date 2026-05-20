@@ -145,18 +145,27 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
     }
 
 #ifdef HAS_GRPC
-    auto creds = m_useTls
-                     ? grpc::SslCredentials(grpc::SslCredentialsOptions())
-                     : grpc::InsecureChannelCredentials();
-    m_channel = grpc::CreateChannel(m_endpoint.toStdString(), creds);
+    {
+        std::shared_ptr<grpc::ChannelCredentials> creds;
+        if (m_useTls) {
+            creds = grpc::SslCredentials(grpc::SslCredentialsOptions());
+        } else {
+            creds = grpc::InsecureChannelCredentials();
+        }
+
+        grpc::ChannelArguments args;
+        args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
+
+        m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), creds, args);
+    }
     if (!m_channel) {
         emit commandError(QStringLiteral("创建 Stage gRPC Channel 失败"));
         return false;
     }
 
-    const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(2500);
+    const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(5000);
     if (!m_channel->WaitForConnected(deadline)) {
-        emit commandError(QStringLiteral("连接 Stage gRPC 服务超时: %1 (TLS=%2)")
+        emit commandError(QStringLiteral("Stage gRPC 连接超时: %1 (TLS=%2)")
                               .arg(m_endpoint)
                               .arg(m_useTls ? QStringLiteral("是") : QStringLiteral("否")));
         m_channel.reset();
