@@ -291,9 +291,10 @@ void StageReceiverBackend::requestPositions()
     stage::PositionsReply reply;
     grpc::Status status = m_stub->GetPositions(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("GetPositions 失败: [%1] %2")
+        const QString error = QStringLiteral("GetPositions RPC 失败: [%1] %2 (端点: %3, 超时: 2000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("get_positions"), error);
         return;
@@ -371,9 +372,10 @@ void StageReceiverBackend::jog(int axis, bool plus, bool enable)
 
     const grpc::Status status = m_stub->Jog(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("Jog RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("Jog RPC 失败: [%1] %2 (端点: %3, 超时: 3000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("jog"), error);
         return;
@@ -428,9 +430,11 @@ void StageReceiverBackend::moveAbs(double xMm, double yMm, double zMm, int timeo
 
     const grpc::Status status = m_stub->MoveAbs(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("MoveAbs RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("MoveAbs RPC 失败: [%1] %2 (端点: %3, 超时: %4ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint)
+                                  .arg(qMax(500, timeoutMs));
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("move_abs"), error);
         return;
@@ -483,9 +487,11 @@ void StageReceiverBackend::moveRel(int axis, double deltaMm, int timeoutMs)
 
     const grpc::Status status = m_stub->MoveRel(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("MoveRel RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("MoveRel RPC 失败: [%1] %2 (端点: %3, 超时: %4ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint)
+                                  .arg(qMax(500, timeoutMs));
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("move_rel"), error);
         return;
@@ -537,9 +543,10 @@ void StageReceiverBackend::setSpeed(quint32 speedPulsePerSec, quint32 accelMs)
 
     const grpc::Status status = m_stub->SetSpeed(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("SetSpeed RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("SetSpeed RPC 失败: [%1] %2 (端点: %3, 超时: 3000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("set_speed"), error);
         return;
@@ -597,9 +604,10 @@ void StageReceiverBackend::startScan(int mode,
 
     const grpc::Status status = m_stub->StartScan(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("StartScan RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("StartScan RPC 失败: [%1] %2 (端点: %3, 超时: 5000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("start_scan"), error);
         return;
@@ -643,9 +651,10 @@ void StageReceiverBackend::stopScan()
 
     const grpc::Status status = m_stub->StopScan(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("StopScan RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("StopScan RPC 失败: [%1] %2 (端点: %3, 超时: 3000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("stop_scan"), error);
         return;
@@ -694,9 +703,10 @@ void StageReceiverBackend::requestScanStatus()
 
     const grpc::Status status = m_stub->GetScanStatus(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("GetScanStatus RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("GetScanStatus RPC 失败: [%1] %2 (端点: %3, 超时: 2000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitCommandResult(false, QStringLiteral("scan_status"), error);
         return;
@@ -1258,9 +1268,10 @@ bool StageReceiverBackend::callConnectRpc(const QString& ip, int port)
 
     const grpc::Status status = m_stub->Connect(&ctx, req, &reply);
     if (!status.ok()) {
-        const QString error = QStringLiteral("Connect RPC 失败: [%1] %2")
+        const QString error = QStringLiteral("Connect RPC 失败: [%1] %2 (端点: %3, 超时: 3000ms)")
                                   .arg(status.error_code())
-                                  .arg(QString::fromStdString(status.error_message()));
+                                  .arg(QString::fromStdString(status.error_message()))
+                                  .arg(m_endpoint);
         emit commandError(error);
         emitBackendStatus(QStringLiteral("connectRpcFailed"), error);
         return false;
@@ -1305,7 +1316,10 @@ bool StageReceiverBackend::callDisconnectRpc()
     if (!status.ok()) {
         emitBackendStatus(
             QStringLiteral("disconnectRpcFailed"),
-            QStringLiteral("Disconnect RPC 失败: [%1] %2")
+            QStringLiteral("Disconnect RPC 失败: [%1] %2 (端点: %3, 超时: 2000ms)")
+                .arg(status.error_code())
+                .arg(QString::fromStdString(status.error_message()))
+                .arg(m_endpoint)
                 .arg(status.error_code())
                 .arg(QString::fromStdString(status.error_message())));
         return false;
