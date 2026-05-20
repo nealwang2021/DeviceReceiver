@@ -805,7 +805,7 @@ bool ApplicationController::connectStageBackend(const QString& endpoint)
     }
     const QString ep = endpoint.trimmed();
     if (ep.isEmpty()) {
-        qWarning() << "connectStageBackend: endpoint 为空";
+        qWarning() << "[Stage] 连接失败: endpoint 为空";
         return false;
     }
 
@@ -833,11 +833,11 @@ bool ApplicationController::connectStageBackend(const QString& endpoint)
                               Q_RETURN_ARG(bool, connected),
                               Q_ARG(QString, ep));
     if (!connected) {
-        qWarning() << "connectStageBackend: 连接失败" << ep;
+        qWarning() << "[Stage] 连接失败:" << ep;
         disconnectStageBackend();
         return false;
     }
-    qInfo() << "三轴台 Stage 后端已连接:" << ep;
+    qInfo() << "[Stage] 已连接:" << ep;
     return true;
 }
 
@@ -867,13 +867,13 @@ void ApplicationController::disconnectStageBackend()
     m_stageThread.reset();
 
     emit stageConnectionStateChanged(false);
-    qInfo() << "三轴台 Stage 后端已断开";
+    qInfo() << "[Stage] 已断开";
 }
 
 void ApplicationController::sendStageCommand(const QString& command, bool isHex)
 {
     if (!m_stageReceiver) {
-        qWarning() << "sendStageCommand: 三轴台后端未初始化";
+        qWarning() << "[Stage] 发送指令失败: 后端未初始化";
         return;
     }
     QMetaObject::invokeMethod(m_stageReceiver.get(), "sendCommand",

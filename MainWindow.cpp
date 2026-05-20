@@ -2319,6 +2319,21 @@ void MainWindow::handleStageBackendPacket(const QJsonObject& packet)
             color = "red";
         }
 
+        // 统一日志输出：所有 Stage 状态变更均以 [Stage] 标签记录
+        if (status == "connected" || status == "reconnected") {
+            qInfo().noquote() << QStringLiteral("[Stage] 已连接: %1").arg(endpoint.isEmpty() ? detail : endpoint);
+        } else if (status == "disconnected") {
+            qInfo().noquote() << QStringLiteral("[Stage] 已断开");
+        } else if (status == "reconnecting") {
+            qInfo().noquote() << QStringLiteral("[Stage] 重连中: %1 (%2)").arg(endpoint, detail);
+        } else if (status.contains("fail", Qt::CaseInsensitive) || status.contains("reject", Qt::CaseInsensitive)) {
+            qWarning().noquote() << QStringLiteral("[Stage] 失败: %1 | %2").arg(status, detail);
+        } else if (status == "streamClosed") {
+            qWarning().noquote() << QStringLiteral("[Stage] 位置流关闭: %1").arg(detail);
+        } else {
+            qInfo().noquote() << QStringLiteral("[Stage] 状态: %1 | %2").arg(status, detail);
+        }
+
         if (m_stageBackendStatusLabel) {
             m_stageBackendStatusLabel->setText(displayText);
             m_stageBackendStatusLabel->setStyleSheet(QString("color: %1;").arg(color));
@@ -3311,8 +3326,7 @@ void MainWindow::onStageCommandError(const QString& error)
         m_stageBackendStatusLabel->setStyleSheet(QStringLiteral("color: red;"));
     }
 
-    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("hh:mm:ss.zzz"));
-    qWarning().noquote() << QStringLiteral("%1 [Stage][错误] %2").arg(timestamp, error);
+    qWarning().noquote() << QStringLiteral("[Stage] %1").arg(error);
 }
 
 void MainWindow::onRecorderDropAlert(const QString& message)
