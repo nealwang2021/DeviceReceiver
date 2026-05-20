@@ -262,30 +262,31 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
 
     m_stub = stage::StageService::NewStub(m_channel);
 
-    // 仅当用户通过 "|" 指定了台下位机地址时才调用 Connect RPC
-    // （纯 gRPC 直连场景下服务端已直接管理硬件，无需此步骤）
-    QHostAddress stageIpAddr;
-    const bool hasDownstreamDevice = stageIpAddr.setAddress(m_stageIp);
-    if (hasDownstreamDevice) {
-        if (!callConnectRpc(m_stageIp, m_stagePort)) {
-            m_stub.reset();
-            m_channel.reset();
-            return false;
+    // Connect RPC 是服务端必需的会话建立步骤。直连时（无 | 分隔符）
+    // m_stageIp 为 ngrok 域名（非合法 IP），传 127.0.0.1 占位。
+    QString stageIpForRpc = m_stageIp;
+    int stagePortForRpc = m_stagePort;
+    {
+        QHostAddress testAddr;
+        if (!testAddr.setAddress(m_stageIp)) {
+            stageIpForRpc = QStringLiteral("127.0.0.1");
+            stagePortForRpc = 9000;
         }
+    }
+    if (!callConnectRpc(stageIpForRpc, stagePortForRpc)) {
+        m_stub.reset();
+        m_channel.reset();
+        return false;
     }
 
     setConnected(true);
     qInfo() << "[Stage] 已连接:" << m_endpoint
-            << (hasDownstreamDevice
-                    ? QStringLiteral(" (台下位机 %1:%2)").arg(m_stageIp).arg(m_stagePort)
-                    : QStringLiteral(" (直连)"));
+            << QStringLiteral(" (stage=%1:%2)").arg(stageIpForRpc).arg(stagePortForRpc);
     emitBackendStatus(
         QStringLiteral("connected"),
-        QStringLiteral("已连接 StageService（grpc=%1%2）")
-            .arg(m_endpoint,
-                 hasDownstreamDevice
-                     ? QStringLiteral(", stage=%1:%2").arg(m_stageIp).arg(m_stagePort)
-                     : QString()));
+        QStringLiteral("已连接 StageService（grpc=%1, stage=%2:%3）")
+            .arg(m_endpoint, stageIpForRpc)
+            .arg(stagePortForRpc));
     return true;
 #else
     emit commandError(QStringLiteral("当前构建未启用 gRPC 支持（请开启 HAS_GRPC）"));
@@ -1120,9 +1121,14 @@ void StageReceiverBackend::onReconnectCheck()
 
     m_stub = stage::StageService::NewStub(m_channel);
     {
-        QHostAddress stageIpAddr;
-        const bool hasDownstreamDevice = stageIpAddr.setAddress(m_stageIp);
-        if (hasDownstreamDevice && !callConnectRpc(m_stageIp, m_stagePort)) {
+        QString stageIpForRpc = m_stageIp;
+        int stagePortForRpc = m_stagePort;
+        QHostAddress testAddr;
+        if (!testAddr.setAddress(m_stageIp)) {
+            stageIpForRpc = QStringLiteral("127.0.0.1");
+            stagePortForRpc = 9000;
+        }
+        if (!callConnectRpc(stageIpForRpc, stagePortForRpc)) {
             emitBackendStatus(QStringLiteral("reconnectFailed"), QStringLiteral("Stage Connect RPC 重试失败"));
             return;
         }
