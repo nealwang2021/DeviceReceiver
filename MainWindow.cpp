@@ -1404,16 +1404,7 @@ void MainWindow::initConnections()
                 &MainWindow::onPlotManagerTelemetryUpdated);
     }
 
-    connect(m_startGrpcTestServerButton, &QPushButton::clicked, this, &MainWindow::onStartGrpcTestServerClicked);
-    connect(m_stopGrpcTestServerButton, &QPushButton::clicked, this, &MainWindow::onStopGrpcTestServerClicked);
-    connect(m_runGrpcSelfTestButton, &QPushButton::clicked, this, &MainWindow::onRunGrpcSelfTestClicked);
-    connect(m_grpcSelfTestTimeoutTimer, &QTimer::timeout, this, &MainWindow::onGrpcSelfTestTimeout);
-    connect(m_grpcModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
-        if (!m_grpcSelfTestPending) {
-            setGrpcLabelState(m_grpcModeSwitchState, QStringLiteral("待验证"), GrpcLabelTone::Neutral);
-            updateGrpcTestUiState();
-        }
-    });
+    // gRPC self-test panel removed — button connections deleted
 
 #ifndef QT_COMPILE_FOR_WASM
     if (m_grpcTestServerProcess) {
@@ -1944,49 +1935,7 @@ void MainWindow::resetGrpcSelfTestLabelStates()
 
 void MainWindow::updateGrpcTestUiState()
 {
-    const bool isGrpcBackend = (m_backendTypeCombo &&
-                                m_backendTypeCombo->currentData().toString().compare("grpc", Qt::CaseInsensitive) == 0);
-    const bool isGrpcRealMode = (isGrpcBackend && m_useMockDataCheck && !m_useMockDataCheck->isChecked());
-    const bool allowGenericSend = !isGrpcRealMode;
-
-#ifndef QT_COMPILE_FOR_WASM
-    const bool serverRunning = m_grpcTestServerProcess && m_grpcTestServerProcess->state() != QProcess::NotRunning;
-    m_startGrpcTestServerButton->setEnabled(isGrpcBackend && !serverRunning);
-    m_stopGrpcTestServerButton->setEnabled(isGrpcBackend && serverRunning);
-#else
-    m_startGrpcTestServerButton->setEnabled(false);
-    m_stopGrpcTestServerButton->setEnabled(false);
-#endif
-
-    m_runGrpcSelfTestButton->setEnabled(isGrpcRealMode && m_isConnected && !m_grpcSelfTestPending);
-    m_grpcModeCombo->setEnabled(isGrpcRealMode && m_isConnected && !m_grpcSelfTestPending);
-    if (m_sendButton) {
-        m_sendButton->setEnabled(allowGenericSend);
-        m_sendButton->setToolTip(
-            allowGenericSend
-                ? QString()
-                : QStringLiteral("gRPC 真机模式下未提供通用 SendCommand，请使用自检/专用控制面板。"));
-    }
-
-    if (!m_grpcSelfTestPending) {
-        if (!isGrpcBackend) {
-            setGrpcLabelState(m_grpcSelfTestOverallState, QStringLiteral("仅 gRPC 后端可用"), GrpcLabelTone::Neutral);
-            setGrpcLabelState(m_grpcModeSwitchState, QStringLiteral("仅 gRPC 后端可用"), GrpcLabelTone::Neutral);
-            setGrpcLabelState(m_grpcPeriodicDataState, QStringLiteral("仅 gRPC 后端可用"), GrpcLabelTone::Neutral);
-        } else if (!isGrpcRealMode) {
-            setGrpcLabelState(m_grpcSelfTestOverallState, QStringLiteral("Mock 模式不验证真实链路"), GrpcLabelTone::Neutral);
-            setGrpcLabelState(m_grpcModeSwitchState, QStringLiteral("Mock 模式不验证切换"), GrpcLabelTone::Neutral);
-            setGrpcLabelState(m_grpcPeriodicDataState, QStringLiteral("Mock 模式不验证周期"), GrpcLabelTone::Neutral);
-        } else if (!m_isConnected) {
-            setGrpcLabelState(m_grpcSelfTestOverallState, QStringLiteral("等待连接"), GrpcLabelTone::Neutral);
-            setGrpcLabelState(m_grpcModeSwitchState, QStringLiteral("等待连接"), GrpcLabelTone::Neutral);
-            setGrpcLabelState(m_grpcPeriodicDataState, QStringLiteral("等待周期数据"), GrpcLabelTone::Neutral);
-        } else if (m_grpcPeriodicPacketCount <= 0) {
-            setGrpcLabelState(m_grpcPeriodicDataState, QStringLiteral("等待周期数据"), GrpcLabelTone::Warning);
-        }
-    }
-
-    applyGrpcSelfTestLabelStates();
+    return; // deprecated: gRPC self-test panel removed
 }
 
 void MainWindow::startGrpcSelfTest(bool autoTriggered)
@@ -2815,27 +2764,17 @@ void MainWindow::onPauseClicked()
     m_appController->pauseAcquisition();
     m_connectionStatusLabel->setText("已暂停");
     m_connectionStatusLabel->setStyleSheet("color: orange;");
-    m_pauseButton->setEnabled(false);
-    m_resumeButton->setEnabled(true);
 }
 
 void MainWindow::onResumeClicked()
 {
-    if (!m_appController) {
-        return;
-    }
-
-    m_appController->resumeAcquisition();
-    m_connectionStatusLabel->setText("已连接");
-    m_connectionStatusLabel->setStyleSheet("color: green;");
-    m_pauseButton->setEnabled(true);
-    m_resumeButton->setEnabled(false);
+    // deprecated: resume button removed
 }
 
 void MainWindow::onUseMockDataChanged(bool use)
 {
-    m_mockIntervalSpin->setEnabled(use);
-    updateGrpcTestUiState();
+    Q_UNUSED(use)
+    // deprecated: mock checkbox removed
 }
 
 void MainWindow::onBackendTypeChanged(int index)
@@ -2941,23 +2880,16 @@ void MainWindow::rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& param
 void MainWindow::onBackendStatusChanged(const QJsonObject& status)
 {
     if (m_deviceStatusDeviceLabel) {
-        m_deviceStatusDeviceLabel->setText(
-            QStringLiteral("协议: %1").arg(status.value("protocol").toString()));
+        m_deviceStatusDeviceLabel->setText(status.value("device").toString(QStringLiteral("未知")));
     }
     if (m_deviceStatusStateLabel) {
-        const bool mock = status.value("mock").toBool();
-        m_deviceStatusStateLabel->setText(
-            QStringLiteral("状态: %1").arg(mock ? QStringLiteral("本地模拟") : QStringLiteral("已连接")));
+        m_deviceStatusStateLabel->setText(status.value("state").toString());
     }
     if (m_deviceStatusEndpointLabel) {
-        const QString ep = status.value("endpoint").toString();
-        if (!ep.isEmpty())
-            m_deviceStatusEndpointLabel->setText(QStringLiteral("端点: %1").arg(ep));
-        else if (status.contains("port"))
-            m_deviceStatusEndpointLabel->setText(QStringLiteral("端口: %1").arg(status.value("port").toString()));
+        m_deviceStatusEndpointLabel->setText(status.value("endpoint").toString());
     }
     if (m_deviceStatusDetailsLabel) {
-        m_deviceStatusDetailsLabel->setText(QString());
+        m_deviceStatusDetailsLabel->setText(status.value("details").toString());
     }
 }
 
