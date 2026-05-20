@@ -1,0 +1,157 @@
+﻿syntax = "proto3";
+
+option csharp_namespace = "MultiFreqGrpc";
+
+package multifreqeddy;
+
+import "google/protobuf/empty.proto";
+
+service MultiFreqEddyCurrent {
+  rpc ListDevices(google.protobuf.Empty) returns (ListDevicesResponse);
+
+  rpc StartDetection(StartDetectionRequest) returns (OperationReply);
+
+  rpc StopDetection(google.protobuf.Empty) returns (OperationReply);
+
+  rpc GetStatus(google.protobuf.Empty) returns (RuntimeStatus);
+
+  rpc GetLatestFrame(GetLatestFrameRequest) returns (DetectionFrame);
+
+  rpc StreamFrames(StreamFramesRequest) returns (stream DetectionFrame);
+}
+
+enum BaseFrequency {
+  BASE_FREQUENCY_UNSPECIFIED = 0;
+  BASE_FREQUENCY_HZ_1 = 1;
+  BASE_FREQUENCY_HZ_2 = 2;
+  BASE_FREQUENCY_HZ_5 = 5;
+  BASE_FREQUENCY_HZ_10 = 10;
+  BASE_FREQUENCY_HZ_20 = 20;
+  BASE_FREQUENCY_HZ_50 = 50;
+  BASE_FREQUENCY_HZ_100 = 100;
+  BASE_FREQUENCY_HZ_200 = 200;
+  BASE_FREQUENCY_HZ_500 = 500;
+  BASE_FREQUENCY_HZ_1000 = 1000;
+}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message DeviceInfo {
+  int32 index = 1;
+  string description = 2;
+  string serial_number = 3;
+  string type = 4;
+}
+
+message MultiFreqDetectionConfig {
+  BaseFrequency base_frequency = 1;
+  int32 average_cycle_count = 2;
+  double normalize_scale = 3;
+  repeated int32 frequency_factors = 4;
+}
+
+message StartDetectionRequest {
+  string device_serial_number = 1;
+  int32 device_index = 2;
+  MultiFreqDetectionConfig config = 3;
+}
+
+message OperationReply {
+  bool ok = 1;
+  string message = 2;
+}
+
+message RuntimeStatus {
+  bool running = 1;
+  string selected_device_serial_number = 2;
+  string selected_device_description = 3;
+  string last_error = 4;
+
+  int32 base_frequency_hz = 5;
+  int32 sample_rate_hz = 6;
+  int32 sample_count_per_frame = 7;
+  int32 average_cycle_count = 8;
+
+  int32 queue_capacity = 9;
+  int32 max_queue_len = 10;
+  int32 overrun_count = 11;
+
+  int64 frame_index = 12;
+}
+
+message GetLatestFrameRequest {
+  bool include_curve = 1;
+  bool include_spectrum = 2;
+}
+
+message StreamFramesRequest {
+  bool include_curve = 1;
+  bool include_spectrum = 2;
+
+  // 0 表示不限制。
+  int32 max_frames_per_second = 3;
+}
+
+message DetectionFrame {
+  int64 timestamp_unix_ms = 1;
+  int64 frame_index = 2;
+
+  int32 base_frequency_hz = 3;
+  int32 sample_rate_hz = 4;
+  int32 sample_count_per_frame = 5;
+
+  // 输出通道0表示电压，输出通道1表示电流。
+  // 服务端内部固定：原始采集通道1为电压，原始采集通道0为电流。
+  // 数值已按24bit归一化到约±1。
+  repeated ChannelSeries curve_channels = 6;
+
+  // 幅值谱频率轴，单位Hz。仅 include_spectrum=true 时返回。
+  repeated double spectrum_frequency_hz = 7;
+
+  // 输出通道0表示电压幅值谱，输出通道1表示电流幅值谱。
+  repeated ChannelSeries amplitude_spectrum_channels = 8;
+
+  // 按配置的倍频系数提取出的多频涡流检测结果。
+  repeated FrequencyPointResult point_results = 9;
+
+  RuntimeStatus status = 10;
+}
+
+message ChannelSeries {
+  int32 channel_index = 1;
+  string name = 2;
+  repeated double values = 3;
+}
+
+message ComplexValue {
+  double real = 1;
+  double imag = 2;
+}
+
+message FrequencyPointResult {
+  int32 frequency_factor = 1;
+  double frequency_hz = 2;
+
+  ComplexValue voltage = 3;
+  ComplexValue current = 4;
+  ComplexValue impedance = 5;
+
+  double voltage_magnitude = 6;
+  double current_magnitude = 7;
+
+  double impedance_magnitude = 8;
+  double impedance_phase_deg = 9;
+
+  double impedance_real = 10;
+  double impedance_imag = 11;
+
+  // 与原 ResultHisShowCtr 中 RealImagN 一致：
+  // z.real / (2*pi*f) * 1e6
+  // z.imag / (2*pi*f) * 1e6
+  double normalized_impedance_real = 12;
+  double normalized_impedance_imag = 13;
+
+  bool valid = 14;
+}
