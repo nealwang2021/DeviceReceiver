@@ -403,7 +403,7 @@ QWidget* PlotWindow::buildTimeBaseColumn(QCustomPlot*& plotOut)
     auto* dateTicker = new QCPAxisTickerDateTime;
     dateTicker->setDateTimeFormat(QStringLiteral("hh:mm:ss"));
     plotOut->yAxis->setTicker(QSharedPointer<QCPAxisTicker>(dateTicker));
-    plotOut->axisRect()->setAutoMargins(QCP::msLeft | QCP::msRight | QCP::msBottom);
+    plotOut->axisRect()->setAutoMargins(QCP::msAll);
     plotOut->axisRect()->setMinimumMargins(QMargins(0, 0, 0, 0));
     plotOut->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
     plotOut->legend->setVisible(false);
@@ -565,7 +565,10 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfSplitter->addWidget(impCol);
         m_mfSplitter->setStretchFactor(0, 1);
         m_mfSplitter->setStretchFactor(1, 1);
-        m_mfSplitter->setStretchFactor(2, 2);
+        m_mfSplitter->setStretchFactor(2, 1);
+        // 等分初始宽度
+        const int w = m_mfSplitter->width();
+        if (w > 0) m_mfSplitter->setSizes({w / 3, w / 3, w / 3});
 
         // 插入到根布局
         if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
