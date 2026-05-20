@@ -261,19 +261,31 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
     }
 
     m_stub = stage::StageService::NewStub(m_channel);
-    if (!callConnectRpc(m_stageIp, m_stagePort)) {
-        m_stub.reset();
-        m_channel.reset();
-        return false;
+
+    // 仅当用户通过 "|" 指定了台下位机地址时才调用 Connect RPC
+    // （纯 gRPC 直连场景下服务端已直接管理硬件，无需此步骤）
+    QHostAddress stageIpAddr;
+    const bool hasDownstreamDevice = stageIpAddr.setAddress(m_stageIp);
+    if (hasDownstreamDevice) {
+        if (!callConnectRpc(m_stageIp, m_stagePort)) {
+            m_stub.reset();
+            m_channel.reset();
+            return false;
+        }
     }
 
     setConnected(true);
-    qInfo() << "[Stage] 已连接:" << m_endpoint;
+    qInfo() << "[Stage] 已连接:" << m_endpoint
+            << (hasDownstreamDevice
+                    ? QStringLiteral(" (台下位机 %1:%2)").arg(m_stageIp).arg(m_stagePort)
+                    : QStringLiteral(" (直连)"));
     emitBackendStatus(
         QStringLiteral("connected"),
-        QStringLiteral("已连接 StageService（grpc=%1, stage=%2:%3）")
-            .arg(m_endpoint, m_stageIp)
-            .arg(m_stagePort));
+        QStringLiteral("已连接 StageService（grpc=%1%2）")
+            .arg(m_endpoint,
+                 hasDownstreamDevice
+                     ? QStringLiteral(", stage=%1:%2").arg(m_stageIp).arg(m_stagePort)
+                     : QString()));
     return true;
 #else
     emit commandError(QStringLiteral("当前构建未启用 gRPC 支持（请开启 HAS_GRPC）"));
@@ -1107,9 +1119,13 @@ void StageReceiverBackend::onReconnectCheck()
     }
 
     m_stub = stage::StageService::NewStub(m_channel);
-    if (!callConnectRpc(m_stageIp, m_stagePort)) {
-        emitBackendStatus(QStringLiteral("reconnectFailed"), QStringLiteral("Stage Connect RPC 重试失败"));
-        return;
+    {
+        QHostAddress stageIpAddr;
+        const bool hasDownstreamDevice = stageIpAddr.setAddress(m_stageIp);
+        if (hasDownstreamDevice && !callConnectRpc(m_stageIp, m_stagePort)) {
+            emitBackendStatus(QStringLiteral("reconnectFailed"), QStringLiteral("Stage Connect RPC 重试失败"));
+            return;
+        }
     }
 
     setConnected(true);
