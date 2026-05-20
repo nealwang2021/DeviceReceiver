@@ -1098,8 +1098,6 @@ void MainWindow::initUI()
         QWidget* monitorWidget = new QWidget();
         QVBoxLayout* monitorLayout = new QVBoxLayout(monitorWidget);
 
-        auto* monitorControlLayout = new QHBoxLayout();
-        monitorControlLayout->setContentsMargins(0, 0, 0, 0);
         auto* monitorLogLevelLabel = new QLabel(QStringLiteral("日志等级:"), monitorWidget);
         m_monitorLogLevelCombo = new QComboBox(monitorWidget);
         m_monitorLogLevelCombo->addItem(QStringLiteral("Debug"), static_cast<int>(AppLogLevel::Debug));
@@ -1125,10 +1123,7 @@ void MainWindow::initUI()
                     }
                     rebuildMonitorView();
                 });
-        monitorControlLayout->addWidget(monitorLogLevelLabel);
-        monitorControlLayout->addWidget(m_monitorLogLevelCombo);
-        monitorControlLayout->addStretch();
-        
+
         m_dataMonitor = new QTextEdit();
         m_dataMonitor->setReadOnly(true);
         m_dataMonitor->document()->setMaximumBlockCount(1500);
@@ -1147,8 +1142,10 @@ void MainWindow::initUI()
         statusLayout->addStretch();
         
         monitorLayout->addWidget(m_dataMonitor);
-        monitorLayout->addLayout(monitorControlLayout);
         monitorLayout->addLayout(statusLayout);
+        statusLayout->insertWidget(0, monitorLogLevelLabel);
+        statusLayout->insertWidget(1, m_monitorLogLevelCombo);
+        statusLayout->insertSpacing(2, 12);
 
         connect(AppLogger::instance(), &AppLogger::logRecordEmitted,
                 this, &MainWindow::appendAppLogRecord,
