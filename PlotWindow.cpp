@@ -6,6 +6,12 @@
 #include <QLabel>
 #include <QDateTime>
 #include <QDebug>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QRadioButton>
+#include <QScrollArea>
+#include <QSplitter>
+#include <QButtonGroup>
 #include <cmath>
 
 PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
@@ -148,7 +154,10 @@ void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnaps
 
     const FrameData::DetectionMode mode = snapshot->mode;
     const int ch = snapshot->channelCount;
-    if (mode == FrameData::Legacy || ch <= 0) {
+    if (mode == FrameData::Legacy) {
+        return;
+    }
+    if (mode != FrameData::MultiFreqEddy && ch <= 0) {
         return;
     }
 
@@ -205,10 +214,51 @@ void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnaps
                 m_plot->graph(bottomIdx)->setData(snapshot->timeMs, bottom[i], true);
             }
         }
+    } else if (mode == FrameData::MultiFreqEddy) {
+        const int nPoints = snapshot->mfFreqPointCount;
+        if (nPoints <= 0) return;
+
+        // 切换到多频布局
+        if (m_lastMode != mode) {
+            if (m_plot) {
+                if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
+                    root->removeWidget(m_plot);
+                }
+                m_plot->setVisible(false);
+            }
+            if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
+        }
+        if (m_lastMode != mode || m_currentChannelCount != nPoints) {
+            m_currentChannelCount = nPoints;
+            setupMultiFreqLayout(nPoints);
+        }
+
+        updateMultiFreqPlots(snapshot);
+        // return early, skip standard axis range logic below
+        m_lastMode = mode;
+        m_mfTbPlot1->replot(QCustomPlot::rpQueuedReplot);
+        m_mfTbPlot2->replot(QCustomPlot::rpQueuedReplot);
+        m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+        return;
+    } else {
+        // 切换回标准单图布局
+        if (m_mfSplitter) m_mfSplitter->setVisible(false);
+        if (m_plot) {
+            m_plot->setVisible(true);
+            // 将 m_plot 重新加回布局（之前 removeWidget 移除了）
+            if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
+                if (root->indexOf(m_plot) < 0) {
+                    root->insertWidget(1, m_plot, 1);  // 恢复到 ctrlWidget 之下
+                }
+            }
+        }
+        if (m_viewTypeCombo && mode == FrameData::MultiChannelComplex) {
+            m_viewTypeCombo->setVisible(true);
+        }
     }
 
     const double latestTime = snapshot->timeMs.last();
-    if (mode == FrameData::MultiChannelComplex) {
+    if (mode == FrameData::MultiChannelComplex || mode == FrameData::MultiFreqEddy) {
         for (auto rect : m_axisRects) {
             if (rect && rect->axis(QCPAxis::atBottom)) {
                 rect->axis(QCPAxis::atBottom)->setRange(latestTime - 10000, latestTime);
@@ -336,6 +386,200 @@ void PlotWindow::setupComplexLayout(int channelCount)
     }
 }
 
+// ---- Time base column factory (Y-reversed, time flows downward) ----
+QWidget* PlotWindow::buildTimeBaseColumn(QCustomPlot*& plotOut)
+{
+    auto* col = new QWidget(m_mfSplitter);
+    auto* layout = new QVBoxLayout(col);
+    layout->setContentsMargins(2, 2, 2, 2);
+    layout->setSpacing(0);
+
+    plotOut = new QCustomPlot(col);
+    PlotWindowBase::applyConfiguredOpenGl(plotOut);
+    styleMultiFreqPlot(plotOut);
+    // X轴=数值，Y轴=时间（反转，自上而下）
+    plotOut->yAxis->setRangeReversed(true);
+    plotOut->yAxis->setTickLabelRotation(90);  // 纵轴刻度纵向显示，节省水平空间
+    auto* dateTicker = new QCPAxisTickerDateTime;
+    dateTicker->setDateTimeFormat(QStringLiteral("hh:mm:ss"));
+    plotOut->yAxis->setTicker(QSharedPointer<QCPAxisTicker>(dateTicker));
+    plotOut->axisRect()->setAutoMargins(QCP::msLeft | QCP::msRight | QCP::msBottom);
+    plotOut->axisRect()->setMinimumMargins(QMargins(0, 0, 0, 0));
+    plotOut->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+    plotOut->legend->setVisible(false);
+    plotOut->xAxis->grid()->setVisible(true);
+    plotOut->yAxis->grid()->setVisible(true);
+
+    layout->addWidget(plotOut, 1);
+    return col;
+}
+
+// ---- MultiFreq layout: 3-column QSplitter ----
+void PlotWindow::setupMultiFreqLayout(int freqPointCount)
+{
+    // 隐藏标准单图
+    if (m_plot) m_plot->setVisible(false);
+    if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
+
+    const bool firstTime = (m_mfSplitter == nullptr);
+
+    if (firstTime) {
+        // 三列 splitter
+        m_mfSplitter = new QSplitter(Qt::Horizontal, this);
+        m_mfSplitter->setHandleWidth(3);
+        m_mfSplitter->setChildrenCollapsible(false);
+
+        // 时基图1 + 时基图2
+        QWidget* col1 = buildTimeBaseColumn(m_mfTbPlot1);
+        QWidget* col2 = buildTimeBaseColumn(m_mfTbPlot2);
+        m_mfTbPlot1->xAxis->setLabel(QStringLiteral("幅值 / 相位"));
+        m_mfTbPlot1->yAxis->setLabel(QStringLiteral("时间 (ms)"));
+        m_mfTbPlot1->yAxis->setRangeReversed(true);
+        m_mfTbPlot2->xAxis->setLabel(QStringLiteral("实部 / 虚部"));
+        m_mfTbPlot2->yAxis->setLabel(QStringLiteral("时间 (ms)"));
+        m_mfTbPlot2->yAxis->setRangeReversed(true);
+
+        // 阻抗图列
+        auto* impCol = new QWidget(m_mfSplitter);
+        auto* impLayout = new QVBoxLayout(impCol);
+        impLayout->setContentsMargins(2, 2, 2, 2);
+        impLayout->setSpacing(4);
+
+        m_mfImpedancePlot = new QCustomPlot(impCol);
+        PlotWindowBase::applyConfiguredOpenGl(m_mfImpedancePlot);
+        styleMultiFreqPlot(m_mfImpedancePlot);
+        m_mfImpedancePlot->xAxis->setLabel(QStringLiteral("阻抗实部 (Ω)"));
+        m_mfImpedancePlot->yAxis->setLabel(QStringLiteral("阻抗虚部 (Ω)"));
+        m_mfImpedancePlot->xAxis->setRange(-1000, 1000);
+        m_mfImpedancePlot->yAxis->setRange(-1000, 1000);
+        m_mfImpedancePlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+        m_mfImpedancePlot->legend->setVisible(true);
+        m_mfImpedancePlot->legend->setFont(QFont(QStringLiteral("Microsoft YaHei"), 9));
+        m_mfImpedancePlot->legend->setSelectableParts(QCPLegend::spItems);
+        m_mfImpedancePlot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignRight | Qt::AlignTop);
+        impLayout->addWidget(m_mfImpedancePlot, 1);
+
+        // 阻抗图控件行
+        // 自适应/默认
+        auto* scaleRow = new QWidget(impCol);
+        auto* scaleLayout = new QHBoxLayout(scaleRow);
+        scaleLayout->setContentsMargins(0, 0, 0, 0);
+        m_mfAdaptiveRadio = new QRadioButton(QStringLiteral("自适应"), scaleRow);
+        m_mfDefaultRadio = new QRadioButton(QStringLiteral("默认 (-1000~1000)"), scaleRow);
+        m_mfDefaultRadio->setChecked(true);
+        auto* scaleGroup = new QButtonGroup(scaleRow);
+        scaleGroup->addButton(m_mfAdaptiveRadio);
+        scaleGroup->addButton(m_mfDefaultRadio);
+        connect(scaleGroup, QOverload<QAbstractButton*>::of(&QButtonGroup::buttonClicked),
+                this, [this](QAbstractButton*) { applyImpedanceAxisMode(); });
+        scaleLayout->addWidget(m_mfAdaptiveRadio);
+        scaleLayout->addWidget(m_mfDefaultRadio);
+        scaleLayout->addSpacing(12);
+        auto* impTypeLabel = new QLabel(QStringLiteral("阻抗:"), scaleRow);
+        scaleLayout->addWidget(impTypeLabel);
+        m_mfRawRadio = new QRadioButton(QStringLiteral("原始"), scaleRow);
+        m_mfRawRadio->setChecked(true);
+        m_mfNormRadio = new QRadioButton(QStringLiteral("归一化"), scaleRow);
+        auto* impTypeGroup = new QButtonGroup(scaleRow);
+        impTypeGroup->addButton(m_mfRawRadio);
+        impTypeGroup->addButton(m_mfNormRadio);
+        connect(impTypeGroup, QOverload<QAbstractButton*>::of(&QButtonGroup::buttonClicked),
+                this, [this](QAbstractButton* btn) {
+                    m_mfUseNormalized = (btn == m_mfNormRadio);
+                    auto snap = PlotDataHub::instance()->snapshot();
+                    if (snap) updateMultiFreqPlots(snap);
+                    if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+                });
+        scaleLayout->addWidget(m_mfRawRadio);
+        scaleLayout->addWidget(m_mfNormRadio);
+        scaleLayout->addStretch();
+        impLayout->addWidget(scaleRow);
+
+        // 频率勾选
+        auto* freqRow = new QWidget(impCol);
+        auto* freqRowLayout = new QHBoxLayout(freqRow);
+        freqRowLayout->setContentsMargins(0, 0, 0, 0);
+        freqRowLayout->addWidget(new QLabel(QStringLiteral("频率:"), freqRow));
+        m_mfFreqCheckArea = new QScrollArea(freqRow);
+        m_mfFreqCheckArea->setFixedHeight(32);
+        m_mfFreqCheckArea->setFrameShape(QFrame::NoFrame);
+        m_mfFreqCheckArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        m_mfFreqCheckContainer = new QWidget();
+        m_mfFreqCheckLayout = new QHBoxLayout(m_mfFreqCheckContainer);
+        m_mfFreqCheckLayout->setContentsMargins(0, 0, 0, 0);
+        m_mfFreqCheckLayout->setSpacing(4);
+        m_mfFreqCheckArea->setWidget(m_mfFreqCheckContainer);
+        freqRowLayout->addWidget(m_mfFreqCheckArea, 1);
+        impLayout->addWidget(freqRow);
+
+        // 曲线保留时间
+        auto* retentionRow = new QWidget(impCol);
+        auto* retentionLayout = new QHBoxLayout(retentionRow);
+        retentionLayout->setContentsMargins(0, 0, 0, 0);
+        retentionLayout->addWidget(new QLabel(QStringLiteral("曲线保留:"), retentionRow));
+        m_mfRetentionSpin = new QDoubleSpinBox(retentionRow);
+        m_mfRetentionSpin->setRange(0.1, 60.0);
+        m_mfRetentionSpin->setDecimals(1);
+        m_mfRetentionSpin->setSingleStep(1.0);
+        m_mfRetentionSpin->setValue(3.0);
+        m_mfRetentionSpin->setSuffix(QStringLiteral(" s"));
+        connect(m_mfRetentionSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double v) {
+                    m_mfRetentionSecs = v;
+                    auto snap = PlotDataHub::instance()->snapshot();
+                    if (snap) { updateMultiFreqPlots(snap); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); }
+                });
+        retentionLayout->addWidget(m_mfRetentionSpin);
+        retentionLayout->addStretch();
+        impLayout->addWidget(retentionRow);
+
+        // 圆边框
+        auto* circleRow = new QWidget(impCol);
+        auto* circleLayout = new QHBoxLayout(circleRow);
+        circleLayout->setContentsMargins(0, 0, 0, 0);
+        circleLayout->addWidget(new QLabel(QStringLiteral("圆边界 R:"), circleRow));
+        m_mfCircleRadiusSpin = new QDoubleSpinBox(circleRow);
+        m_mfCircleRadiusSpin->setRange(0, 100000);
+        m_mfCircleRadiusSpin->setDecimals(1);
+        m_mfCircleRadiusSpin->setSingleStep(10);
+        m_mfCircleRadiusSpin->setValue(500);
+        connect(m_mfCircleRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { updateCircleBoundary(); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); });
+        circleLayout->addWidget(m_mfCircleRadiusSpin);
+        m_mfCircleShowCheck = new QCheckBox(QStringLiteral("显示"), circleRow);
+        m_mfCircleShowCheck->setChecked(false);
+        connect(m_mfCircleShowCheck, &QCheckBox::toggled, this, &PlotWindow::onMfCircleToggled);
+        circleLayout->addWidget(m_mfCircleShowCheck);
+        circleLayout->addStretch();
+        impLayout->addWidget(circleRow);
+
+        // 圆边框 ellipse（默认隐藏）
+        m_mfCircleItem = new QCPItemEllipse(m_mfImpedancePlot);
+        m_mfCircleItem->setPen(QPen(QColor(220, 60, 60), 1, Qt::DashLine));
+        m_mfCircleItem->setBrush(Qt::NoBrush);
+        m_mfCircleItem->setVisible(false);
+        updateCircleBoundary();
+
+        m_mfSplitter->addWidget(col1);
+        m_mfSplitter->addWidget(col2);
+        m_mfSplitter->addWidget(impCol);
+        m_mfSplitter->setStretchFactor(0, 1);
+        m_mfSplitter->setStretchFactor(1, 1);
+        m_mfSplitter->setStretchFactor(2, 2);
+
+        // 插入到根布局
+        if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
+            root->addWidget(m_mfSplitter, 1);
+        }
+    }
+
+    rebuildMultiFreqGraphs(freqPointCount);
+    m_mfSplitter->setVisible(true);
+    if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
+        root->activate();
+    }
+}
+
 void PlotWindow::onViewTypeChanged(int index)
 {
     m_complexViewType = static_cast<ComplexViewType>(index);
@@ -437,4 +681,231 @@ void PlotWindow::onThemeChanged()
     if (m_plot) {
         m_plot->replot(QCustomPlot::rpQueuedReplot);
     }
+    // 多频涡流三列
+    if (m_mfTbPlot1) { styleMultiFreqPlot(m_mfTbPlot1); m_mfTbPlot1->replot(QCustomPlot::rpQueuedReplot); }
+    if (m_mfTbPlot2) { styleMultiFreqPlot(m_mfTbPlot2); m_mfTbPlot2->replot(QCustomPlot::rpQueuedReplot); }
+    if (m_mfImpedancePlot) { styleMultiFreqPlot(m_mfImpedancePlot); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); }
+}
+
+// ========== 多频涡流辅助方法 ==========
+
+void PlotWindow::rebuildMultiFreqGraphs(int freqPointCount)
+{
+    // 时基图：清空 QCPGraph
+    for (QCustomPlot* p : {m_mfTbPlot1, m_mfTbPlot2}) {
+        if (p) p->clearGraphs();
+    }
+    // 阻抗图：清空 QCPCurve（用 clearPlottables 而非 clearGraphs）
+    if (m_mfImpedancePlot) {
+        m_mfImpedancePlot->clearPlottables();
+        m_mfImpedanceCurves.clear();
+        // 重新创建圆（clearPlottables 会删除）
+        m_mfCircleItem = new QCPItemEllipse(m_mfImpedancePlot);
+        m_mfCircleItem->setPen(QPen(QColor(220, 60, 60), 1, Qt::DashLine));
+        m_mfCircleItem->setBrush(Qt::NoBrush);
+        m_mfCircleItem->setVisible(m_mfCircleShowCheck ? m_mfCircleShowCheck->isChecked() : false);
+        updateCircleBoundary();
+    }
+
+    // 清除旧的频率勾选
+    for (auto* cb : m_mfFreqChecks) {
+        if (m_mfFreqCheckLayout) m_mfFreqCheckLayout->removeWidget(cb);
+        cb->deleteLater();
+    }
+    m_mfFreqChecks.clear();
+
+    for (int i = 0; i < freqPointCount; ++i) {
+        const QColor color = QColor::fromHsv((i * 47) % 360, 200, 200);
+        const int freqNum = i + 1;
+
+        // 时基图1：幅值(实线) + 相位(虚线) — Y轴=时间，X轴=数值
+        {
+            auto* gA = m_mfTbPlot1->addGraph(m_mfTbPlot1->yAxis, m_mfTbPlot1->xAxis);
+            gA->setPen(QPen(color, 1.5));
+            gA->setName(QStringLiteral("f%1 幅值").arg(freqNum));
+
+            auto* gB = m_mfTbPlot1->addGraph(m_mfTbPlot1->yAxis, m_mfTbPlot1->xAxis);
+            gB->setPen(QPen(color.lighter(130), 1.0, Qt::DashLine));
+            gB->setName(QStringLiteral("f%1 相位").arg(freqNum));
+        }
+
+        // 时基图2：实部(实线) + 虚部(虚线) — Y轴=时间，X轴=数值
+        {
+            auto* gA = m_mfTbPlot2->addGraph(m_mfTbPlot2->yAxis, m_mfTbPlot2->xAxis);
+            gA->setPen(QPen(color, 1.5));
+            gA->setName(QStringLiteral("f%1 实部").arg(freqNum));
+
+            auto* gB = m_mfTbPlot2->addGraph(m_mfTbPlot2->yAxis, m_mfTbPlot2->xAxis);
+            gB->setPen(QPen(color.lighter(130), 1.0, Qt::DashLine));
+            gB->setName(QStringLiteral("f%1 虚部").arg(freqNum));
+        }
+
+        // 阻抗图：QCPCurve 轨迹 — X=实部，Y=虚部
+        {
+            auto* curve = new QCPCurve(m_mfImpedancePlot->xAxis, m_mfImpedancePlot->yAxis);
+            curve->setPen(QPen(color, 1.5));
+            curve->setName(QStringLiteral("f%1").arg(freqNum));
+            m_mfImpedanceCurves.append(curve);
+        }
+
+        // 频率勾选（默认全选）
+        auto* cb = new QCheckBox(QStringLiteral("f%1").arg(freqNum), m_mfFreqCheckContainer);
+        cb->setChecked(true);
+        connect(cb, &QCheckBox::toggled, this, &PlotWindow::onMfFreqCheckToggled);
+        m_mfFreqChecks.append(cb);
+        if (m_mfFreqCheckLayout) {
+            m_mfFreqCheckLayout->addWidget(cb);
+        }
+    }
+}
+
+void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& snapshot)
+{
+    const int nPoints = snapshot->mfFreqPointCount;
+    if (nPoints <= 0) return;
+
+    const int n = snapshot->timeMs.size();
+    if (n <= 0) return;
+
+    // 滑动时间窗裁剪
+    const double latest = snapshot->timeMs.last();
+    const double windowMs = 10000.0;
+    const double windowStart = latest - windowMs;
+    int startIdx = 0;
+    for (; startIdx < n && snapshot->timeMs[startIdx] < windowStart; ++startIdx) {}
+    const int count = n - startIdx;
+
+    // 时间值转换为秒（Unix epoch），配合 QCPAxisTickerDateTime 显示 HH:MM:SS
+    QVector<double> timeRel(count);
+    for (int i = 0; i < count; ++i) {
+        timeRel[i] = snapshot->timeMs[startIdx + i] / 1000.0;
+    }
+
+    // 时基图1：幅值(实线) + 相位(虚线) — graph(value, time)
+    for (int i = 0; i < nPoints && i < snapshot->mfImpedanceMag.size(); ++i) {
+        const int idxA = i * 2;
+        const int idxB = idxA + 1;
+        const auto& magVec = snapshot->mfImpedanceMag[i];
+        const auto& phaseVec = snapshot->mfImpedancePhase[i];
+        QVector<double> magSlice(count), phaseSlice(count);
+        for (int j = 0; j < count; ++j) {
+            const int src = startIdx + j;
+            magSlice[j] = (src < magVec.size()) ? magVec[src] : qQNaN();
+            phaseSlice[j] = (src < phaseVec.size()) ? phaseVec[src] : qQNaN();
+        }
+        if (idxA < m_mfTbPlot1->graphCount()) {
+            m_mfTbPlot1->graph(idxA)->setData(timeRel, magSlice, true);
+        }
+        if (idxB < m_mfTbPlot1->graphCount()) {
+            m_mfTbPlot1->graph(idxB)->setData(timeRel, phaseSlice, true);
+        }
+    }
+    m_mfTbPlot1->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
+    m_mfTbPlot1->xAxis->rescale();
+
+    // 时基图2：实部(实线) + 虚部(虚线)
+    for (int i = 0; i < nPoints && i < snapshot->mfImpedanceReal.size(); ++i) {
+        const int idxA = i * 2;
+        const int idxB = idxA + 1;
+        const auto& realVec = snapshot->mfImpedanceReal[i];
+        const auto& imagVec = snapshot->mfImpedanceImag[i];
+        QVector<double> realSlice(count), imagSlice(count);
+        for (int j = 0; j < count; ++j) {
+            const int src = startIdx + j;
+            realSlice[j] = (src < realVec.size()) ? realVec[src] : qQNaN();
+            imagSlice[j] = (src < imagVec.size()) ? imagVec[src] : qQNaN();
+        }
+        if (idxA < m_mfTbPlot2->graphCount()) {
+            m_mfTbPlot2->graph(idxA)->setData(timeRel, realSlice, true);
+        }
+        if (idxB < m_mfTbPlot2->graphCount()) {
+            m_mfTbPlot2->graph(idxB)->setData(timeRel, imagSlice, true);
+        }
+    }
+    m_mfTbPlot2->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
+    m_mfTbPlot2->xAxis->rescale();
+
+    // 阻抗图：QCPCurve 完整轨迹 — key=索引, X=实部, Y=虚部
+    const QVector<QVector<double>>& impX =
+        m_mfUseNormalized ? snapshot->mfNormImpedanceReal : snapshot->mfImpedanceReal;
+    const QVector<QVector<double>>& impY =
+        m_mfUseNormalized ? snapshot->mfNormImpedanceImag : snapshot->mfImpedanceImag;
+    // 更新轴标签
+    if (m_mfImpedancePlot) {
+        m_mfImpedancePlot->xAxis->setLabel(m_mfUseNormalized
+            ? QStringLiteral("归一化阻抗实部") : QStringLiteral("阻抗实部 (Ω)"));
+        m_mfImpedancePlot->yAxis->setLabel(m_mfUseNormalized
+            ? QStringLiteral("归一化阻抗虚部") : QStringLiteral("阻抗虚部 (Ω)"));
+    }
+
+    // 阻抗曲线保留时间窗口
+    const double retentionSecs = m_mfRetentionSecs * 1000.0; // 转为 ms
+    const double cutoffMs = latest - retentionSecs;
+    int impStartIdx = 0;
+    for (; impStartIdx < n && snapshot->timeMs[impStartIdx] < cutoffMs; ++impStartIdx) {}
+
+    for (int i = 0; i < nPoints && i < m_mfImpedanceCurves.size(); ++i) {
+        if (i >= impX.size() || i >= impY.size()) continue;
+        QCPCurve* curve = m_mfImpedanceCurves[i];
+        if (!curve->visible()) continue;
+
+        const auto& realVec = impX[i];
+        const auto& imagVec = impY[i];
+        const int pts = qMin(realVec.size(), imagVec.size());
+        const int useCount = qMax(0, pts - impStartIdx);
+        QVector<double> t(useCount), x(useCount), y(useCount);
+        for (int j = 0; j < useCount; ++j) {
+            t[j] = j;
+            x[j] = realVec[impStartIdx + j];
+            y[j] = imagVec[impStartIdx + j];
+        }
+        curve->setData(t, x, y, true);
+    }
+
+    // 自适应模式
+    if (m_mfAdaptiveRadio && m_mfAdaptiveRadio->isChecked()) {
+        m_mfImpedancePlot->rescaleAxes();
+    }
+}
+
+void PlotWindow::applyImpedanceAxisMode()
+{
+    if (!m_mfImpedancePlot) return;
+    if (m_mfDefaultRadio && m_mfDefaultRadio->isChecked()) {
+        m_mfImpedancePlot->xAxis->setRange(-1000, 1000);
+        m_mfImpedancePlot->yAxis->setRange(-1000, 1000);
+    } else {
+        m_mfImpedancePlot->rescaleAxes();
+    }
+    m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void PlotWindow::updateCircleBoundary()
+{
+    if (!m_mfCircleItem || !m_mfCircleRadiusSpin) return;
+    const double r = m_mfCircleRadiusSpin->value();
+    m_mfCircleItem->topLeft->setCoords(-r, r);
+    m_mfCircleItem->bottomRight->setCoords(r, -r);
+}
+
+void PlotWindow::styleMultiFreqPlot(QCustomPlot* p)
+{
+    if (!p) return;
+    applyThemeToPlot(p, isDarkThemeActive());
+}
+
+void PlotWindow::onMfFreqCheckToggled()
+{
+    if (!m_mfImpedancePlot) return;
+    for (int i = 0; i < m_mfFreqChecks.size() && i < m_mfImpedanceCurves.size(); ++i) {
+        m_mfImpedanceCurves[i]->setVisible(m_mfFreqChecks[i]->isChecked());
+    }
+    m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void PlotWindow::onMfCircleToggled()
+{
+    if (!m_mfCircleItem || !m_mfCircleShowCheck) return;
+    m_mfCircleItem->setVisible(m_mfCircleShowCheck->isChecked());
+    if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
 }
