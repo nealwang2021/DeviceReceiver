@@ -95,7 +95,7 @@ private:
     bool parseEndpoint(const QString& endpoint,
                        QString* grpcEndpoint,
                        QString* stageIp,
-                       int* stagePort) const;
+                       int* stagePort);  // modifies m_useTls
     bool ensureStubReady();
     bool callConnectRpc(const QString& ip, int port);
     bool callDisconnectRpc();
@@ -104,6 +104,7 @@ private:
     QString m_endpoint;
     QString m_stageIp;
     int     m_stagePort = 5000;
+    bool    m_useTls = false;
     int     m_acquisitionIntervalMs = 100;
 
     std::atomic<bool> m_connected  {false};

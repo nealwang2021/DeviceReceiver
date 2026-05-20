@@ -145,9 +145,10 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
     }
 
 #ifdef HAS_GRPC
-    m_channel = grpc::CreateChannel(
-        m_endpoint.toStdString(),
-        grpc::InsecureChannelCredentials());
+    auto creds = m_useTls
+                     ? grpc::SslCredentials(grpc::SslCredentialsOptions())
+                     : grpc::InsecureChannelCredentials();
+    m_channel = grpc::CreateChannel(m_endpoint.toStdString(), creds);
     if (!m_channel) {
         emit commandError(QStringLiteral("创建 Stage gRPC Channel 失败"));
         return false;
@@ -155,7 +156,9 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
 
     const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(2500);
     if (!m_channel->WaitForConnected(deadline)) {
-        emit commandError(QStringLiteral("连接 Stage gRPC 服务超时: %1").arg(m_endpoint));
+        emit commandError(QStringLiteral("连接 Stage gRPC 服务超时: %1 (TLS=%2)")
+                              .arg(m_endpoint)
+                              .arg(m_useTls ? QStringLiteral("是") : QStringLiteral("否")));
         m_channel.reset();
         return false;
     }
@@ -1191,7 +1194,7 @@ bool StageReceiverBackend::shouldEmitRealtimePacket(qint64 timestampMs)
 bool StageReceiverBackend::parseEndpoint(const QString& endpoint,
                                          QString* grpcEndpoint,
                                          QString* stageIp,
-                                         int* stagePort) const
+                                         int* stagePort)
 {
     if (!grpcEndpoint || !stageIp || !stagePort) {
         return false;
@@ -1202,25 +1205,32 @@ bool StageReceiverBackend::parseEndpoint(const QString& endpoint,
         return false;
     }
 
+    // 支持 "|" 分隔的复合格式: grpc段|台下位机段
     const QStringList segments = raw.split('|', Qt::KeepEmptyParts);
     const QString grpcPart = segments.value(0).trimmed();
     const QString stagePart = (segments.size() > 1) ? segments.at(1).trimmed() : QString();
 
+    // 使用 GrpcEndpointUtils::parseChannelEndpoint，支持 https://ngrok 等 TLS 地址
     QString grpcTarget;
+    bool useTls = false;
     QString grpcHost;
     int grpcPort = 0;
-    if (!GrpcEndpointUtils::parseHostPort(grpcPart, &grpcTarget, &grpcHost, &grpcPort)) {
+    if (!GrpcEndpointUtils::parseChannelEndpoint(grpcPart, &grpcTarget, &useTls, &grpcHost, &grpcPort)) {
         return false;
     }
 
+    // 将 useTls 信息编码到 grpcTarget 中（如 "andres-xxx.ngrok-free.dev:443"）
+    // connectBackend 中通过检查目标是否包含 ngrok-free.dev 或 useTls 标志来选择 TLS
     *grpcEndpoint = grpcTarget;
 
     if (stagePart.isEmpty()) {
         *stageIp = grpcHost;
         *stagePort = grpcPort;
+        m_useTls = useTls;
         return true;
     }
 
+    // 台下位机段仅支持 host:port 格式（内网地址，不支持 TLS URL）
     QString parsedStageIp;
     int parsedStagePort = 0;
     if (!GrpcEndpointUtils::parseHostPort(stagePart, nullptr, &parsedStageIp, &parsedStagePort)) {
@@ -1229,6 +1239,7 @@ bool StageReceiverBackend::parseEndpoint(const QString& endpoint,
 
     *stageIp = parsedStageIp;
     *stagePort = parsedStagePort;
+    m_useTls = useTls;
     return true;
 }
 
