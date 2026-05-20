@@ -262,31 +262,22 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
 
     m_stub = stage::StageService::NewStub(m_channel);
 
-    // Connect RPC 是服务端必需的会话建立步骤。直连时（无 | 分隔符）
-    // m_stageIp 为 ngrok 域名（非合法 IP），传 127.0.0.1 占位。
-    QString stageIpForRpc = m_stageIp;
-    int stagePortForRpc = m_stagePort;
+    // 仅当 "grpc地址|工控机IP:端口" 格式时才调用 Connect RPC
+    // ngrok 直连时 m_stageIp 为域名，服务器自行管理硬件，无需 Connect
     {
-        QHostAddress testAddr;
-        if (!testAddr.setAddress(m_stageIp)) {
-            stageIpForRpc = QStringLiteral("127.0.0.1");
-            stagePortForRpc = 9000;
+        QHostAddress stageIpAddr;
+        const bool hasDownstream = stageIpAddr.setAddress(m_stageIp);
+        if (hasDownstream && !callConnectRpc(m_stageIp, m_stagePort)) {
+            m_stub.reset();
+            m_channel.reset();
+            return false;
         }
-    }
-    if (!callConnectRpc(stageIpForRpc, stagePortForRpc)) {
-        m_stub.reset();
-        m_channel.reset();
-        return false;
     }
 
     setConnected(true);
-    qInfo() << "[Stage] 已连接:" << m_endpoint
-            << QStringLiteral(" (stage=%1:%2)").arg(stageIpForRpc).arg(stagePortForRpc);
-    emitBackendStatus(
-        QStringLiteral("connected"),
-        QStringLiteral("已连接 StageService（grpc=%1, stage=%2:%3）")
-            .arg(m_endpoint, stageIpForRpc)
-            .arg(stagePortForRpc));
+    qInfo() << "[Stage] 已连接:" << m_endpoint;
+    emitBackendStatus(QStringLiteral("connected"),
+                      QStringLiteral("已连接 StageService（grpc=%1）").arg(m_endpoint));
     return true;
 #else
     emit commandError(QStringLiteral("当前构建未启用 gRPC 支持（请开启 HAS_GRPC）"));
@@ -1121,14 +1112,9 @@ void StageReceiverBackend::onReconnectCheck()
 
     m_stub = stage::StageService::NewStub(m_channel);
     {
-        QString stageIpForRpc = m_stageIp;
-        int stagePortForRpc = m_stagePort;
-        QHostAddress testAddr;
-        if (!testAddr.setAddress(m_stageIp)) {
-            stageIpForRpc = QStringLiteral("127.0.0.1");
-            stagePortForRpc = 9000;
-        }
-        if (!callConnectRpc(stageIpForRpc, stagePortForRpc)) {
+        QHostAddress stageIpAddr;
+        const bool hasDownstream = stageIpAddr.setAddress(m_stageIp);
+        if (hasDownstream && !callConnectRpc(m_stageIp, m_stagePort)) {
             emitBackendStatus(QStringLiteral("reconnectFailed"), QStringLiteral("Stage Connect RPC 重试失败"));
             return;
         }
@@ -1223,7 +1209,7 @@ void StageReceiverBackend::streamLoop(int intervalMs)
                 .arg(QString::fromStdString(status.error_message()));
 
         QMetaObject::invokeMethod(this, [this, error]() {
-            setConnected(false);
+            // 位置流失败不切断连接，保留手动 RPC（Jog/MoveAbs 等）可用
             emitBackendStatus(QStringLiteral("streamClosed"), error);
             emit commandError(error);
         }, Qt::QueuedConnection);
