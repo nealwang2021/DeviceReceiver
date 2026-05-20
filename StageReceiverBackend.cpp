@@ -1433,9 +1433,10 @@ bool StageReceiverBackend::callDisconnectRpc()
     if (!status.ok()) {
         emitBackendStatus(
             QStringLiteral("disconnectRpcFailed"),
-            QStringLiteral("Disconnect RPC 失败: [%1] %2 (端点: %3, 超时: 2000ms)")
+            QStringLiteral("Disconnect RPC 失败: [%1] %2 (端点: %3)")
                 .arg(status.error_code())
                 .arg(QString::fromStdString(status.error_message()))
+                .arg(m_endpoint)
                 .arg(m_endpoint)
                 .arg(status.error_code())
                 .arg(QString::fromStdString(status.error_message())));
