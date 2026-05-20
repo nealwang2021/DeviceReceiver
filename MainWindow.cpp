@@ -2941,16 +2941,23 @@ void MainWindow::rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& param
 void MainWindow::onBackendStatusChanged(const QJsonObject& status)
 {
     if (m_deviceStatusDeviceLabel) {
-        m_deviceStatusDeviceLabel->setText(status.value("device").toString(QStringLiteral("未知")));
+        m_deviceStatusDeviceLabel->setText(
+            QStringLiteral("协议: %1").arg(status.value("protocol").toString()));
     }
     if (m_deviceStatusStateLabel) {
-        m_deviceStatusStateLabel->setText(status.value("state").toString());
+        const bool mock = status.value("mock").toBool();
+        m_deviceStatusStateLabel->setText(
+            QStringLiteral("状态: %1").arg(mock ? QStringLiteral("本地模拟") : QStringLiteral("已连接")));
     }
     if (m_deviceStatusEndpointLabel) {
-        m_deviceStatusEndpointLabel->setText(status.value("endpoint").toString());
+        const QString ep = status.value("endpoint").toString();
+        if (!ep.isEmpty())
+            m_deviceStatusEndpointLabel->setText(QStringLiteral("端点: %1").arg(ep));
+        else if (status.contains("port"))
+            m_deviceStatusEndpointLabel->setText(QStringLiteral("端口: %1").arg(status.value("port").toString()));
     }
     if (m_deviceStatusDetailsLabel) {
-        m_deviceStatusDetailsLabel->setText(status.value("details").toString());
+        m_deviceStatusDetailsLabel->setText(QString());
     }
 }
 
