@@ -262,22 +262,19 @@ bool StageReceiverBackend::connectBackend(const QString& endpoint)
 
     m_stub = stage::StageService::NewStub(m_channel);
 
-    // 仅当 "grpc地址|工控机IP:端口" 格式时才调用 Connect RPC
-    // ngrok 直连时 m_stageIp 为域名，服务器自行管理硬件，无需 Connect
-    {
-        QHostAddress stageIpAddr;
-        const bool hasDownstream = stageIpAddr.setAddress(m_stageIp);
-        if (hasDownstream && !callConnectRpc(m_stageIp, m_stagePort)) {
-            m_stub.reset();
-            m_channel.reset();
-            return false;
-        }
+    // Connect RPC 必须调用，默认设备地址 192.168.0.1:502（可通过 |ip:port 覆盖）
+    if (!callConnectRpc(m_stageIp, m_stagePort)) {
+        m_stub.reset();
+        m_channel.reset();
+        return false;
     }
 
     setConnected(true);
-    qInfo() << "[Stage] 已连接:" << m_endpoint;
+    qInfo() << "[Stage] 已连接:" << m_endpoint
+            << QStringLiteral(" (设备 %1:%2)").arg(m_stageIp).arg(m_stagePort);
     emitBackendStatus(QStringLiteral("connected"),
-                      QStringLiteral("已连接 StageService（grpc=%1）").arg(m_endpoint));
+                      QStringLiteral("已连接 StageService（grpc=%1, 设备=%2:%3）")
+                          .arg(m_endpoint, m_stageIp).arg(m_stagePort));
     return true;
 #else
     emit commandError(QStringLiteral("当前构建未启用 gRPC 支持（请开启 HAS_GRPC）"));
@@ -1111,13 +1108,9 @@ void StageReceiverBackend::onReconnectCheck()
     }
 
     m_stub = stage::StageService::NewStub(m_channel);
-    {
-        QHostAddress stageIpAddr;
-        const bool hasDownstream = stageIpAddr.setAddress(m_stageIp);
-        if (hasDownstream && !callConnectRpc(m_stageIp, m_stagePort)) {
-            emitBackendStatus(QStringLiteral("reconnectFailed"), QStringLiteral("Stage Connect RPC 重试失败"));
-            return;
-        }
+    if (!callConnectRpc(m_stageIp, m_stagePort)) {
+        emitBackendStatus(QStringLiteral("reconnectFailed"), QStringLiteral("Stage Connect RPC 重试失败"));
+        return;
     }
 
     setConnected(true);
@@ -1330,8 +1323,9 @@ bool StageReceiverBackend::parseEndpoint(const QString& endpoint,
     *grpcEndpoint = grpcTarget;
 
     if (stagePart.isEmpty()) {
-        *stageIp = grpcHost;
-        *stagePort = grpcPort;
+        // 未指定台下位机地址时，默认连接 192.168.0.1:502
+        *stageIp = QStringLiteral("192.168.0.1");
+        *stagePort = 502;
         m_useTls = useTls;
         return true;
     }
