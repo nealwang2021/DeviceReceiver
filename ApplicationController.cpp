@@ -262,7 +262,8 @@ void ApplicationController::start()
     // 启动数据接收
     bool startedReceiving = false;
     m_isPaused = false;
-    const bool isGrpcBackend = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0);
+    const bool isGrpcBackend = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0
+                                || m_config.backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
 
     if (isGrpcBackend) {
         if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
