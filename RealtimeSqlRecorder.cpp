@@ -183,16 +183,21 @@ private:
             return false;
         }
 
+        bool hasMfFrames = false;
         bool ok = true;
         for (const FrameData& frame : frames) {
             if (frame.detectMode == FrameData::MultiFreqEddy) {
                 writeMfCsvRow(frame);
+                hasMfFrames = true;
             } else {
                 if (!insertFrame(frame)) {
                     ok = false;
                     break;
                 }
             }
+        }
+        if (hasMfFrames && m_mfCsvStream) {
+            m_mfCsvStream->flush();
         }
 
         if (ok) {
