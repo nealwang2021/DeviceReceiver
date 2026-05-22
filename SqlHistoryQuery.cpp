@@ -410,3 +410,111 @@ bool SqlHistoryQuery::fetchRawChunk(qint64 startMs,
     }
     return true;
 }
+
+QVector<SqlHistoryQuery::MultiFreqFrameRow> SqlHistoryQuery::fetchMultiFreqRawChunk(
+    qint64 startMs, qint64 endMs,
+    qint64 lastTimestampMs, qint64 lastRowId, int chunkSize)
+{
+    QVector<MultiFreqFrameRow> rows;
+    if (!m_isOpen) return rows;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isValid() || !db.isOpen()) return rows;
+
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT id, timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
+        "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
+        "normalized_impedance_real, normalized_impedance_imag, "
+        "voltage_magnitude, current_magnitude, valid "
+        "FROM multifreq_frames "
+        "WHERE timestamp_unix_ms BETWEEN :start AND :end "
+        "AND (timestamp_unix_ms > :lastTs "
+        "OR (timestamp_unix_ms = :lastTsEq AND id > :lastRowId)) "
+        "ORDER BY timestamp_unix_ms ASC, id ASC "
+        "LIMIT :chunkSize"));
+    q.bindValue(":start", startMs);
+    q.bindValue(":end", endMs);
+    q.bindValue(":lastTs", lastTimestampMs);
+    q.bindValue(":lastTsEq", lastTimestampMs);
+    q.bindValue(":lastRowId", lastRowId);
+    q.bindValue(":chunkSize", chunkSize);
+
+    if (!q.exec()) return rows;
+
+    while (q.next()) {
+        MultiFreqFrameRow r;
+        r.rowId = q.value(0).toLongLong();
+        r.timestampMs = q.value(1).toLongLong();
+        r.frameIndex = q.value(2).toLongLong();
+        r.frequencyFactor = q.value(3).toInt();
+        r.frequencyHz = q.value(4).toDouble();
+        r.impedanceReal = q.value(5).toDouble();
+        r.impedanceImag = q.value(6).toDouble();
+        r.impedanceMagnitude = q.value(7).toDouble();
+        r.impedancePhaseDeg = q.value(8).toDouble();
+        r.normImpedanceReal = q.value(9).toDouble();
+        r.normImpedanceImag = q.value(10).toDouble();
+        r.voltageMag = q.value(11).toDouble();
+        r.currentMag = q.value(12).toDouble();
+        r.valid = q.value(13).toBool();
+        rows.append(r);
+    }
+    return rows;
+}
+
+QVector<SqlHistoryQuery::MultiFreqEnvelopeBucket> SqlHistoryQuery::queryMultiFreqOverviewEnvelope(
+    qint64 startMs, qint64 endMs, qint64 bucketMs)
+{
+    QVector<MultiFreqEnvelopeBucket> result;
+    if (!m_isOpen || bucketMs <= 0) return result;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isValid() || !db.isOpen()) return result;
+
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT (timestamp_unix_ms / :bucket) * :bucket AS bucket_start, "
+        "frequency_factor, "
+        "MIN(impedance_real), MAX(impedance_real), "
+        "MIN(impedance_imag), MAX(impedance_imag) "
+        "FROM multifreq_frames "
+        "WHERE timestamp_unix_ms BETWEEN :start AND :end "
+        "GROUP BY bucket_start, frequency_factor "
+        "ORDER BY bucket_start ASC, frequency_factor ASC"));
+    q.bindValue(":bucket", bucketMs);
+    q.bindValue(":start", startMs);
+    q.bindValue(":end", endMs);
+
+    if (!q.exec()) return result;
+
+    while (q.next()) {
+        MultiFreqEnvelopeBucket b;
+        b.bucketStartMs = q.value(0).toLongLong();
+        b.frequencyFactor = q.value(1).toInt();
+        b.minImpedanceReal = q.value(2).toDouble();
+        b.maxImpedanceReal = q.value(3).toDouble();
+        b.minImpedanceImag = q.value(4).toDouble();
+        b.maxImpedanceImag = q.value(5).toDouble();
+        result.append(b);
+    }
+    return result;
+}
+
+qint64 SqlHistoryQuery::estimateMultiFreqRowCount(qint64 startMs, qint64 endMs)
+{
+    if (!m_isOpen) return 0;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isValid() || !db.isOpen()) return 0;
+
+    const qint64 spanSec = (endMs - startMs) / 1000;
+    if (spanSec <= 3600) {
+        QSqlQuery q(db);
+        q.prepare("SELECT COUNT(*) FROM multifreq_frames WHERE timestamp_unix_ms BETWEEN :start AND :end");
+        q.bindValue(":start", startMs);
+        q.bindValue(":end", endMs);
+        if (q.exec() && q.next()) return q.value(0).toLongLong();
+    }
+    return spanSec * 40; // ~10fps * 4 freqs = 40 rows/sec estimate
+}

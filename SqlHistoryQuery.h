@@ -50,6 +50,34 @@ public:
         std::array<QVariant, kAlignedChannelCount> sourceChannel;
     };
 
+    struct MultiFreqFrameRow
+    {
+        qint64 rowId = 0;
+        qint64 timestampMs = 0;
+        qint64 frameIndex = 0;
+        int     frequencyFactor = 0;
+        double  frequencyHz = 0.0;
+        double  impedanceReal = 0.0;
+        double  impedanceImag = 0.0;
+        double  impedanceMagnitude = 0.0;
+        double  impedancePhaseDeg = 0.0;
+        double  normImpedanceReal = 0.0;
+        double  normImpedanceImag = 0.0;
+        double  voltageMag = 0.0;
+        double  currentMag = 0.0;
+        bool    valid = false;
+    };
+
+    struct MultiFreqEnvelopeBucket
+    {
+        qint64 bucketStartMs = 0;
+        int    frequencyFactor = 0;
+        double minImpedanceReal = 0.0;
+        double maxImpedanceReal = 0.0;
+        double minImpedanceImag = 0.0;
+        double maxImpedanceImag = 0.0;
+    };
+
     explicit SqlHistoryQuery(QObject* parent = nullptr);
     ~SqlHistoryQuery() override;
 
@@ -93,6 +121,15 @@ public:
      * 粗估，避免大库全表扫描。估算仅用于进度条 maximum，允许偏差。
      */
     qint64 estimateRowCount(qint64 startMs, qint64 endMs) const;
+
+    QVector<MultiFreqFrameRow> fetchMultiFreqRawChunk(
+        qint64 startMs, qint64 endMs,
+        qint64 lastTimestampMs, qint64 lastRowId, int chunkSize);
+
+    QVector<MultiFreqEnvelopeBucket> queryMultiFreqOverviewEnvelope(
+        qint64 startMs, qint64 endMs, qint64 bucketMs);
+
+    qint64 estimateMultiFreqRowCount(qint64 startMs, qint64 endMs);
 
     /**
      * 分块读取原始行（用于导出）。
