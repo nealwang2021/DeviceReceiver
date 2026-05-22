@@ -171,3 +171,23 @@ bool HistoryDataProvider::fetchRawChunk(qint64 startMs,
                                   outRows,
                                   errorMessage);
 }
+
+QVector<SqlHistoryQuery::MultiFreqFrameRow> HistoryDataProvider::fetchMultiFreqRawChunk(
+    qint64 startMs, qint64 endMs, qint64 lastTimestampMs, qint64 lastRowId, int chunkSize)
+{
+    if (!m_query) return {};
+    return m_query->fetchMultiFreqRawChunk(startMs, endMs, lastTimestampMs, lastRowId, chunkSize);
+}
+
+QVector<SqlHistoryQuery::MultiFreqEnvelopeBucket> HistoryDataProvider::queryMultiFreqOverviewEnvelope(
+    qint64 startMs, qint64 endMs, qint64 bucketMs)
+{
+    if (!m_query) return {};
+    return m_query->queryMultiFreqOverviewEnvelope(startMs, endMs, bucketMs);
+}
+
+qint64 HistoryDataProvider::estimateMultiFreqRowCount(qint64 startMs, qint64 endMs)
+{
+    if (!m_query) return 0;
+    return m_query->estimateMultiFreqRowCount(startMs, endMs);
+}

@@ -75,6 +75,17 @@ public:
     /// 估算时段内行数（粗估）；用于 review 加载时确定抽稀步长。
     qint64 estimateRowCount(qint64 startMs, qint64 endMs) const;
 
+    /// 多频原始数据分块读取（透传 SqlHistoryQuery）。
+    QVector<SqlHistoryQuery::MultiFreqFrameRow> fetchMultiFreqRawChunk(
+        qint64 startMs, qint64 endMs, qint64 lastTimestampMs, qint64 lastRowId, int chunkSize);
+
+    /// 多频总览包络查询（透传 SqlHistoryQuery）。
+    QVector<SqlHistoryQuery::MultiFreqEnvelopeBucket> queryMultiFreqOverviewEnvelope(
+        qint64 startMs, qint64 endMs, qint64 bucketMs);
+
+    /// 多频行数估算（透传 SqlHistoryQuery）。
+    qint64 estimateMultiFreqRowCount(qint64 startMs, qint64 endMs);
+
     /// 透传 SqlHistoryQuery::fetchRawChunk，供需要原始 40 通道数据的 UI（如阵列热力图）按 review 范围分块读。
     bool fetchRawChunk(qint64 startMs,
                        qint64 endMs,
