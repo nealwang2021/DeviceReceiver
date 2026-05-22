@@ -41,6 +41,8 @@ public:
     static QString alignedFramesInsertSql();
     /// 导入模块复用：INSERT 占位符总数（6 + 40*5）。
     static int alignedFramesBoundParamCount();
+    /// 创建 multifreq_frames 表与索引（多频涡流数据存储）。
+    static bool ensureMultiFreqFramesSchema(QSqlDatabase& db, QString* errorMessage = nullptr);
 
 private:
     QVector<FrameData> takeBatch(int maxBatchSize);

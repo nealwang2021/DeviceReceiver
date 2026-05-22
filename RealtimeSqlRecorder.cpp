@@ -112,7 +112,6 @@ public slots:
         }
 
         closeDbConnection();
-        closeMfCsv();
     }
 
 private:
@@ -183,21 +182,19 @@ private:
             return false;
         }
 
-        bool hasMfFrames = false;
         bool ok = true;
         for (const FrameData& frame : frames) {
             if (frame.detectMode == FrameData::MultiFreqEddy) {
-                writeMfCsvRow(frame);
-                hasMfFrames = true;
+                if (!insertMultiFreqFrame(frame)) {
+                    ok = false;
+                    break;
+                }
             } else {
                 if (!insertFrame(frame)) {
                     ok = false;
                     break;
                 }
             }
-        }
-        if (hasMfFrames && m_mfCsvStream) {
-            m_mfCsvStream->flush();
         }
 
         if (ok) {
@@ -275,20 +272,35 @@ private:
     bool ensureSchema()
     {
         QString error;
-        const bool ok = RealtimeSqlRecorder::ensureAlignedFramesSchema(m_db, &error);
-        if (!ok) {
-            qWarning() << "RealtimeSqlRecorder: ensure schema failed:" << error;
+        if (!RealtimeSqlRecorder::ensureAlignedFramesSchema(m_db, &error)) {
+            qWarning() << "RealtimeSqlRecorder: ensure aligned_frames schema failed:" << error;
+            return false;
         }
-        return ok;
+        if (!RealtimeSqlRecorder::ensureMultiFreqFramesSchema(m_db, &error)) {
+            qWarning() << "RealtimeSqlRecorder: ensure multifreq_frames schema failed:" << error;
+            return false;
+        }
+        return true;
     }
 
     bool prepareStatements()
     {
         m_insertAlignedFrame = QSqlQuery(m_db);
-        const QString sql = RealtimeSqlRecorder::alignedFramesInsertSql();
-
-        if (!m_insertAlignedFrame.prepare(sql)) {
+        const QString sqlAligned = RealtimeSqlRecorder::alignedFramesInsertSql();
+        if (!m_insertAlignedFrame.prepare(sqlAligned)) {
             qWarning() << "RealtimeSqlRecorder: prepare insert aligned_frames failed" << m_insertAlignedFrame.lastError();
+            return false;
+        }
+
+        m_insertMultiFreqFrame = QSqlQuery(m_db);
+        const QString sqlMf = QStringLiteral(
+            "INSERT INTO multifreq_frames(timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
+            "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
+            "normalized_impedance_real, normalized_impedance_imag, "
+            "voltage_magnitude, current_magnitude, valid) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        if (!m_insertMultiFreqFrame.prepare(sqlMf)) {
+            qWarning() << "RealtimeSqlRecorder: prepare insert multifreq_frames failed" << m_insertMultiFreqFrame.lastError();
             return false;
         }
 
@@ -518,86 +530,31 @@ private:
     QSqlDatabase m_db;
     QString m_connectionName;
     QSqlQuery m_insertAlignedFrame;
+    QSqlQuery m_insertMultiFreqFrame;
     qint64 m_lastPruneMs = 0;
 
-    // MultiFreqEddy CSV 输出
-    QFile* m_mfCsvFile = nullptr;
-    QTextStream* m_mfCsvStream = nullptr;
-
-    void ensureMfCsvOpen()
+    bool insertMultiFreqFrame(const FrameData& frame)
     {
-        if (m_mfCsvFile && m_mfCsvFile->isOpen()) return;
-        if (!m_owner) return;
-
-        QString dbPath;
-        {
-            QMutexLocker locker(&m_owner->m_databasePathMutex);
-            dbPath = m_owner->m_databaseFilePath;
-        }
-        if (dbPath.isEmpty()) return;
-
-        // 将 .db 后缀替换为 _mfreq.csv
-        QString csvPath = dbPath;
-        csvPath.replace(QStringLiteral(".db"), QStringLiteral("_mfreq.csv"));
-        if (csvPath == dbPath) csvPath += QStringLiteral("_mfreq.csv");
-
-        m_mfCsvFile = new QFile(csvPath, this);
-        const bool exists = m_mfCsvFile->exists();
-        if (!m_mfCsvFile->open(QIODevice::Append | QIODevice::Text)) {
-            qWarning() << "RealtimeSqlRecorder: 无法打开多频涡流CSV文件" << csvPath;
-            delete m_mfCsvFile;
-            m_mfCsvFile = nullptr;
-            return;
-        }
-
-        m_mfCsvStream = new QTextStream(m_mfCsvFile);
-
-        if (!exists) {
-            // CSV 表头
-            *m_mfCsvStream << "timestamp_unix_ms,frame_index,frequency_factor,frequency_hz,"
-                           << "impedance_real,impedance_imag,impedance_magnitude,impedance_phase_deg,"
-                           << "normalized_impedance_real,normalized_impedance_imag,"
-                           << "voltage_magnitude,current_magnitude,valid\n";
-        }
-    }
-
-    void closeMfCsv()
-    {
-        if (m_mfCsvStream) {
-            m_mfCsvStream->flush();
-            delete m_mfCsvStream;
-            m_mfCsvStream = nullptr;
-        }
-        if (m_mfCsvFile) {
-            m_mfCsvFile->close();
-            delete m_mfCsvFile;
-            m_mfCsvFile = nullptr;
-        }
-    }
-
-    void writeMfCsvRow(const FrameData& frame)
-    {
-        if (frame.detectMode != FrameData::MultiFreqEddy || frame.mfFreqPoints.isEmpty())
-            return;
-
-        ensureMfCsvOpen();
-        if (!m_mfCsvStream) return;
-
         for (const auto& pt : frame.mfFreqPoints) {
-            *m_mfCsvStream << frame.timestamp << ','
-                           << frame.frameId << ','
-                           << pt.frequencyFactor << ','
-                           << pt.frequencyHz << ','
-                           << pt.impedanceReal_raw << ','
-                           << pt.impedanceImag_raw << ','
-                           << pt.impedanceMagnitude << ','
-                           << pt.impedancePhaseDeg << ','
-                           << pt.normalizedImpedanceReal << ','
-                           << pt.normalizedImpedanceImag << ','
-                           << pt.voltageMagnitude << ','
-                           << pt.currentMagnitude << ','
-                           << (pt.valid ? 1 : 0) << '\n';
+            m_insertMultiFreqFrame.bindValue(0, static_cast<qint64>(frame.timestamp));
+            m_insertMultiFreqFrame.bindValue(1, static_cast<qint64>(frame.frameId));
+            m_insertMultiFreqFrame.bindValue(2, pt.frequencyFactor);
+            m_insertMultiFreqFrame.bindValue(3, pt.frequencyHz);
+            m_insertMultiFreqFrame.bindValue(4, pt.impedanceReal_raw);
+            m_insertMultiFreqFrame.bindValue(5, pt.impedanceImag_raw);
+            m_insertMultiFreqFrame.bindValue(6, pt.impedanceMagnitude);
+            m_insertMultiFreqFrame.bindValue(7, pt.impedancePhaseDeg);
+            m_insertMultiFreqFrame.bindValue(8, pt.normalizedImpedanceReal);
+            m_insertMultiFreqFrame.bindValue(9, pt.normalizedImpedanceImag);
+            m_insertMultiFreqFrame.bindValue(10, pt.voltageMagnitude);
+            m_insertMultiFreqFrame.bindValue(11, pt.currentMagnitude);
+            m_insertMultiFreqFrame.bindValue(12, pt.valid ? 1 : 0);
+            if (!m_insertMultiFreqFrame.exec()) {
+                qWarning() << "RealtimeSqlRecorder: insert multifreq frame failed" << m_insertMultiFreqFrame.lastError();
+                return false;
+            }
         }
+        return true;
     }
 };
 
@@ -713,6 +670,42 @@ QString RealtimeSqlRecorder::alignedFramesInsertSql()
 int RealtimeSqlRecorder::alignedFramesBoundParamCount()
 {
     return 6 + kSqlAlignedChannelCount * 5;
+}
+
+bool RealtimeSqlRecorder::ensureMultiFreqFramesSchema(QSqlDatabase& db, QString* errorMessage)
+{
+    const QStringList ddl{
+        QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS multifreq_frames ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "timestamp_unix_ms INTEGER NOT NULL,"
+            "frame_index INTEGER NOT NULL,"
+            "frequency_factor INTEGER NOT NULL,"
+            "frequency_hz REAL NOT NULL,"
+            "impedance_real REAL,"
+            "impedance_imag REAL,"
+            "impedance_magnitude REAL,"
+            "impedance_phase_deg REAL,"
+            "normalized_impedance_real REAL,"
+            "normalized_impedance_imag REAL,"
+            "voltage_magnitude REAL,"
+            "current_magnitude REAL,"
+            "valid INTEGER DEFAULT 1"
+            ")"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_multifreq_timestamp ON multifreq_frames(timestamp_unix_ms)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_multifreq_frame ON multifreq_frames(frame_index)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_multifreq_factor ON multifreq_frames(frequency_factor)"),
+    };
+    QSqlQuery q(db);
+    for (const QString& sql : ddl) {
+        if (!q.exec(sql)) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("multifreq_frames DDL 失败: %1").arg(q.lastError().text());
+            }
+            return false;
+        }
+    }
+    return true;
 }
 
 RealtimeSqlRecorder::RealtimeSqlRecorder(QObject* parent)
