@@ -4,9 +4,12 @@
 #include "FrameData.h"
 #include "GrpcEndpointUtils.h"
 
+#include <QAbstractSocket>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
+#include <QHostAddress>
+#include <QHostInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -15,6 +18,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <thread>
 
 // ============================================================================
 // 构造 / 析构
@@ -86,56 +90,123 @@ bool GrpcMultiFreqBackend::connectBackend(const QString& endpoint)
     }
 
     const QString target = grpcTarget;
-    const int deadlineMs = m_connectTimeoutMs > 0 ? m_connectTimeoutMs : 6000;
-    const auto deadline = std::chrono::system_clock::now() + std::chrono::milliseconds(deadlineMs);
+    const int connectTimeoutMs = 6000;
 
-    // 依次尝试 TLS 和明文
-    for (int pass = 0; pass < 2; ++pass) {
-        if (m_cancelConnect.load(std::memory_order_relaxed)) return false;
-
+    auto tryConnect = [this, connectTimeoutMs](const QString& tgt, bool tls,
+                                               const QString& tlsOverrideHost,
+                                               QString* errorOut) -> bool {
+        if (errorOut) errorOut->clear();
+        std::shared_ptr<grpc::ChannelCredentials> creds;
+        if (tls) creds = grpc::SslCredentials(grpc::SslCredentialsOptions());
+        else     creds = grpc::InsecureChannelCredentials();
         grpc::ChannelArguments args;
         args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
+        if (tls && !tlsOverrideHost.trimmed().isEmpty())
+            args.SetSslTargetNameOverride(tlsOverrideHost.toStdString());
+        m_channel = grpc::CreateCustomChannel(tgt.toStdString(), creds, args);
+        if (!m_channel) { if (errorOut) *errorOut = QStringLiteral("CreateChannel failed"); return false; }
+        constexpr int kPollMs = 100;
+        int waited = 0;
+        grpc_connectivity_state lastState = m_channel->GetState(true);
+        while (waited < connectTimeoutMs) {
+            if (m_cancelConnect.load(std::memory_order_relaxed)) { m_channel.reset(); return false; }
+            lastState = m_channel->GetState(true);
+            if (lastState == GRPC_CHANNEL_READY) return true;
+            const int slice = qMin(kPollMs, connectTimeoutMs - waited);
+            std::this_thread::sleep_for(std::chrono::milliseconds(slice));
+            waited += slice;
+        }
+        if (errorOut) *errorOut = QStringLiteral("timeout, state=%1").arg(static_cast<int>(lastState));
+        m_channel.reset();
+        return false;
+    };
 
-        auto creds = (pass == 0 && useTls)
-                         ? grpc::SslCredentials(grpc::SslCredentialsOptions())
-                         : grpc::InsecureChannelCredentials();
+    struct Attempt { bool tls; QString label; };
+    QVector<Attempt> ordered;
+    ordered.append({useTls, useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")});
+    ordered.append({!useTls, !useTls ? QStringLiteral("TLS") : QStringLiteral("Insecure")});
+    QVector<Attempt> deduped;
+    for (const auto& a : ordered) {
+        bool dup = false;
+        for (const auto& b : deduped) if (a.tls == b.tls) { dup = true; break; }
+        if (!dup) deduped.append(a);
+    }
 
-        auto chan = grpc::CreateCustomChannel(target.toStdString(), creds, args);
-        if (!chan) continue;
+    bool connected = false;
+    QStringList failures;
+    QString connectedTarget = target;
+    for (const auto& a : deduped) {
+        QString reason;
+        qInfo() << "[GrpcMultiFreq] 尝试连接:" << a.label << connectedTarget;
+        if (tryConnect(connectedTarget, a.tls, QString(), &reason)) { connected = true; useTls = a.tls; break; }
+        failures << QStringLiteral("%1 -> %2").arg(a.label, reason);
+    }
 
-        const bool ready = chan->WaitForConnected(deadline);
-        if (!ready) continue;
+    QHostAddress testAddr;
+    if (!connected && !parsedHost.trimmed().isEmpty() && !testAddr.setAddress(parsedHost)) {
+        const QHostInfo info = QHostInfo::fromName(parsedHost);
+        if (info.error() == QHostInfo::NoError) {
+            for (const QHostAddress& addr : info.addresses()) {
+                if (addr.protocol() != QAbstractSocket::IPv4Protocol) continue;
+                const QString ipTarget = QStringLiteral("%1:%2").arg(addr.toString()).arg(parsedPort);
+                for (const auto& a : deduped) {
+                    QString reason;
+                    const QString label = QStringLiteral("%1/ip=%2").arg(a.label, addr.toString());
+                    qInfo() << "[GrpcMultiFreq] 尝试连接:" << label << ipTarget;
+                    if (tryConnect(ipTarget, a.tls, a.tls ? parsedHost : QString(), &reason)) {
+                        connected = true; useTls = a.tls; connectedTarget = ipTarget; break;
+                    }
+                    failures << QStringLiteral("%1 -> %2").arg(label, reason);
+                }
+                if (connected) break;
+            }
+        }
+    }
 
-        m_channel = chan;
-        m_stub = multifreqeddy::MultiFreqEddyCurrent::NewStub(m_channel);
-        if (!m_stub) continue;
+    if (!connected) {
+        emitBackendStatus(QStringLiteral("多频涡流连接失败"),
+                          QStringLiteral("无法连接 %1 (%2)").arg(target, failures.join(QStringLiteral(" | "))));
+        emit connectAttemptFinished(false, QStringLiteral("连接超时或服务端不可达"));
+        return false;
+    }
 
-        // ListDevices 验证服务端可达
+    // 重建 channel + stub 后验证 ListDevices
+    {
+        auto creds = useTls ? grpc::SslCredentials(grpc::SslCredentialsOptions())
+                            : grpc::InsecureChannelCredentials();
+        grpc::ChannelArguments args;
+        args.SetInt(GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL, 1);
+        if (useTls) args.SetSslTargetNameOverride(parsedHost.toStdString());
+        m_channel = grpc::CreateCustomChannel(connectedTarget.toStdString(), creds, args);
+    }
+    m_stub = multifreqeddy::MultiFreqEddyCurrent::NewStub(m_channel);
+    if (!m_stub) {
+        emit connectAttemptFinished(false, QStringLiteral("CreateStub failed"));
+        return false;
+    }
+
+    {
         grpc::ClientContext ctx;
-        ctx.set_deadline(deadline);
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(3000));
         google::protobuf::Empty emptyReq;
         multifreqeddy::ListDevicesResponse listResp;
         const auto status = m_stub->ListDevices(&ctx, emptyReq, &listResp);
-        if (status.ok()) {
-            setConnected(true);
-            const int devCount = listResp.devices_size();
-            emitBackendStatus(QStringLiteral("多频涡流已连接"),
-                              QStringLiteral("%1，设备数 %2").arg(target).arg(devCount));
-            emitDeviceStatus();
-            emit connectAttemptFinished(true, QStringLiteral("连接成功，设备数 %1").arg(devCount));
-            return true;
+        if (!status.ok()) {
+            m_stub.reset(); m_channel.reset();
+            emitBackendStatus(QStringLiteral("多频涡流连接失败"),
+                              QStringLiteral("ListDevices: %1").arg(QString::fromStdString(status.error_message())));
+            emit connectAttemptFinished(false, QStringLiteral("ListDevices 失败"));
+            return false;
         }
-
-        // 本 pass 失败，清理
-        m_stub.reset();
-        m_channel.reset();
-        if (!useTls) break; // 仅尝试一次明文
+        const int devCount = listResp.devices_size();
+        emitBackendStatus(QStringLiteral("多频涡流已连接"),
+                          QStringLiteral("%1，设备数 %2").arg(connectedTarget).arg(devCount));
+        emitDeviceStatus();
+        emit connectAttemptFinished(true, QStringLiteral("连接成功，设备数 %1").arg(devCount));
     }
 
-    emitBackendStatus(QStringLiteral("多频涡流连接失败"),
-                      QStringLiteral("无法连接 %1").arg(target));
-    emit connectAttemptFinished(false, QStringLiteral("连接超时或服务端不可达"));
-    return false;
+    setConnected(true);
+    return true;
 #else
     Q_UNUSED(endpoint)
     emitBackendStatus(QStringLiteral("gRPC 未编译"), QString());
