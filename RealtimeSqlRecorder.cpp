@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QTextStream>
 #include <QMetaObject>
 #include <QMutexLocker>
 #include <QSqlDatabase>
@@ -111,6 +112,7 @@ public slots:
         }
 
         closeDbConnection();
+        closeMfCsv();
     }
 
 private:
@@ -183,9 +185,13 @@ private:
 
         bool ok = true;
         for (const FrameData& frame : frames) {
-            if (!insertFrame(frame)) {
-                ok = false;
-                break;
+            if (frame.detectMode == FrameData::MultiFreqEddy) {
+                writeMfCsvRow(frame);
+            } else {
+                if (!insertFrame(frame)) {
+                    ok = false;
+                    break;
+                }
             }
         }
 
@@ -508,6 +514,86 @@ private:
     QString m_connectionName;
     QSqlQuery m_insertAlignedFrame;
     qint64 m_lastPruneMs = 0;
+
+    // MultiFreqEddy CSV 输出
+    QFile* m_mfCsvFile = nullptr;
+    QTextStream* m_mfCsvStream = nullptr;
+
+    void ensureMfCsvOpen()
+    {
+        if (m_mfCsvFile && m_mfCsvFile->isOpen()) return;
+        if (!m_owner) return;
+
+        QString dbPath;
+        {
+            QMutexLocker locker(&m_owner->m_databasePathMutex);
+            dbPath = m_owner->m_databaseFilePath;
+        }
+        if (dbPath.isEmpty()) return;
+
+        // 将 .db 后缀替换为 _mfreq.csv
+        QString csvPath = dbPath;
+        csvPath.replace(QStringLiteral(".db"), QStringLiteral("_mfreq.csv"));
+        if (csvPath == dbPath) csvPath += QStringLiteral("_mfreq.csv");
+
+        m_mfCsvFile = new QFile(csvPath, this);
+        const bool exists = m_mfCsvFile->exists();
+        if (!m_mfCsvFile->open(QIODevice::Append | QIODevice::Text)) {
+            qWarning() << "RealtimeSqlRecorder: 无法打开多频涡流CSV文件" << csvPath;
+            delete m_mfCsvFile;
+            m_mfCsvFile = nullptr;
+            return;
+        }
+
+        m_mfCsvStream = new QTextStream(m_mfCsvFile);
+
+        if (!exists) {
+            // CSV 表头
+            *m_mfCsvStream << "timestamp_unix_ms,frame_index,frequency_factor,frequency_hz,"
+                           << "impedance_real,impedance_imag,impedance_magnitude,impedance_phase_deg,"
+                           << "normalized_impedance_real,normalized_impedance_imag,"
+                           << "voltage_magnitude,current_magnitude,valid\n";
+        }
+    }
+
+    void closeMfCsv()
+    {
+        if (m_mfCsvStream) {
+            m_mfCsvStream->flush();
+            delete m_mfCsvStream;
+            m_mfCsvStream = nullptr;
+        }
+        if (m_mfCsvFile) {
+            m_mfCsvFile->close();
+            delete m_mfCsvFile;
+            m_mfCsvFile = nullptr;
+        }
+    }
+
+    void writeMfCsvRow(const FrameData& frame)
+    {
+        if (frame.detectMode != FrameData::MultiFreqEddy || frame.mfFreqPoints.isEmpty())
+            return;
+
+        ensureMfCsvOpen();
+        if (!m_mfCsvStream) return;
+
+        for (const auto& pt : frame.mfFreqPoints) {
+            *m_mfCsvStream << frame.timestamp << ','
+                           << frame.frameId << ','
+                           << pt.frequencyFactor << ','
+                           << pt.frequencyHz << ','
+                           << pt.impedanceReal_raw << ','
+                           << pt.impedanceImag_raw << ','
+                           << pt.impedanceMagnitude << ','
+                           << pt.impedancePhaseDeg << ','
+                           << pt.normalizedImpedanceReal << ','
+                           << pt.normalizedImpedanceImag << ','
+                           << pt.voltageMagnitude << ','
+                           << pt.currentMagnitude << ','
+                           << (pt.valid ? 1 : 0) << '\n';
+        }
+    }
 };
 
 bool RealtimeSqlRecorder::ensureAlignedFramesSchema(QSqlDatabase& db, QString* errorMessage)
