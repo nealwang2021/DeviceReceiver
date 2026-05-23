@@ -930,12 +930,236 @@ bool HistoryImportService::importHdf5(QString* errorMessage)
     emit progress(written, written);
     return true;
 }
+
+bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QString& targetDbPath)
+{
+    if (!QFile::exists(filePath)) {
+        return false;
+    }
+
+    hid_t fileId = H5Fopen(filePath.toLocal8Bit().constData(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (fileId < 0) {
+        return false;
+    }
+
+    auto closeH5 = [&]() {
+        if (fileId >= 0) {
+            H5Fclose(fileId);
+            fileId = -1;
+        }
+    };
+
+    auto openDs = [&](const char* name) -> hid_t {
+        if (H5Lexists(fileId, name, H5P_DEFAULT) <= 0) {
+            return -1;
+        }
+        return H5Dopen2(fileId, name, H5P_DEFAULT);
+    };
+
+    // Open all 12 datasets
+    hid_t dsTs       = openDs("/frames/timestamp_ms_utc");
+    hid_t dsFrameIdx = openDs("/frames/frame_index");
+    hid_t dsFreqFac  = openDs("/frames/frequency_factor");
+    hid_t dsFreqHz   = openDs("/frames/frequency_hz");
+    hid_t dsImpReal  = openDs("/impedance/real");
+    hid_t dsImpImag  = openDs("/impedance/imag");
+    hid_t dsImpMag   = openDs("/impedance/magnitude");
+    hid_t dsImpPhase = openDs("/impedance/phase_deg");
+    hid_t dsNormReal = openDs("/impedance/norm_real");
+    hid_t dsNormImag = openDs("/impedance/norm_imag");
+    hid_t dsVoltMag  = openDs("/voltage/magnitude");
+    hid_t dsCurrMag  = openDs("/current/magnitude");
+
+    const hid_t allDs[] = { dsTs, dsFrameIdx, dsFreqFac, dsFreqHz,
+                            dsImpReal, dsImpImag, dsImpMag, dsImpPhase,
+                            dsNormReal, dsNormImag, dsVoltMag, dsCurrMag };
+    for (hid_t d : allDs) {
+        if (d < 0) {
+            for (hid_t dd : allDs) if (dd >= 0) H5Dclose(dd);
+            closeH5();
+            return false;
+        }
+    }
+
+    // Get row count
+    hid_t tsSpace = H5Dget_space(dsTs);
+    hsize_t dims[1] = {0};
+    H5Sget_simple_extent_dims(tsSpace, dims, nullptr);
+    H5Sclose(tsSpace);
+    const qint64 totalRows = static_cast<qint64>(dims[0]);
+    emit progress(0, totalRows);
+
+    // Setup target database
+    const QString connectionName = buildUniqueConnectionName();
+    ScopedSqlConnectionCleanup connectionCleanup(connectionName);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(targetDbPath);
+    if (!db.open()) {
+        for (hid_t d : allDs) H5Dclose(d);
+        closeH5();
+        return false;
+    }
+
+    // Ensure multifreq_frames schema
+    QString schemaError;
+    if (!RealtimeSqlRecorder::ensureMultiFreqFramesSchema(db, &schemaError)) {
+        for (hid_t d : allDs) H5Dclose(d);
+        closeH5();
+        db.close();
+        db = QSqlDatabase();
+        QFile::remove(targetDbPath);
+        return false;
+    }
+
+    // Prepare insert
+    QSqlQuery clearQuery(db);
+    clearQuery.exec(QStringLiteral("DELETE FROM multifreq_frames"));
+    QSqlQuery insertQuery(db);
+    if (!insertQuery.prepare(QStringLiteral(
+            "INSERT INTO multifreq_frames(timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
+            "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
+            "normalized_impedance_real, normalized_impedance_imag, "
+            "voltage_magnitude, current_magnitude, valid) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")))
+    {
+        for (hid_t d : allDs) H5Dclose(d);
+        closeH5();
+        db.close();
+        db = QSqlDatabase();
+        QFile::remove(targetDbPath);
+        return false;
+    }
+    if (!db.transaction()) {
+        for (hid_t d : allDs) H5Dclose(d);
+        closeH5();
+        db.close();
+        db = QSqlDatabase();
+        QFile::remove(targetDbPath);
+        return false;
+    }
+
+    // Chunked reading loop
+    const qint64 chunkSize = qMax(256, m_request.chunkSize);
+    QVector<qint64>  bufTs;
+    QVector<qint64>  bufFrameIdx;
+    QVector<qint32>  bufFreqFac;
+    QVector<double>  bufFreqHz;
+    QVector<double>  bufImpReal;
+    QVector<double>  bufImpImag;
+    QVector<double>  bufImpMag;
+    QVector<double>  bufImpPhase;
+    QVector<double>  bufNormReal;
+    QVector<double>  bufNormImag;
+    QVector<double>  bufVoltMag;
+    QVector<double>  bufCurrMag;
+
+    qint64 written = 0;
+    for (qint64 offset = 0; offset < totalRows; offset += chunkSize) {
+        if (m_canceled.loadRelaxed() == 1) {
+            db.rollback();
+            for (hid_t d : allDs) H5Dclose(d);
+            closeH5();
+            db.close();
+            db = QSqlDatabase();
+            QFile::remove(targetDbPath);
+            return false;
+        }
+
+        const qint64 n = qMin(chunkSize, totalRows - offset);
+        bufTs.resize(n);
+        bufFrameIdx.resize(n);
+        bufFreqFac.resize(n);
+        bufFreqHz.resize(n);
+        bufImpReal.resize(n);
+        bufImpImag.resize(n);
+        bufImpMag.resize(n);
+        bufImpPhase.resize(n);
+        bufNormReal.resize(n);
+        bufNormImag.resize(n);
+        bufVoltMag.resize(n);
+        bufCurrMag.resize(n);
+
+        if (!readHyperslab1D(dsTs,       H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufTs.data()) ||
+            !readHyperslab1D(dsFrameIdx, H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufFrameIdx.data()) ||
+            !readHyperslab1D(dsFreqFac,  H5T_NATIVE_INT32,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufFreqFac.data()) ||
+            !readHyperslab1D(dsFreqHz,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufFreqHz.data()) ||
+            !readHyperslab1D(dsImpReal,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufImpReal.data()) ||
+            !readHyperslab1D(dsImpImag,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufImpImag.data()) ||
+            !readHyperslab1D(dsImpMag,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufImpMag.data()) ||
+            !readHyperslab1D(dsImpPhase, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufImpPhase.data()) ||
+            !readHyperslab1D(dsNormReal, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufNormReal.data()) ||
+            !readHyperslab1D(dsNormImag, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufNormImag.data()) ||
+            !readHyperslab1D(dsVoltMag,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufVoltMag.data()) ||
+            !readHyperslab1D(dsCurrMag,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufCurrMag.data()))
+        {
+            db.rollback();
+            for (hid_t d : allDs) H5Dclose(d);
+            closeH5();
+            db.close();
+            db = QSqlDatabase();
+            QFile::remove(targetDbPath);
+            return false;
+        }
+
+        for (qint64 r = 0; r < n; ++r) {
+            insertQuery.bindValue(0,  bufTs[r]);
+            insertQuery.bindValue(1,  bufFrameIdx[r]);
+            insertQuery.bindValue(2,  static_cast<int>(bufFreqFac[r]));
+            insertQuery.bindValue(3,  bufFreqHz[r]);
+            insertQuery.bindValue(4,  std::isfinite(bufImpReal[r])  ? QVariant(bufImpReal[r])  : QVariant());
+            insertQuery.bindValue(5,  std::isfinite(bufImpImag[r])  ? QVariant(bufImpImag[r])  : QVariant());
+            insertQuery.bindValue(6,  std::isfinite(bufImpMag[r])   ? QVariant(bufImpMag[r])   : QVariant());
+            insertQuery.bindValue(7,  std::isfinite(bufImpPhase[r]) ? QVariant(bufImpPhase[r]) : QVariant());
+            insertQuery.bindValue(8,  std::isfinite(bufNormReal[r]) ? QVariant(bufNormReal[r]) : QVariant());
+            insertQuery.bindValue(9,  std::isfinite(bufNormImag[r]) ? QVariant(bufNormImag[r]) : QVariant());
+            insertQuery.bindValue(10, std::isfinite(bufVoltMag[r])  ? QVariant(bufVoltMag[r])  : QVariant());
+            insertQuery.bindValue(11, std::isfinite(bufCurrMag[r])  ? QVariant(bufCurrMag[r])  : QVariant());
+            insertQuery.bindValue(12, 1); // valid
+
+            if (!insertQuery.exec()) {
+                db.rollback();
+                for (hid_t d : allDs) H5Dclose(d);
+                closeH5();
+                db.close();
+                db = QSqlDatabase();
+                QFile::remove(targetDbPath);
+                return false;
+            }
+            ++written;
+        }
+        emit progress(written, totalRows);
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        for (hid_t d : allDs) H5Dclose(d);
+        closeH5();
+        db.close();
+        db = QSqlDatabase();
+        QFile::remove(targetDbPath);
+        return false;
+    }
+
+    for (hid_t d : allDs) H5Dclose(d);
+    closeH5();
+    db.close();
+    db = QSqlDatabase();
+    QFile::remove(targetDbPath);
+    emit progress(written, written);
+    return true;
+}
 #else
 bool HistoryImportService::importHdf5(QString* errorMessage)
 {
     if (errorMessage) {
         *errorMessage = QStringLiteral("当前构建未启用 HDF5 支持");
     }
+    return false;
+}
+
+bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QString& targetDbPath)
+{
+    Q_UNUSED(filePath); Q_UNUSED(targetDbPath);
     return false;
 }
 #endif

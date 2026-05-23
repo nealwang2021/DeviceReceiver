@@ -50,6 +50,7 @@ private:
 
     bool importCsv(QString* errorMessage);
     bool importHdf5(QString* errorMessage);
+    bool importMultiFreqHdf5(const QString& filePath, const QString& targetDbPath);
 
     bool initTargetDb(class QSqlDatabase& db, QString* errorMessage) const;
     bool insertRow(class QSqlQuery& insertQuery,
