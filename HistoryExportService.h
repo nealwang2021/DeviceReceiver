@@ -5,6 +5,8 @@
 #include <QObject>
 #include <QString>
 
+#include "HistoryDataProvider.h"
+
 /**
  * 历史数据导出 Worker（运行在独立 QThread 上）。
  *
@@ -65,6 +67,15 @@ private:
 
     bool exportCsv(QString* errorMessage);
     bool exportHdf5(QString* errorMessage);
+
+public:
+    /// 多频涡流 HDF5 导出（同步调用，返回 true/false）。
+    bool exportMultiFreqHdf5(const QString& filePath, qint64 startMs, qint64 endMs,
+                             const QString& dbPath = QString(),
+                             HistoryDataProvider::HistorySourceMode mode =
+                                 HistoryDataProvider::HistorySourceMode::SessionRealtime);
+
+private:
 };
 
 #endif // HISTORYEXPORTSERVICE_H

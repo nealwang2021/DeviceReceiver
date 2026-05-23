@@ -619,10 +619,230 @@ bool HistoryExportService::exportHdf5(QString* errorMessage)
     emit progress(offset, offset);
     return true;
 }
+
+bool HistoryExportService::exportMultiFreqHdf5(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    QFileInfo fileInfo(filePath);
+    QDir().mkpath(fileInfo.absolutePath());
+
+    const int chunkRows = qMax(1024, m_request.chunkSize);
+
+    hid_t fileId = H5Fcreate(filePath.toLocal8Bit().constData(),
+                             H5F_ACC_TRUNC,
+                             H5P_DEFAULT,
+                             H5P_DEFAULT);
+    if (fileId < 0) {
+        return false;
+    }
+
+    auto cleanupAndRemove = [&]() {
+        if (fileId >= 0) H5Fclose(fileId);
+        QFile::remove(filePath);
+    };
+
+    // /frames 组
+    hid_t framesGroup    = H5Gcreate2(fileId, "/frames",    H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t impedanceGroup = H5Gcreate2(fileId, "/impedance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t voltageGroup   = H5Gcreate2(fileId, "/voltage",   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t currentGroup   = H5Gcreate2(fileId, "/current",   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (framesGroup < 0 || impedanceGroup < 0 || voltageGroup < 0 || currentGroup < 0) {
+        if (framesGroup    >= 0) H5Gclose(framesGroup);
+        if (impedanceGroup >= 0) H5Gclose(impedanceGroup);
+        if (voltageGroup   >= 0) H5Gclose(voltageGroup);
+        if (currentGroup   >= 0) H5Gclose(currentGroup);
+        cleanupAndRemove();
+        return false;
+    }
+
+    // /frames 数据集
+    hid_t dsTs       = createChunkedDataset1D(framesGroup, "timestamp_ms_utc",  H5T_STD_I64LE,  chunkRows);
+    hid_t dsFrameIdx = createChunkedDataset1D(framesGroup, "frame_index",       H5T_STD_I64LE,  chunkRows);
+    hid_t dsFreqFac  = createChunkedDataset1D(framesGroup, "frequency_factor",  H5T_STD_I32LE,  chunkRows);
+    hid_t dsFreqHz   = createChunkedDataset1D(framesGroup, "frequency_hz",      H5T_IEEE_F64LE, chunkRows);
+
+    // /impedance 数据集
+    hid_t dsImpReal  = createChunkedDataset1D(impedanceGroup, "real",      H5T_IEEE_F64LE, chunkRows);
+    hid_t dsImpImag  = createChunkedDataset1D(impedanceGroup, "imag",      H5T_IEEE_F64LE, chunkRows);
+    hid_t dsImpMag   = createChunkedDataset1D(impedanceGroup, "magnitude", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsImpPhase = createChunkedDataset1D(impedanceGroup, "phase_deg", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsNormReal = createChunkedDataset1D(impedanceGroup, "norm_real", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsNormImag = createChunkedDataset1D(impedanceGroup, "norm_imag", H5T_IEEE_F64LE, chunkRows);
+
+    // /voltage /current 数据集
+    hid_t dsVoltMag  = createChunkedDataset1D(voltageGroup, "magnitude", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsCurrMag  = createChunkedDataset1D(currentGroup, "magnitude", H5T_IEEE_F64LE, chunkRows);
+
+    H5Gclose(framesGroup);
+    H5Gclose(impedanceGroup);
+    H5Gclose(voltageGroup);
+    H5Gclose(currentGroup);
+
+    const hid_t datasets[] = { dsTs, dsFrameIdx, dsFreqFac, dsFreqHz,
+                               dsImpReal, dsImpImag, dsImpMag, dsImpPhase,
+                               dsNormReal, dsNormImag,
+                               dsVoltMag, dsCurrMag };
+    for (hid_t d : datasets) {
+        if (d < 0) {
+            for (hid_t dd : datasets) if (dd >= 0) H5Dclose(dd);
+            cleanupAndRemove();
+            return false;
+        }
+    }
+
+    // 文件级属性
+    writeInt32Attr(fileId, "schema_version", kSchemaVersion);
+    writeInt64Attr(fileId, "exported_at_ms", QDateTime::currentMSecsSinceEpoch());
+    writeInt64Attr(fileId, "range_start_ms", startMs);
+    writeInt64Attr(fileId, "range_end_ms",   endMs);
+    writeStringAttr(fileId, "source",        QStringLiteral("multifreq_eddy"));
+    writeStringAttr(fileId, "source_mode",
+                    (mode == HistoryDataProvider::HistorySourceMode::SessionRealtime)
+                    ? QStringLiteral("SessionRealtime")
+                    : QStringLiteral("OfflineExternal"));
+
+    // 打开数据库
+    SqlHistoryQuery query;
+    QString actualDbPath = dbPath;
+    if (actualDbPath.isEmpty()) {
+        auto* hdp = HistoryDataProvider::instance();
+        if (!hdp || !hdp->isDatabaseOpen()) {
+            for (hid_t d : datasets) H5Dclose(d);
+            cleanupAndRemove();
+            return false;
+        }
+        actualDbPath = hdp->currentDatabasePath();
+    }
+    if (!query.open(actualDbPath)) {
+        for (hid_t d : datasets) H5Dclose(d);
+        cleanupAndRemove();
+        return false;
+    }
+
+    // 估算行数（用于进度）
+    const qint64 estimatedTotal = query.estimateMultiFreqRowCount(startMs, endMs);
+
+    qint64 lastTs = startMs - 1;
+    qint64 lastRowId = std::numeric_limits<qint64>::min();
+    qint64 offset = 0;
+    qint64 reportedTotal = estimatedTotal;
+
+    emit progress(0, reportedTotal);
+
+    QVector<qint64>  bufTs;
+    QVector<qint64>  bufFrameIdx;
+    QVector<qint32>  bufFreqFac;
+    QVector<double>  bufFreqHz;
+    QVector<double>  bufImpReal;
+    QVector<double>  bufImpImag;
+    QVector<double>  bufImpMag;
+    QVector<double>  bufImpPhase;
+    QVector<double>  bufNormReal;
+    QVector<double>  bufNormImag;
+    QVector<double>  bufVoltMag;
+    QVector<double>  bufCurrMag;
+
+    bool success = true;
+
+    while (true) {
+        if (m_canceled.loadRelaxed() == 1) {
+            success = false;
+            break;
+        }
+
+        const auto rows = query.fetchMultiFreqRawChunk(startMs, endMs, lastTs, lastRowId, chunkRows);
+        if (rows.isEmpty()) {
+            break;
+        }
+
+        const qint64 n = rows.size();
+        bufTs.resize(n);
+        bufFrameIdx.resize(n);
+        bufFreqFac.resize(n);
+        bufFreqHz.resize(n);
+        bufImpReal.resize(n);
+        bufImpImag.resize(n);
+        bufImpMag.resize(n);
+        bufImpPhase.resize(n);
+        bufNormReal.resize(n);
+        bufNormImag.resize(n);
+        bufVoltMag.resize(n);
+        bufCurrMag.resize(n);
+
+        for (int r = 0; r < n; ++r) {
+            const auto& row = rows[r];
+            bufTs[r]       = row.timestampMs;
+            bufFrameIdx[r] = row.frameIndex;
+            bufFreqFac[r]  = static_cast<qint32>(row.frequencyFactor);
+            bufFreqHz[r]   = row.frequencyHz;
+            bufImpReal[r]  = row.impedanceReal;
+            bufImpImag[r]  = row.impedanceImag;
+            bufImpMag[r]   = row.impedanceMagnitude;
+            bufImpPhase[r] = row.impedancePhaseDeg;
+            bufNormReal[r] = row.normImpedanceReal;
+            bufNormImag[r] = row.normImpedanceImag;
+            bufVoltMag[r]  = row.voltageMag;
+            bufCurrMag[r]  = row.currentMag;
+        }
+
+        if (!appendDataset1D(dsTs,       H5T_NATIVE_INT64,  offset, n, bufTs.constData()) ||
+            !appendDataset1D(dsFrameIdx, H5T_NATIVE_INT64,  offset, n, bufFrameIdx.constData()) ||
+            !appendDataset1D(dsFreqFac,  H5T_NATIVE_INT32,  offset, n, bufFreqFac.constData()) ||
+            !appendDataset1D(dsFreqHz,   H5T_NATIVE_DOUBLE, offset, n, bufFreqHz.constData()) ||
+            !appendDataset1D(dsImpReal,  H5T_NATIVE_DOUBLE, offset, n, bufImpReal.constData()) ||
+            !appendDataset1D(dsImpImag,  H5T_NATIVE_DOUBLE, offset, n, bufImpImag.constData()) ||
+            !appendDataset1D(dsImpMag,   H5T_NATIVE_DOUBLE, offset, n, bufImpMag.constData()) ||
+            !appendDataset1D(dsImpPhase, H5T_NATIVE_DOUBLE, offset, n, bufImpPhase.constData()) ||
+            !appendDataset1D(dsNormReal, H5T_NATIVE_DOUBLE, offset, n, bufNormReal.constData()) ||
+            !appendDataset1D(dsNormImag, H5T_NATIVE_DOUBLE, offset, n, bufNormImag.constData()) ||
+            !appendDataset1D(dsVoltMag,  H5T_NATIVE_DOUBLE, offset, n, bufVoltMag.constData()) ||
+            !appendDataset1D(dsCurrMag,  H5T_NATIVE_DOUBLE, offset, n, bufCurrMag.constData()))
+        {
+            success = false;
+            break;
+        }
+
+        offset += n;
+        lastTs = rows.last().timestampMs;
+        lastRowId = rows.last().rowId;
+
+        if (reportedTotal > 0 && offset > reportedTotal * 8 / 10) {
+            reportedTotal = qMax(reportedTotal, offset * 3 / 2);
+        }
+        emit progress(offset, reportedTotal);
+
+        if (n < chunkRows) {
+            break;
+        }
+    }
+
+    for (hid_t d : datasets) H5Dclose(d);
+    query.close();
+    H5Fclose(fileId);
+    fileId = -1;
+
+    if (!success) {
+        QFile::remove(filePath);
+        return false;
+    }
+
+    emit progress(offset, offset);
+    return true;
+}
 #else
 bool HistoryExportService::exportHdf5(QString* errorMessage)
 {
     if (errorMessage) *errorMessage = QStringLiteral("当前构建未启用 HDF5 支持");
+    return false;
+}
+
+bool HistoryExportService::exportMultiFreqHdf5(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    Q_UNUSED(filePath); Q_UNUSED(startMs); Q_UNUSED(endMs);
+    Q_UNUSED(dbPath); Q_UNUSED(mode);
     return false;
 }
 #endif // HAS_HDF5
