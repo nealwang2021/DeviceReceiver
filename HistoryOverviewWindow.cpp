@@ -941,7 +941,7 @@ void HistoryOverviewWindow::rebuildEnvelope()
         return;
     }
     auto* hdp = HistoryDataProvider::instance();
-    if (!hdp || !hdp->isOpen()) return;
+    if (!hdp || !hdp->isDatabaseOpen()) return;
 
     // 优先尝试多频涡流包络
     {
@@ -1016,7 +1016,7 @@ void HistoryOverviewWindow::rebuildEnvelope()
 void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
 {
     auto* hdp = HistoryDataProvider::instance();
-    if (!hdp || !hdp->isOpen()) return;
+    if (!hdp || !hdp->isDatabaseOpen()) return;
 
     // 清除旧的多频图
     for (auto* g : m_mfEnvelopeMinGraphs) if (g) m_plot->removeGraph(g);

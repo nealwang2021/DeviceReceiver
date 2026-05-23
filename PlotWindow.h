@@ -8,6 +8,14 @@
 #include "FrameData.h"
 #include "PlotWindowBase.h"
 
+/// 用于 review 模式的帧记录（从 DB 分块抽稀加载）
+struct FrameRecord
+{
+    qint64 timestampMs = 0;
+    qint64 sequence = 0;
+    QVector<MultiFreqPointResult> mfFreqPoints;
+};
+
 class QSplitter;
 class QRadioButton;
 class QCheckBox;
@@ -48,8 +56,13 @@ private:
     // 时基列工厂（Y轴反转，时间自上而下）
     QWidget* buildTimeBaseColumn(QCustomPlot*& plotOut);
 
+    // Review mode helpers
+    void loadMultiFreqReviewFromDb();
+    void buildAndRenderReviewSnapshot();
+
 private slots:
     void onViewTypeChanged(int index);
+    void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
     void onLegendClick(QCPLegend* legend, QCPAbstractLegendItem* item, QMouseEvent* event);
     void onLegendDoubleClick(QCPLegend* legend, QCPAbstractLegendItem* item, QMouseEvent* event);
     void onMfFreqCheckToggled();
@@ -96,6 +109,13 @@ private:
     // 上一个检测模式，用于重建布局
     FrameData::DetectionMode m_lastMode = FrameData::Legacy;
     quint64 m_lastSnapshotVersion = 0;
+
+    // Review mode state
+    QVector<FrameRecord> m_reviewFrames;
+    bool m_reviewMode = false;
+    qint64 m_reviewStartMs = 0;
+    qint64 m_reviewEndMs = 0;
+    quint64 m_reviewEpoch = 0;
 };
 
 #endif // PLOTWINDOW_H

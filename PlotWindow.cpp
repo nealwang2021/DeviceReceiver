@@ -1,6 +1,9 @@
 #include "PlotWindow.h"
 #include "PlotDataHub.h"
 #include "AppConfig.h"
+#include "SqlHistoryQuery.h"
+#include "HistoryDataProvider.h"
+#include "SelectionState.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -12,6 +15,12 @@
 #include <QScrollArea>
 #include <QSplitter>
 #include <QButtonGroup>
+#include <QtConcurrent>
+#include <QMap>
+#include <QSet>
+#include <QUuid>
+#include <algorithm>
+#include <limits>
 #include <cmath>
 
 PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
@@ -76,6 +85,11 @@ PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
     bool connected2 = connect(m_plot, &QCustomPlot::legendDoubleClick, this, &PlotWindow::onLegendDoubleClick);
     qDebug() << "legendClick connection:" << connected1;
     qDebug() << "legendDoubleClick connection:" << connected2;
+
+    // 监听 SelectionState 以实现 review 模式切换
+    auto* sel = SelectionState::instance();
+    connect(sel, &SelectionState::selectionChanged,
+            this, &PlotWindow::onSelectionChanged);
 
     // 保留定时器用于平滑动画（可选，可以移除或保留）
     m_refreshTimer = new QTimer(this);
@@ -149,6 +163,15 @@ void PlotWindow::onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>&
 void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot)
 {
     if (!m_plot || !snapshot || snapshot->timeMs.isEmpty()) {
+        return;
+    }
+
+    // Review mode: render from cached m_reviewFrames instead of live snapshot
+    if (m_reviewMode) {
+        if (m_lastMode == FrameData::MultiFreqEddy && !m_reviewFrames.isEmpty()) {
+            buildAndRenderReviewSnapshot();
+        }
+        // For non-MultiFreqEddy review mode, review loading not yet implemented; stay idle.
         return;
     }
 
@@ -897,5 +920,187 @@ void PlotWindow::onMfCircleToggled()
 {
     if (!m_mfCircleItem || !m_mfCircleShowCheck) return;
     m_mfCircleItem->setVisible(m_mfCircleShowCheck->isChecked());
+    if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+// ========== Review mode ==========
+
+void PlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
+{
+    m_reviewStartMs = startMs;
+    m_reviewEndMs = endMs;
+    const bool nowReview = (mode == SelectionState::Review);
+
+    if (nowReview) {
+        if (m_lastMode == FrameData::MultiFreqEddy) {
+            loadMultiFreqReviewFromDb();
+        }
+        // For other modes, review loading not yet implemented
+    } else {
+        // Return to live mode
+        m_reviewFrames.clear();
+        m_reviewMode = false;
+        // Force re-render from current live snapshot
+        auto snap = PlotDataHub::instance()->snapshot();
+        if (snap) {
+            m_lastSnapshotVersion = 0; // force update even if version unchanged
+            updatePlotDataFromSnapshot(snap);
+        }
+    }
+}
+
+void PlotWindow::loadMultiFreqReviewFromDb()
+{
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isDatabaseOpen()) return;
+
+    m_reviewFrames.clear();
+
+    const qint64 startMs = m_reviewStartMs;
+    const qint64 endMs = m_reviewEndMs;
+    const quint64 epoch = ++m_reviewEpoch;
+
+    // 异步加载
+    QtConcurrent::run([this, startMs, endMs, epoch]() {
+        // 创建独立的 SqlHistoryQuery（不同的连接名，避免与主连接冲突）
+        SqlHistoryQuery query;
+        const QString dbPath = HistoryDataProvider::instance()->currentDatabasePath();
+        if (dbPath.isEmpty()) return;
+        if (!query.open(dbPath)) return;
+
+        const qint64 totalRows = query.estimateMultiFreqRowCount(startMs, endMs);
+        const int maxFrames = 5000;
+        const int stride = qMax(1, static_cast<int>(totalRows / maxFrames));
+
+        QMap<qint64, QVector<SqlHistoryQuery::MultiFreqFrameRow>> frameGroups;
+        qint64 lastTs = startMs - 1;
+        qint64 lastRowId = std::numeric_limits<qint64>::min();
+        int rowIdx = 0;
+
+        while (true) {
+            const auto rows = query.fetchMultiFreqRawChunk(startMs, endMs, lastTs, lastRowId, 500);
+            if (rows.isEmpty()) break;
+
+            for (const auto& r : rows) {
+                if (rowIdx++ % stride != 0) continue;
+                frameGroups[r.frameIndex].append(r);
+            }
+            lastTs = rows.last().timestampMs;
+            lastRowId = rows.last().rowId;
+        }
+
+        // 按 frameIndex 排序组装
+        QVector<FrameRecord> results;
+        for (auto it = frameGroups.constBegin(); it != frameGroups.constEnd(); ++it) {
+            const auto& group = it.value();
+            FrameRecord rec;
+            rec.timestampMs = group.first().timestampMs;
+            rec.sequence = group.first().frameIndex;
+
+            for (const auto& mfRow : group) {
+                MultiFreqPointResult pt;
+                pt.frequencyFactor = mfRow.frequencyFactor;
+                pt.frequencyHz = mfRow.frequencyHz;
+                pt.impedanceReal_raw = mfRow.impedanceReal;
+                pt.impedanceImag_raw = mfRow.impedanceImag;
+                pt.impedanceMagnitude = mfRow.impedanceMagnitude;
+                pt.impedancePhaseDeg = mfRow.impedancePhaseDeg;
+                pt.normalizedImpedanceReal = mfRow.normImpedanceReal;
+                pt.normalizedImpedanceImag = mfRow.normImpedanceImag;
+                pt.voltageMagnitude = mfRow.voltageMag;
+                pt.currentMagnitude = mfRow.currentMag;
+                pt.valid = mfRow.valid;
+                rec.mfFreqPoints.append(pt);
+            }
+            results.append(rec);
+        }
+
+        // 回主线程
+        QMetaObject::invokeMethod(this, [this, epoch, results = std::move(results)]() {
+            if (epoch != m_reviewEpoch) return; // 过期请求
+            m_reviewFrames = results;
+            m_reviewMode = true;
+            if (m_lastMode == FrameData::MultiFreqEddy) {
+                buildAndRenderReviewSnapshot();
+            }
+        }, Qt::QueuedConnection);
+    });
+}
+
+void PlotWindow::buildAndRenderReviewSnapshot()
+{
+    // 收集所有唯一频率因子
+    QSet<int> factors;
+    for (const auto& rec : m_reviewFrames) {
+        for (const auto& pt : rec.mfFreqPoints) {
+            factors.insert(pt.frequencyFactor);
+        }
+    }
+    QList<int> sortedFactors = factors.values();
+    std::sort(sortedFactors.begin(), sortedFactors.end());
+    const int nPoints = sortedFactors.size();
+    if (nPoints <= 0) return;
+
+    // 构建临时 PlotSnapshot
+    QSharedPointer<PlotSnapshot> snap = QSharedPointer<PlotSnapshot>::create();
+    snap->mode = FrameData::MultiFreqEddy;
+    snap->mfFreqPointCount = nPoints;
+    snap->mfFreqFactors = sortedFactors.toVector();
+    snap->mfImpedanceReal.resize(nPoints);
+    snap->mfImpedanceImag.resize(nPoints);
+    snap->mfImpedanceMag.resize(nPoints);
+    snap->mfImpedancePhase.resize(nPoints);
+    snap->mfNormImpedanceReal.resize(nPoints);
+    snap->mfNormImpedanceImag.resize(nPoints);
+
+    for (const auto& rec : m_reviewFrames) {
+        snap->timeMs.append(static_cast<double>(rec.timestampMs));
+        for (int i = 0; i < nPoints; ++i) {
+            int factor = sortedFactors[i];
+            bool found = false;
+            for (const auto& pt : rec.mfFreqPoints) {
+                if (pt.frequencyFactor == factor) {
+                    snap->mfImpedanceReal[i].append(pt.impedanceReal_raw);
+                    snap->mfImpedanceImag[i].append(pt.impedanceImag_raw);
+                    snap->mfImpedanceMag[i].append(pt.impedanceMagnitude);
+                    snap->mfImpedancePhase[i].append(pt.impedancePhaseDeg);
+                    snap->mfNormImpedanceReal[i].append(pt.normalizedImpedanceReal);
+                    snap->mfNormImpedanceImag[i].append(pt.normalizedImpedanceImag);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                snap->mfImpedanceReal[i].append(qQNaN());
+                snap->mfImpedanceImag[i].append(qQNaN());
+                snap->mfImpedanceMag[i].append(qQNaN());
+                snap->mfImpedancePhase[i].append(qQNaN());
+                snap->mfNormImpedanceReal[i].append(qQNaN());
+                snap->mfNormImpedanceImag[i].append(qQNaN());
+            }
+        }
+    }
+
+    // 确保多频布局已建立（与 updatePlotDataFromSnapshot 中 MultiFreqEddy 分支一致）
+    if (m_lastMode != FrameData::MultiFreqEddy) {
+        if (m_plot) {
+            if (auto* root = qobject_cast<QVBoxLayout*>(layout())) {
+                root->removeWidget(m_plot);
+            }
+            m_plot->setVisible(false);
+        }
+        if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
+    }
+    if (m_lastMode != FrameData::MultiFreqEddy || m_currentChannelCount != nPoints) {
+        m_currentChannelCount = nPoints;
+        setupMultiFreqLayout(nPoints);
+    }
+
+    m_lastMode = FrameData::MultiFreqEddy;
+
+    // 重用现有渲染逻辑
+    updateMultiFreqPlots(snap);
+    if (m_mfTbPlot1) m_mfTbPlot1->replot(QCustomPlot::rpQueuedReplot);
+    if (m_mfTbPlot2) m_mfTbPlot2->replot(QCustomPlot::rpQueuedReplot);
     if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
 }
