@@ -960,8 +960,9 @@ void PlotWindow::loadMultiFreqReviewFromDb()
     const qint64 endMs = m_reviewEndMs;
     const quint64 epoch = ++m_reviewEpoch;
 
-    // 异步加载
-    QtConcurrent::run([this, startMs, endMs, epoch]() {
+    // 异步加载（QPointer 防止窗口销毁后回调崩溃）
+    QPointer<PlotWindow> self(this);
+    QtConcurrent::run([self, startMs, endMs, epoch]() {
         // 创建独立的 SqlHistoryQuery（不同的连接名，避免与主连接冲突）
         SqlHistoryQuery query;
         const QString dbPath = HistoryDataProvider::instance()->currentDatabasePath();
@@ -1016,12 +1017,13 @@ void PlotWindow::loadMultiFreqReviewFromDb()
         }
 
         // 回主线程
-        QMetaObject::invokeMethod(this, [this, epoch, results = std::move(results)]() {
-            if (epoch != m_reviewEpoch) return; // 过期请求
-            m_reviewFrames = results;
-            m_reviewMode = true;
-            if (m_lastMode == FrameData::MultiFreqEddy) {
-                buildAndRenderReviewSnapshot();
+        if (!self) return;
+        QMetaObject::invokeMethod(self, [self, epoch, results = std::move(results)]() {
+            if (!self || epoch != self->m_reviewEpoch) return;
+            self->m_reviewFrames = results;
+            self->m_reviewMode = true;
+            if (self->m_lastMode == FrameData::MultiFreqEddy) {
+                self->buildAndRenderReviewSnapshot();
             }
         }, Qt::QueuedConnection);
     });

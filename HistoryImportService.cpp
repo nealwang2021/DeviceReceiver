@@ -1144,7 +1144,6 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
     closeH5();
     db.close();
     db = QSqlDatabase();
-    QFile::remove(targetDbPath);
     emit progress(written, written);
     return true;
 }
