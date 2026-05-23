@@ -74,6 +74,7 @@ private:
     void scheduleEnvelopeRebuild();
     void updateRefreshButtonToolTip();
     void rebuildEnvelope();
+    void rebuildMultiFreqEnvelope();
     void applyRangeToItems();
     void updateStatusLabels();
     bool isDarkThemeActive() const;
@@ -90,6 +91,8 @@ private:
     QCustomPlot* m_plot = nullptr;
     QCPGraph* m_maxGraph = nullptr;
     QCPGraph* m_minGraph = nullptr;
+    QVector<QCPGraph*> m_mfEnvelopeMinGraphs;
+    QVector<QCPGraph*> m_mfEnvelopeMaxGraphs;
     QCPItemRect* m_rangeRect = nullptr;
     QCPItemStraightLine* m_leftHandle = nullptr;
     QCPItemStraightLine* m_rightHandle = nullptr;

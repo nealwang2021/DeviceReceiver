@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QEvent>
 #include <QFileDialog>
+#include <QSet>
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -719,8 +720,12 @@ void HistoryOverviewWindow::onDatabaseClosed()
     m_dataMinMs = 0;
     m_dataMaxMs = 0;
     m_lastFullEnvelopeWallMs = 0;
-    if (m_maxGraph) m_maxGraph->data()->clear();
-    if (m_minGraph) m_minGraph->data()->clear();
+    if (m_maxGraph) { m_maxGraph->data()->clear(); m_maxGraph->setVisible(true); }
+    if (m_minGraph) { m_minGraph->data()->clear(); m_minGraph->setVisible(true); }
+    for (auto* g : m_mfEnvelopeMinGraphs) if (g) m_plot->removeGraph(g);
+    for (auto* g : m_mfEnvelopeMaxGraphs) if (g) m_plot->removeGraph(g);
+    m_mfEnvelopeMinGraphs.clear();
+    m_mfEnvelopeMaxGraphs.clear();
     if (m_rangeRect) m_rangeRect->setVisible(false);
     if (m_leftHandle) m_leftHandle->setVisible(false);
     if (m_rightHandle) m_rightHandle->setVisible(false);
@@ -932,10 +937,38 @@ void HistoryOverviewWindow::refreshOverview(bool fullEnvelope)
 
 void HistoryOverviewWindow::rebuildEnvelope()
 {
-    if (!m_hasBounds || !m_plot || !m_maxGraph || !m_minGraph) {
+    if (!m_hasBounds || !m_plot) {
         return;
     }
     auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isOpen()) return;
+
+    // 优先尝试多频涡流包络
+    {
+        const qint64 testStart = plotEnvelopeStartMs();
+        const qint64 testEnd = plotEnvelopeEndMs();
+        if (testEnd > testStart) {
+            // 仅探测一小段以判断是否含多频数据，避免大范围 GROUP BY
+            const qint64 probeEnd = std::min(testEnd, testStart + 10000LL);
+            const auto testBuckets = hdp->queryMultiFreqOverviewEnvelope(testStart, probeEnd, 1000);
+            if (!testBuckets.isEmpty()) {
+                rebuildMultiFreqEnvelope();
+                return;
+            }
+        }
+    }
+
+    // 确保 aligned 图可见（从多频模式切回时）
+    if (m_maxGraph) m_maxGraph->setVisible(true);
+    if (m_minGraph) m_minGraph->setVisible(true);
+    // 清除可能残留的多频图
+    for (auto* g : m_mfEnvelopeMinGraphs) if (g) m_plot->removeGraph(g);
+    for (auto* g : m_mfEnvelopeMaxGraphs) if (g) m_plot->removeGraph(g);
+    m_mfEnvelopeMinGraphs.clear();
+    m_mfEnvelopeMaxGraphs.clear();
+
+    if (!m_maxGraph || !m_minGraph) return;
+
     const qint64 start = plotEnvelopeStartMs();
     const qint64 end = plotEnvelopeEndMs();
     if (end <= start) {
@@ -970,6 +1003,83 @@ void HistoryOverviewWindow::rebuildEnvelope()
 
     setOverviewXAxisRangeMs(m_plot, start, end);
     updateOverviewXAxisDateTimeFormat(m_plot, std::max<qint64>(1LL, end - start));
+    if (std::isfinite(yMin) && std::isfinite(yMax) && yMax > yMin) {
+        const double pad = (yMax - yMin) * 0.08;
+        m_plot->yAxis->setRange(yMin - pad, yMax + pad);
+    } else if (std::isfinite(yMin)) {
+        m_plot->yAxis->setRange(yMin - 1.0, yMin + 1.0);
+    }
+    applyRangeToItems();
+    m_plot->replot(QCustomPlot::rpQueuedReplot);
+}
+
+void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
+{
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isOpen()) return;
+
+    // 清除旧的多频图
+    for (auto* g : m_mfEnvelopeMinGraphs) if (g) m_plot->removeGraph(g);
+    for (auto* g : m_mfEnvelopeMaxGraphs) if (g) m_plot->removeGraph(g);
+    m_mfEnvelopeMinGraphs.clear();
+    m_mfEnvelopeMaxGraphs.clear();
+
+    const qint64 start = plotEnvelopeStartMs();
+    const qint64 end = plotEnvelopeEndMs();
+    if (end <= start) return;
+    const qint64 bucket = HistoryDataProvider::suggestBucketMs(start, end, kOverviewTargetBuckets);
+
+    const auto buckets = hdp->queryMultiFreqOverviewEnvelope(start, end, bucket);
+    if (buckets.isEmpty()) return;
+
+    // 收集所有频点
+    QSet<int> freqFactors;
+    for (const auto& b : buckets) freqFactors.insert(b.frequencyFactor);
+    QList<int> sortedFactors = freqFactors.values();
+    std::sort(sortedFactors.begin(), sortedFactors.end());
+
+    // 隐藏旧的 aligned_frames 包络（多频模式下不适用）
+    if (m_maxGraph) m_maxGraph->setVisible(false);
+    if (m_minGraph) m_minGraph->setVisible(false);
+
+    for (int factor : sortedFactors) {
+        QColor c = QColor::fromHsv((sortedFactors.indexOf(factor) * 47) % 360, 200, 200);
+
+        QVector<double> times, mins, maxs;
+        for (const auto& b : buckets) {
+            if (b.frequencyFactor != factor) continue;
+            times.append(msToPlotX(b.bucketStartMs));
+            mins.append(std::hypot(b.minImpedanceReal, b.minImpedanceImag));
+            maxs.append(std::hypot(b.maxImpedanceReal, b.maxImpedanceImag));
+        }
+
+        auto* gMin = m_plot->addGraph();
+        gMin->setPen(QPen(c, 1));
+        gMin->setName(QStringLiteral("f%1 min").arg(factor));
+        gMin->setData(times, mins, true);
+        m_mfEnvelopeMinGraphs.append(gMin);
+
+        auto* gMax = m_plot->addGraph();
+        gMax->setPen(QPen(c, 1, Qt::DashLine));
+        gMax->setName(QStringLiteral("f%1 max").arg(factor));
+        gMax->setData(times, maxs, true);
+        m_mfEnvelopeMaxGraphs.append(gMax);
+    }
+
+    // 计算全局 Y 范围
+    double yMin = std::numeric_limits<double>::infinity();
+    double yMax = -std::numeric_limits<double>::infinity();
+    for (const auto& b : buckets) {
+        const double vMin = std::hypot(b.minImpedanceReal, b.minImpedanceImag);
+        const double vMax = std::hypot(b.maxImpedanceReal, b.maxImpedanceImag);
+        yMin = std::min(yMin, vMin);
+        yMax = std::max(yMax, vMax);
+    }
+
+    setOverviewXAxisRangeMs(m_plot, start, end);
+    updateOverviewXAxisDateTimeFormat(m_plot, std::max<qint64>(1LL, end - start));
+    m_plot->xAxis->setLabel(QStringLiteral("时间 (s)"));
+    m_plot->yAxis->setLabel(QStringLiteral("阻抗幅值 (Ω)"));
     if (std::isfinite(yMin) && std::isfinite(yMax) && yMax > yMin) {
         const double pad = (yMax - yMin) * 0.08;
         m_plot->yAxis->setRange(yMin - pad, yMax + pad);
