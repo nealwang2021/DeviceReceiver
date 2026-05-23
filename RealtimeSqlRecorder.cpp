@@ -367,21 +367,28 @@ private:
         const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
 
         if (m_owner->m_retentionMs > 0) {
-            QSqlQuery q(m_db);
-            const QString sql = QStringLiteral(
-                "SELECT MIN(CASE WHEN created_at_ms > 0 THEN created_at_ms ELSE timestamp_unix_ms END) "
-                "FROM aligned_frames");
-            if (q.exec(sql) && q.next()) {
-                const QVariant v = q.value(0);
-                if (!v.isNull()) {
-                    const qint64 minWallMs = v.toLongLong();
-                    const qint64 cutoff = nowMs - m_owner->m_retentionMs;
-                    if (minWallMs < cutoff) {
-                        if (reasonOut) {
-                            *reasonOut = QStringLiteral("retention_exceeded");
-                        }
-                        return true;
+            qint64 minWallMs = std::numeric_limits<qint64>::max();
+            // 同时检查 aligned_frames 和 multifreq_frames
+            const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames")};
+            for (const QString& table : tables) {
+                QSqlQuery tq(m_db);
+                const QString sql = QStringLiteral(
+                    "SELECT MIN(CASE WHEN created_at_ms > 0 THEN created_at_ms ELSE timestamp_unix_ms END) "
+                    "FROM %1").arg(table);
+                if (tq.exec(sql) && tq.next()) {
+                    const QVariant v = tq.value(0);
+                    if (!v.isNull()) {
+                        minWallMs = qMin(minWallMs, v.toLongLong());
                     }
+                }
+            }
+            if (minWallMs < std::numeric_limits<qint64>::max()) {
+                const qint64 cutoff = nowMs - m_owner->m_retentionMs;
+                if (minWallMs < cutoff) {
+                    if (reasonOut) {
+                        *reasonOut = QStringLiteral("retention_exceeded");
+                    }
+                    return true;
                 }
             }
         }
