@@ -1013,16 +1013,12 @@ void HistoryOverviewWindow::rebuildEnvelope()
     m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
+static constexpr int kMfMaxFreqFactors = 16;
+
 void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
 {
     auto* hdp = HistoryDataProvider::instance();
     if (!hdp || !hdp->isDatabaseOpen()) return;
-
-    // 清除旧的多频图
-    for (auto* g : m_mfEnvelopeMinGraphs) if (g) m_plot->removeGraph(g);
-    for (auto* g : m_mfEnvelopeMaxGraphs) if (g) m_plot->removeGraph(g);
-    m_mfEnvelopeMinGraphs.clear();
-    m_mfEnvelopeMaxGraphs.clear();
 
     const qint64 start = plotEnvelopeStartMs();
     const qint64 end = plotEnvelopeEndMs();
@@ -1037,13 +1033,33 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
     for (const auto& b : buckets) freqFactors.insert(b.frequencyFactor);
     QList<int> sortedFactors = freqFactors.values();
     std::sort(sortedFactors.begin(), sortedFactors.end());
+    const int nFactors = sortedFactors.size();
+    if (nFactors <= 0) return;
 
-    // 隐藏旧的 aligned_frames 包络（多频模式下不适用）
+    // 隐藏旧的 aligned_frames 包络
     if (m_maxGraph) m_maxGraph->setVisible(false);
     if (m_minGraph) m_minGraph->setVisible(false);
 
-    for (int factor : sortedFactors) {
-        QColor c = QColor::fromHsv((sortedFactors.indexOf(factor) * 47) % 360, 200, 200);
+    // 首次调用时创建所有 graph 对并设置 channel fill（与阵列涡流构造函数一致的模式）
+    const int totalGraphs = m_plot->graphCount();
+    if (m_mfEnvelopeMaxGraphs.isEmpty()) {
+        for (int i = 0; i < kMfMaxFreqFactors; ++i) {
+            auto* gMax = m_plot->addGraph();
+            auto* gMin = m_plot->addGraph();
+            gMax->setChannelFillGraph(gMin);  // 在构造函数中只调用一次，后续只改数据
+            gMax->setVisible(false);
+            gMin->setVisible(false);
+            m_mfEnvelopeMaxGraphs.append(gMax);
+            m_mfEnvelopeMinGraphs.append(gMin);
+        }
+    }
+
+    // 设置数据：每个频点一对 graph
+    for (int fi = 0; fi < nFactors; ++fi) {
+        const int factor = sortedFactors[fi];
+        QColor c = QColor::fromHsv((fi * 47) % 360, 200, 200);
+        const bool dark = isDarkThemeActive();
+        const QColor fill(c.red(), c.green(), c.blue(), dark ? 70 : 80);
 
         QVector<double> times, mins, maxs;
         for (const auto& b : buckets) {
@@ -1052,31 +1068,39 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
             mins.append(std::hypot(b.minImpedanceReal, b.minImpedanceImag));
             maxs.append(std::hypot(b.maxImpedanceReal, b.maxImpedanceImag));
         }
+        if (times.isEmpty()) continue;
 
-        auto* gMax = m_plot->addGraph();
-        gMax->setPen(QPen(c, 1));
-        gMax->setName(QStringLiteral("f%1 max").arg(factor));
+        auto* gMax = m_mfEnvelopeMaxGraphs[fi];
+        auto* gMin = m_mfEnvelopeMinGraphs[fi];
+        QPen envPen(c);
+        envPen.setWidthF(1.2);
+        gMax->setPen(envPen);
+        gMin->setPen(envPen);
+        gMax->setBrush(QBrush(fill));
         gMax->setData(times, maxs, true);
-        gMax->setBrush(QBrush(QColor(c.red(), c.green(), c.blue(), 80)));
-        m_mfEnvelopeMaxGraphs.append(gMax);
-
-        auto* gMin = m_plot->addGraph();
-        gMin->setPen(QPen(c, 1));
-        gMin->setName(QStringLiteral("f%1 min").arg(factor));
         gMin->setData(times, mins, true);
-        m_mfEnvelopeMinGraphs.append(gMin);
+        gMax->setVisible(true);
+        gMin->setVisible(true);
+    }
 
-        gMax->setChannelFillGraph(gMin);
+    // 隐藏多余 graph
+    for (int fi = nFactors; fi < kMfMaxFreqFactors; ++fi) {
+        m_mfEnvelopeMaxGraphs[fi]->setVisible(false);
+        m_mfEnvelopeMinGraphs[fi]->setVisible(false);
     }
 
     // 计算全局 Y 范围
     double yMin = std::numeric_limits<double>::infinity();
     double yMax = -std::numeric_limits<double>::infinity();
     for (const auto& b : buckets) {
-        const double vMin = std::hypot(b.minImpedanceReal, b.minImpedanceImag);
-        const double vMax = std::hypot(b.maxImpedanceReal, b.maxImpedanceImag);
-        yMin = std::min(yMin, vMin);
-        yMax = std::max(yMax, vMax);
+        const double v = std::hypot(b.minImpedanceReal, b.minImpedanceImag);
+        yMin = std::min(yMin, v);
+        yMax = std::max(yMax, v);
+    }
+    for (const auto& b : buckets) {
+        const double v = std::hypot(b.maxImpedanceReal, b.maxImpedanceImag);
+        yMin = std::min(yMin, v);
+        yMax = std::max(yMax, v);
     }
 
     setOverviewXAxisRangeMs(m_plot, start, end);
