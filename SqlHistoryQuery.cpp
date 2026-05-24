@@ -98,21 +98,27 @@ bool SqlHistoryQuery::queryTimeBoundsFast(qint64& minTimestampMs, qint64& maxTim
     if (!db.isValid() || !db.isOpen()) {
         return false;
     }
-    QSqlQuery q(db);
-    if (!q.exec(QStringLiteral("SELECT MIN(timestamp_unix_ms), MAX(timestamp_unix_ms) FROM aligned_frames"))) {
-        qWarning() << "SqlHistoryQuery::queryTimeBoundsFast failed" << q.lastError();
+    qint64 gMin = std::numeric_limits<qint64>::max();
+    qint64 gMax = std::numeric_limits<qint64>::min();
+    // 同时检查 aligned_frames 和 multifreq_frames
+    const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames")};
+    for (const QString& table : tables) {
+        QSqlQuery tq(db);
+        if (tq.exec(QStringLiteral("SELECT MIN(timestamp_unix_ms), MAX(timestamp_unix_ms) FROM %1").arg(table))
+            && tq.next()) {
+            const QVariant vMin = tq.value(0);
+            const QVariant vMax = tq.value(1);
+            if (!vMin.isNull() && !vMax.isNull()) {
+                gMin = qMin(gMin, vMin.toLongLong());
+                gMax = qMax(gMax, vMax.toLongLong());
+            }
+        }
+    }
+    if (gMin > gMax) {
         return false;
     }
-    if (!q.next()) {
-        return false;
-    }
-    const QVariant vMin = q.value(0);
-    const QVariant vMax = q.value(1);
-    if (vMin.isNull() || vMax.isNull()) {
-        return false;
-    }
-    minTimestampMs = vMin.toLongLong();
-    maxTimestampMs = vMax.toLongLong();
+    minTimestampMs = gMin;
+    maxTimestampMs = gMax;
     return true;
 }
 
