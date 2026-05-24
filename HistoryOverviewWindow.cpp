@@ -1053,19 +1053,20 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
             maxs.append(std::hypot(b.maxImpedanceReal, b.maxImpedanceImag));
         }
 
+        auto* gMax = m_plot->addGraph();
+        gMax->setPen(QPen(c, 1));
+        gMax->setName(QStringLiteral("f%1 max").arg(factor));
+        gMax->setData(times, maxs, true);
+        gMax->setBrush(QBrush(QColor(c.red(), c.green(), c.blue(), 80)));
+        m_mfEnvelopeMaxGraphs.append(gMax);
+
         auto* gMin = m_plot->addGraph();
         gMin->setPen(QPen(c, 1));
         gMin->setName(QStringLiteral("f%1 min").arg(factor));
         gMin->setData(times, mins, true);
         m_mfEnvelopeMinGraphs.append(gMin);
 
-        auto* gMax = m_plot->addGraph();
-        gMax->setPen(QPen(c, 1));
-        gMax->setName(QStringLiteral("f%1 max").arg(factor));
-        gMax->setData(times, maxs, true);
-        gMax->setBrush(QBrush(QColor(c.red(), c.green(), c.blue(), 60)));
         gMax->setChannelFillGraph(gMin);
-        m_mfEnvelopeMaxGraphs.append(gMax);
     }
 
     // 计算全局 Y 范围
