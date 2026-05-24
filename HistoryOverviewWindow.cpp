@@ -1040,13 +1040,11 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
     if (m_maxGraph) m_maxGraph->setVisible(false);
     if (m_minGraph) m_minGraph->setVisible(false);
 
-    // 首次调用时创建所有 graph 对并设置 channel fill（与阵列涡流构造函数一致的模式）
-    const int totalGraphs = m_plot->graphCount();
+    // 首次调用时创建所有 graph
     if (m_mfEnvelopeMaxGraphs.isEmpty()) {
         for (int i = 0; i < kMfMaxFreqFactors; ++i) {
             auto* gMax = m_plot->addGraph();
             auto* gMin = m_plot->addGraph();
-            gMax->setChannelFillGraph(gMin);  // 在构造函数中只调用一次，后续只改数据
             gMax->setVisible(false);
             gMin->setVisible(false);
             m_mfEnvelopeMaxGraphs.append(gMax);
@@ -1054,12 +1052,13 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
         }
     }
 
-    // 设置数据：每个频点一对 graph
+    // 设置数据
+    const bool dark = isDarkThemeActive();
+    const QColor bgColor = dark ? QColor(30, 30, 30) : QColor(255, 255, 255);
     for (int fi = 0; fi < nFactors; ++fi) {
         const int factor = sortedFactors[fi];
         QColor c = QColor::fromHsv((fi * 47) % 360, 200, 200);
-        const bool dark = isDarkThemeActive();
-        const QColor fill(c.red(), c.green(), c.blue(), dark ? 70 : 80);
+        QColor fill(c.red(), c.green(), c.blue(), dark ? 70 : 80);
 
         QVector<double> times, mins, maxs;
         for (const auto& b : buckets) {
@@ -1075,9 +1074,10 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
         QPen envPen(c);
         envPen.setWidthF(1.2);
         gMax->setPen(envPen);
-        gMin->setPen(envPen);
-        gMax->setBrush(QBrush(fill));
+        gMax->setBrush(QBrush(fill));          // max→0 之间填充颜色
         gMax->setData(times, maxs, true);
+        gMin->setPen(envPen);
+        gMin->setBrush(QBrush(bgColor));       // min→0 之间填充背景色（遮盖 max 填充下部）
         gMin->setData(times, mins, true);
         gMax->setVisible(true);
         gMin->setVisible(true);
