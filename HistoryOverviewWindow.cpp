@@ -1060,9 +1060,11 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
         m_mfEnvelopeMinGraphs.append(gMin);
 
         auto* gMax = m_plot->addGraph();
-        gMax->setPen(QPen(c, 1, Qt::DashLine));
+        gMax->setPen(QPen(c, 1));
         gMax->setName(QStringLiteral("f%1 max").arg(factor));
         gMax->setData(times, maxs, true);
+        gMax->setBrush(QBrush(QColor(c.red(), c.green(), c.blue(), 60)));
+        gMax->setChannelFillGraph(gMin);
         m_mfEnvelopeMaxGraphs.append(gMax);
     }
 
