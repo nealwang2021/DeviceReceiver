@@ -481,13 +481,13 @@ QVector<SqlHistoryQuery::MultiFreqEnvelopeBucket> SqlHistoryQuery::queryMultiFre
     QSqlQuery q(db);
     q.prepare(QStringLiteral(
         "SELECT (timestamp_unix_ms / :bucket) * :bucket AS bucket_start, "
-        "frequency_factor, "
+        "0 AS frequency_factor, "
         "MIN(impedance_real), MAX(impedance_real), "
         "MIN(impedance_imag), MAX(impedance_imag) "
         "FROM multifreq_frames "
         "WHERE timestamp_unix_ms BETWEEN :start AND :end "
-        "GROUP BY bucket_start, frequency_factor "
-        "ORDER BY bucket_start ASC, frequency_factor ASC"));
+        "GROUP BY bucket_start "
+        "ORDER BY bucket_start ASC"));
     q.bindValue(":bucket", bucketMs);
     q.bindValue(":start", startMs);
     q.bindValue(":end", endMs);
