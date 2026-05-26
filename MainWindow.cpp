@@ -174,6 +174,8 @@ void MainWindow::initialize()
 
         // 恢复上次打开的 MDI 绘图窗口（QMainWindow::restoreState 不会自动重建 MDI 子窗口）
         restoreSavedPlotWindowsFromConfig();
+
+        m_layoutRestored = true;
         
         // 更新窗口列表
         qDebug() << "[MainWindow::initialize] 更新窗口列表...";
@@ -242,15 +244,38 @@ void MainWindow::onConnectionProgressChanged(bool inProgress)
     m_disconnectButton->setEnabled(false);
 }
 
+MainWindow::ConfigPersistSuppressor::ConfigPersistSuppressor(MainWindow* window)
+    : m_window(window), m_prev(window->m_suppressConfigPersist)
+{
+    m_window->m_suppressConfigPersist = true;
+}
+
+MainWindow::ConfigPersistSuppressor::~ConfigPersistSuppressor()
+{
+    m_window->m_suppressConfigPersist = m_prev;
+}
+
+void MainWindow::persistLayout(const QString& reason)
+{
+    if (!m_uiReady || !m_layoutRestored || m_suppressConfigPersist) {
+        qDebug().noquote() << QString("[MainWindow] persistLayout skipped reason=%1 uiReady=%2 layoutRestored=%3 suppress=%4")
+                                  .arg(reason)
+                                  .arg(m_uiReady)
+                                  .arg(m_layoutRestored)
+                                  .arg(m_suppressConfigPersist);
+        return;
+    }
+    saveConfigFromUI();
+    AppConfig* config = AppConfig::instance();
+    if (!config) {
+        return;
+    }
+    config->saveToFileAtomic(AppConfig::defaultConfigFilePath(), reason);
+}
+
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    // 保存界面配置、面板可见性和窗口状态
-    saveConfigFromUI();
-
-    AppConfig* config = AppConfig::instance();
-    if (config) {
-        config->saveToFile(AppConfig::defaultConfigFilePath());
-    }
+    persistLayout(QStringLiteral("closeEvent"));
 
     QMainWindow::closeEvent(event);
 }
@@ -449,6 +474,7 @@ void MainWindow::initUI()
         
         // 1. 被测设备（DUT）— 与右侧三轴台测试装置（gRPC）概念分离
         m_devicePanel = new QDockWidget(QStringLiteral("被测设备"), this);
+        m_devicePanel->setObjectName(QStringLiteral("dock_device"));
         m_devicePanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
         
         QWidget* deviceWidget = new QWidget();
@@ -573,7 +599,7 @@ void MainWindow::initUI()
 
         // 2. 三轴台测试装置（工装，gRPC StageService）— 非被测设备
         m_stagePanel = new QDockWidget(QStringLiteral("三轴台测试装置"), this);
-        m_stagePanel->setObjectName(QStringLiteral("stage_panelDock"));
+        m_stagePanel->setObjectName(QStringLiteral("dock_stage"));
         m_stagePanel->setAllowedAreas(Qt::RightDockWidgetArea);
         m_stagePanel->setMinimumWidth(300);
 
@@ -990,6 +1016,7 @@ void MainWindow::initUI()
         
         // 3. 指令发送面板
         m_commandPanel = new QDockWidget("指令发送", this);
+        m_commandPanel->setObjectName(QStringLiteral("dock_command"));
         m_commandPanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
         
         QWidget* commandWidget = new QWidget();
@@ -1043,6 +1070,7 @@ void MainWindow::initUI()
         
         // 4. 绘图管理面板
         m_plotPanel = new QDockWidget("绘图管理", this);
+        m_plotPanel->setObjectName(QStringLiteral("dock_plot"));
         m_plotPanel->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
         
         QWidget* plotWidget = new QWidget();
@@ -1093,6 +1121,7 @@ void MainWindow::initUI()
         
         // 5. 数据监控面板
         m_monitorPanel = new QDockWidget("数据监控", this);
+        m_monitorPanel->setObjectName(QStringLiteral("dock_monitor"));
         m_monitorPanel->setAllowedAreas(Qt::BottomDockWidgetArea);
         
         QWidget* monitorWidget = new QWidget();
@@ -1161,6 +1190,7 @@ void MainWindow::initUI()
 
         // 6. 历史总览面板（与数据监控同区域，tab 并列）
         m_overviewPanel = new QDockWidget(QStringLiteral("历史总览"), this);
+        m_overviewPanel->setObjectName(QStringLiteral("dock_overview"));
         m_overviewPanel->setAllowedAreas(Qt::BottomDockWidgetArea);
         m_overviewWindow = new HistoryOverviewWindow(this);
         m_overviewPanel->setWidget(m_overviewWindow);
@@ -1178,8 +1208,15 @@ void MainWindow::initUI()
         // 加载保存的窗口状态
         AppConfig* config = AppConfig::instance();
         if (config) {
+            bool dockStateOk = true;
             if (!config->mainWindowState().isEmpty()) {
-                restoreState(config->mainWindowState());
+                dockStateOk = restoreState(config->mainWindowState());
+                qInfo().noquote() << QString("[MainWindow] restoreState ok=%1 bytes=%2")
+                                         .arg(dockStateOk ? 1 : 0)
+                                         .arg(config->mainWindowState().size());
+                if (!dockStateOk) {
+                    qWarning() << "[MainWindow] restoreState failed; fallback to Show*Panel flags only";
+                }
             }
 
             bool geometryRestored = false;
@@ -1192,39 +1229,59 @@ void MainWindow::initUI()
                     : QSize(1200, 800);
                 resize(fallbackSize);
             }
-            
-            // 更新面板显示状态
-            showDeviceAction->setChecked(config->showDevicePanel());
-            showCommandAction->setChecked(config->showCommandPanel());
-            showPlotAction->setChecked(config->showPlotPanel());
-            showStageAction->setChecked(config->showStagePanel());
-            showMonitorAction->setChecked(config->showMonitorPanel());
-            showOverviewAction->setChecked(config->showOverviewPanel());
-            
-            m_devicePanel->setVisible(config->showDevicePanel());
-            m_commandPanel->setVisible(config->showCommandPanel());
-            m_plotPanel->setVisible(config->showPlotPanel());
-            if (m_stagePanel) {
-                m_stagePanel->setVisible(config->showStagePanel());
-            }
-            m_monitorPanel->setVisible(config->showMonitorPanel());
-            if (m_overviewPanel) {
-                m_overviewPanel->setVisible(config->showOverviewPanel());
-            }
 
-            if (m_devicePanel->isVisible()) {
-                m_devicePanel->raise();
-            } else if (m_plotPanel->isVisible()) {
-                m_plotPanel->raise();
-            }
-            if (m_commandPanel && m_commandPanel->isVisible()) {
-                m_commandPanel->raise();
-            } else if (m_stagePanel && m_stagePanel->isVisible()) {
-                m_stagePanel->raise();
+            if (dockStateOk) {
+                showDeviceAction->setChecked(config->showDevicePanel());
+                showCommandAction->setChecked(config->showCommandPanel());
+                showPlotAction->setChecked(config->showPlotPanel());
+                showStageAction->setChecked(config->showStagePanel());
+                showMonitorAction->setChecked(config->showMonitorPanel());
+                showOverviewAction->setChecked(config->showOverviewPanel());
+
+                m_devicePanel->setVisible(config->showDevicePanel());
+                m_commandPanel->setVisible(config->showCommandPanel());
+                m_plotPanel->setVisible(config->showPlotPanel());
+                if (m_stagePanel) {
+                    m_stagePanel->setVisible(config->showStagePanel());
+                }
+                m_monitorPanel->setVisible(config->showMonitorPanel());
+                if (m_overviewPanel) {
+                    m_overviewPanel->setVisible(config->showOverviewPanel());
+                }
+
+                if (m_devicePanel->isVisible()) {
+                    m_devicePanel->raise();
+                } else if (m_plotPanel->isVisible()) {
+                    m_plotPanel->raise();
+                }
+                if (m_commandPanel && m_commandPanel->isVisible()) {
+                    m_commandPanel->raise();
+                } else if (m_stagePanel && m_stagePanel->isVisible()) {
+                    m_stagePanel->raise();
+                }
+            } else {
+                showDeviceAction->setChecked(config->showDevicePanel());
+                showCommandAction->setChecked(config->showCommandPanel());
+                showPlotAction->setChecked(config->showPlotPanel());
+                showStageAction->setChecked(config->showStagePanel());
+                showMonitorAction->setChecked(config->showMonitorPanel());
+                showOverviewAction->setChecked(config->showOverviewPanel());
+
+                m_devicePanel->setVisible(config->showDevicePanel());
+                m_commandPanel->setVisible(config->showCommandPanel());
+                m_plotPanel->setVisible(config->showPlotPanel());
+                if (m_stagePanel) {
+                    m_stagePanel->setVisible(config->showStagePanel());
+                }
+                m_monitorPanel->setVisible(config->showMonitorPanel());
+                if (m_overviewPanel) {
+                    m_overviewPanel->setVisible(config->showOverviewPanel());
+                }
             }
 
             applyScreenGeometryConstraints();
         }
+        m_uiReady = true;
         qDebug() << "[MainWindow::initUI] 完成";
     } catch (const std::exception& e) {
         qCritical() << "[MainWindow::initUI] 异常:" << e.what();
@@ -1534,12 +1591,18 @@ void MainWindow::initConnections()
 
     updateStagePanelUiState();
     updateGrpcTestUiState();
+
+    connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() {
+        persistLayout(QStringLiteral("aboutToQuit"));
+    });
     
     // 其他信号槽将在后续连接到SerialReceiver
 }
 
 void MainWindow::loadConfigToUI()
 {
+    ConfigPersistSuppressor suppress(this);
+
     AppConfig* config = AppConfig::instance();
     if (!config) {
         return;
@@ -2744,11 +2807,7 @@ void MainWindow::onConnectClicked()
         if (m_connectionInProgress) {
             return;
         }
-        saveConfigFromUI();
-        AppConfig* config = AppConfig::instance();
-        if (config) {
-            config->saveToFile(AppConfig::defaultConfigFilePath());
-        }
+        persistLayout(QStringLiteral("userConnect"));
         m_appController->reloadRuntimeConfig();
         onConnectionProgressChanged(true);
         m_appController->start();
@@ -2824,6 +2883,8 @@ void MainWindow::onBackendTypeChanged(int index)
 
 void MainWindow::rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& params)
 {
+    ConfigPersistSuppressor suppress(this);
+
     m_currentBackendParams = params;
     for (QWidget* w : m_grpcParamWidgets) {
         m_grpcParamLayout->removeWidget(w);
@@ -3557,7 +3618,7 @@ void MainWindow::setStyle(AppConfig::Style style)
     AppConfig* config = AppConfig::instance();
     if (config) {
         config->setCurrentStyle(style);
-        config->saveToFile(AppConfig::defaultConfigFilePath());
+        persistLayout(QStringLiteral("styleChange"));
         qDebug() << "Style saved to config:" << style;
     }
 }

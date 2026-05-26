@@ -69,6 +69,9 @@ public:
      */
     void initialize();
 
+    /// 从 UI 采集布局并原子写入 config.ini（reason 用于日志）
+    void persistLayout(const QString& reason);
+
     /**
      * @brief 更新连接状态显示
      * @param connected 连接状态
@@ -286,6 +289,16 @@ public:
     QString getDefaultToolbarStyle(AppConfig::Style style);
 
 private:
+    class ConfigPersistSuppressor {
+    public:
+        explicit ConfigPersistSuppressor(MainWindow* window);
+        ~ConfigPersistSuppressor();
+
+    private:
+        MainWindow* m_window = nullptr;
+        bool m_prev = false;
+    };
+
     ApplicationController* m_appController; // 应用控制器
     PlotWindowManager* m_plotWindowManager; // 绘图窗口管理器
     
@@ -482,6 +495,9 @@ private:
     bool m_isConnected;
     bool m_connectionInProgress;
     bool m_screenGeometryScreenHooked = false;
+    bool m_uiReady = false;
+    bool m_layoutRestored = false;
+    bool m_suppressConfigPersist = false;
     int m_frameCount;
     int m_alarmCount;
     qint64 m_lastUpdateTime;

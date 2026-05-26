@@ -213,6 +213,8 @@ public:
     // ========== 文件操作 ==========
     bool loadFromFile(const QString& filename);
     bool saveToFile(const QString& filename);
+    /// 原子写入 config.ini（先写 .tmp，备份 .bak，再 rename）。reason 仅用于日志。
+    bool saveToFileAtomic(const QString& filename, const QString& reason = QString());
     
     // 加载默认配置
     void loadDefaults();
@@ -233,6 +235,8 @@ signals:
 private:
     explicit AppConfig(QObject *parent = nullptr);
     ~AppConfig() override = default;
+
+    bool writeSettingsToPath(const QString& path, QString* errorOut) const;
     
     static AppConfig* m_instance;
     

@@ -547,29 +547,20 @@ bool AppConfig::loadFromFile(const QString& filename)
     return true;
 }
 
-bool AppConfig::saveToFile(const QString& filename)
+bool AppConfig::writeSettingsToPath(const QString& path, QString* errorOut) const
 {
-    QSettings settings(filename, QSettings::IniFormat);
-    
-    // 保存应用配置
+    QSettings settings(path, QSettings::IniFormat);
+
     settings.setValue("General/AppTitle", m_appTitle);
-    
-    // 保存窗口配置
     settings.setValue("Window/Size", m_windowSize);
-    
-    // 保存缓存配置
     settings.setValue("Cache/MaxSize", m_maxCacheSize);
     settings.setValue("Cache/ExpireTimeMs", m_expireTimeMs);
-    
-    // 保存串口配置
     settings.setValue("Serial/Port", m_serialPort);
     settings.setValue("Serial/BaudRate", m_baudRate);
     settings.setValue("Receiver/BackendType", m_receiverBackendType);
     settings.setValue("Receiver/GrpcEndpoint", m_grpcEndpoint);
     settings.setValue("Receiver/StageGrpcEndpoint", m_stageGrpcEndpoint);
     settings.setValue("Receiver/GrpcConnectTimeoutMs", m_grpcConnectTimeoutMs);
-
-    // 保存多频涡流配置
     settings.setValue("MultiFreq/BaseFrequencyHz", m_multiFreqBaseFrequencyHz);
     settings.setValue("MultiFreq/AverageCycleCount", m_multiFreqAverageCycleCount);
     settings.setValue("MultiFreq/NormalizeScale", m_multiFreqNormalizeScale);
@@ -580,28 +571,16 @@ bool AppConfig::saveToFile(const QString& filename)
         }
         settings.setValue("MultiFreq/FrequencyFactors", factorParts.join(','));
     }
-
-    // 保存绘图配置
     settings.setValue("Plot/MaxPoints", m_maxPlotPoints);
     settings.setValue("Plot/RefreshIntervalMs", m_plotRefreshIntervalMs);
     settings.setValue("Plot/ArrayRowHeightPx", m_arrayPlotRowHeightPx);
     settings.setValue("Plot/UseOpenGl", m_qcustomPlotOpenGlEnabled);
     settings.setValue("Plot/AmpMin", m_arrayRgbHeatmapAmpMin);
     settings.setValue("Plot/AmpMax", m_arrayRgbHeatmapAmpMax);
-
-    // 检测分析窗口
     settings.setValue("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup);
-    
-    // 保存统计配置
     settings.setValue("Stats/IntervalMs", m_statsIntervalMs);
-    
-    // 保存报警配置
     settings.setValue("Alarm/TemperatureThreshold", m_temperatureAlarmThreshold);
-    
-    // 保存样式配置
     settings.setValue("Style/CurrentStyle", static_cast<int>(m_currentStyle));
-
-    // 保存UI配置
     settings.setValue("UI/ShowDevicePanel", m_showDevicePanel);
     settings.setValue("UI/ShowCommandPanel", m_showCommandPanel);
     settings.setValue("UI/ShowPlotPanel", m_showPlotPanel);
@@ -611,24 +590,78 @@ bool AppConfig::saveToFile(const QString& filename)
     settings.setValue("UI/MainWindowState", m_mainWindowState);
     settings.setValue("UI/MainWindowGeometry", m_mainWindowGeometry);
     settings.setValue("UI/SavedPlotWindowTypes", m_savedPlotWindowTypes);
-
-    // 保存导出配置
     settings.setValue("Export/Directory", m_defaultExportDirectory);
     settings.setValue("Export/Format", m_defaultExportFormat);
-    
-    // 保存日志配置
     settings.setValue("Log/Level", m_logLevel);
     settings.setValue("Log/MonitorMinimumLevel", AppLogger::levelToConfigString(m_monitorLogMinimumLevel));
-    
+
     settings.sync();
-    
-    if (settings.status() == QSettings::NoError) {
-        qInfo() << "配置文件保存成功：" << filename;
-        return true;
-    } else {
-        qWarning() << "配置文件保存失败：" << filename;
+    if (settings.status() != QSettings::NoError) {
+        if (errorOut) {
+            *errorOut = QStringLiteral("QSettings sync failed");
+        }
         return false;
     }
+    return true;
+}
+
+bool AppConfig::saveToFileAtomic(const QString& filename, const QString& reason)
+{
+    const QString tmpPath = filename + QStringLiteral(".tmp");
+    const QString bakPath = filename + QStringLiteral(".bak");
+
+    QString writeError;
+    if (!writeSettingsToPath(tmpPath, &writeError)) {
+        qWarning().noquote() << QString("[AppConfig] persist failed reason=%1 stage=writeTmp err=%2")
+                                    .arg(reason, writeError);
+        QFile::remove(tmpPath);
+        return false;
+    }
+
+    {
+        QFile f(tmpPath);
+        if (f.open(QIODevice::ReadOnly)) {
+            QByteArray content = f.readAll();
+            f.close();
+            if (content.startsWith("\xEF\xBB\xBF")) {
+                if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                    f.write(content.mid(3));
+                    f.close();
+                }
+            }
+        }
+    }
+
+    if (QFile::exists(filename)) {
+        QFile::remove(bakPath);
+        if (!QFile::copy(filename, bakPath)) {
+            qWarning() << "[AppConfig] 无法创建备份" << bakPath;
+        }
+    }
+
+    if (QFile::exists(filename) && !QFile::remove(filename)) {
+        qWarning().noquote() << QString("[AppConfig] persist failed reason=%1 stage=removeTarget").arg(reason);
+        QFile::remove(tmpPath);
+        return false;
+    }
+    if (!QFile::rename(tmpPath, filename)) {
+        qWarning().noquote() << QString("[AppConfig] persist failed reason=%1 stage=rename err=%2")
+                                    .arg(reason, QFile(tmpPath).errorString());
+        QFile::remove(tmpPath);
+        return false;
+    }
+
+    qInfo().noquote() << QString("[AppConfig] persist ok reason=%1 stateBytes=%2 geometryBytes=%3 path=%4")
+                             .arg(reason)
+                             .arg(m_mainWindowState.size())
+                             .arg(m_mainWindowGeometry.size())
+                             .arg(filename);
+    return true;
+}
+
+bool AppConfig::saveToFile(const QString& filename)
+{
+    return saveToFileAtomic(filename, QStringLiteral("saveToFile"));
 }
 
 void AppConfig::loadDefaults()
