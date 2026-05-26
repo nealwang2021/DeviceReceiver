@@ -526,10 +526,11 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_mainWindowState = settings.value("UI/MainWindowState", m_mainWindowState).toByteArray();
     m_mainWindowGeometry = settings.value("UI/MainWindowGeometry", m_mainWindowGeometry).toByteArray();
     m_savedPlotWindowTypes = settings.value("UI/SavedPlotWindowTypes", m_savedPlotWindowTypes).toStringList();
-    if (settingsPath != filename) {
-        qInfo() << "[AppConfig] UI/MainWindowState 已加载字节数:" << m_mainWindowState.size()
-                << "UI/MainWindowGeometry 字节数:" << m_mainWindowGeometry.size();
-    }
+    qInfo().noquote() << QString("[AppConfig] UI/MainWindowState bytes=%1 geometryBytes=%2 ShowDevice=%3 ShowPlot=%4")
+                             .arg(m_mainWindowState.size())
+                             .arg(m_mainWindowGeometry.size())
+                             .arg(m_showDevicePanel)
+                             .arg(m_showPlotPanel);
 
     // 导出配置
     m_defaultExportDirectory = settings.value("Export/Directory", m_defaultExportDirectory).toString();

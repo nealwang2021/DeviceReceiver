@@ -77,6 +77,7 @@ public:
      * @param connected 连接状态
      */
     void updateConnectionStatus(bool connected);
+    void updateAcquisitionControlUiState();
 
     /**
      * @brief 获取应用控制器
@@ -110,6 +111,8 @@ private slots:
     // 设备控制槽函数
     void onConnectClicked();
     void onDisconnectClicked();
+    void onStartAcquisitionClicked();
+    void onStopAcquisitionClicked();
     void onBackendTypeChanged(int index);
     
     // 指令发送槽函数
@@ -175,6 +178,7 @@ private:
      */
     void updateWindowList();
     void restoreSavedPlotWindowsFromConfig();
+    void restoreDockLayoutFromConfig();
     QStringList collectCurrentPlotWindowTypes() const;
     
     /**
@@ -394,6 +398,8 @@ private:
 
     QPushButton* m_connectButton;
     QPushButton* m_disconnectButton;
+    QPushButton* m_startAcquisitionButton = nullptr;
+    QPushButton* m_stopAcquisitionButton = nullptr;
     QLabel* m_connectionStatusLabel;
 
     // Stage 专用控制组件
@@ -497,6 +503,7 @@ private:
     bool m_screenGeometryScreenHooked = false;
     bool m_uiReady = false;
     bool m_layoutRestored = false;
+    bool m_initializingUi = false;
     bool m_suppressConfigPersist = false;
     int m_frameCount;
     int m_alarmCount;

@@ -65,6 +65,12 @@ public:
     void pauseAcquisition();
     void resumeAcquisition();
     bool isPaused() const { return m_isPaused; }
+
+    /// 开始被测设备数据采集（gRPC：StartSampling / StartDetection；须已连接）
+    void startDeviceAcquisition();
+    /// 停止被测设备数据采集（gRPC：StopSampling / StopDetection；不断开连接）
+    void stopDeviceAcquisition();
+    bool isAcquisitionActive() const { return m_acquisitionActive; }
     
     /**
      * @brief 获取绘图窗口指针（用于向后兼容）
@@ -119,6 +125,8 @@ signals:
      */
     void stopped();
     void paused(bool paused);
+    /// 被测设备是否正在采集（与连接状态独立）
+    void acquisitionActiveChanged(bool active);
     /// 主采集连接进行中状态（用于 UI 显示“连接中”并防重入）
     void connectionInProgressChanged(bool inProgress);
     /// 三轴台 gRPC 连接状态（与主窗口 m_isConnected 无关）
@@ -168,6 +176,7 @@ private:
 
     /// 实时 SQLite 会话库轮换到新文件后，更新 HistoryDataProvider 的会话路径与只读连接。
     void onRealtimeSessionDatabaseRotated(const QString& newPath);
+    void setAcquisitionActive(bool active);
     
     /**
      * @brief 清理所有资源
@@ -177,6 +186,7 @@ private:
 private:
     bool m_isRunning = false;
     bool m_isPaused = false;
+    bool m_acquisitionActive = false;
     bool m_connectInProgress = false;
     QString m_pendingStopReason;
     

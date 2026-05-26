@@ -240,6 +240,13 @@ bool GrpcMultiFreqBackend::isBackendConnected() const
 
 void GrpcMultiFreqBackend::startAcquisition(int intervalMs)
 {
+    if (!m_connected.load(std::memory_order_relaxed)) {
+        return;
+    }
+    if (m_streamThread.joinable()) {
+        return;
+    }
+
     m_acquisitionIntervalMs = qMax(10, intervalMs);
 
     if (m_mockMode.load(std::memory_order_relaxed)) {
@@ -259,7 +266,27 @@ void GrpcMultiFreqBackend::startAcquisition(int intervalMs)
 void GrpcMultiFreqBackend::stopAcquisition()
 {
     m_mockTimer->stop();
+    if (m_reconnectTimer) {
+        m_reconnectTimer->stop();
+    }
     stopStreamThread();
+
+#ifdef HAS_GRPC
+    if (m_stub && !m_mockMode.load(std::memory_order_relaxed)) {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(2000));
+        google::protobuf::Empty req;
+        multifreqeddy::OperationReply reply;
+        const grpc::Status st = m_stub->StopDetection(&ctx, req, &reply);
+        if (!st.ok() || !reply.ok()) {
+            const QString detail = st.ok()
+                ? QString::fromStdString(reply.message())
+                : QString::fromStdString(st.error_message());
+            qWarning() << "[GrpcMultiFreqBackend] StopDetection failed:" << detail;
+        }
+    }
+#endif
+
     emitDeviceStatus();
 }
 

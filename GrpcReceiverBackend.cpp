@@ -347,6 +347,9 @@ void GrpcReceiverBackend::startAcquisition(int intervalMs)
     if (!m_connected.load()) {
         return;
     }
+    if (m_streamThread.joinable()) {
+        return;
+    }
 
     m_acquisitionIntervalMs = intervalMs;
     m_paused.store(false);
@@ -370,7 +373,27 @@ void GrpcReceiverBackend::stopAcquisition()
     if (m_mockTimer) {
         m_mockTimer->stop();
     }
+    if (m_reconnectTimer) {
+        m_reconnectTimer->stop();
+    }
     stopStreamThread();
+
+#ifdef HAS_GRPC
+    if (m_stub && !m_mockMode.load(std::memory_order_relaxed)) {
+        google::protobuf::Empty req;
+        xiaoche::device::CommandReply stopReply;
+        grpc::ClientContext stopCtx;
+        stopCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::milliseconds(2000));
+        const grpc::Status stopStatus = m_stub->StopSampling(&stopCtx, req, &stopReply);
+        if (!stopStatus.ok() || !stopReply.ok()) {
+            const QString detail = stopStatus.ok()
+                ? QString::fromStdString(stopReply.message())
+                : QString::fromStdString(stopStatus.error_message());
+            qWarning() << "[GrpcReceiverBackend] StopSampling failed:" << detail;
+        }
+    }
+#endif
+
     emitDeviceStatus();
 }
 

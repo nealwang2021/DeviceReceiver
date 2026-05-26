@@ -137,6 +137,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::initialize()
 {
+    m_initializingUi = true;
     try {
         qDebug() << "[MainWindow::initialize] 开始";
         
@@ -174,8 +175,6 @@ void MainWindow::initialize()
 
         // 恢复上次打开的 MDI 绘图窗口（QMainWindow::restoreState 不会自动重建 MDI 子窗口）
         restoreSavedPlotWindowsFromConfig();
-
-        m_layoutRestored = true;
         
         // 更新窗口列表
         qDebug() << "[MainWindow::initialize] 更新窗口列表...";
@@ -193,16 +192,25 @@ void MainWindow::initialize()
         if (config) {
             setWindowTitle(config->appTitle());
             
-            // 应用保存的样式
+            // 应用保存的样式（启动阶段不落盘，避免覆盖 config.ini 中的布局）
             setStyle(config->currentStyle());
         }
         qDebug() << "[MainWindow::initialize] 窗口属性设置完成";
+
+        // 主题加载后再恢复 Dock（initUI 中过早 restore 易被后续步骤冲掉）
+        restoreDockLayoutFromConfig();
+        QTimer::singleShot(0, this, [this]() { restoreDockLayoutFromConfig(); });
+
+        m_layoutRestored = true;
+        m_initializingUi = false;
         
         qDebug() << "[MainWindow::initialize] 完成";
     } catch (const std::exception& e) {
+        m_initializingUi = false;
         qCritical() << "[MainWindow::initialize] 异常:" << e.what();
         throw;
     } catch (...) {
+        m_initializingUi = false;
         qCritical() << "[MainWindow::initialize] 未知异常";
         throw;
     }
@@ -226,6 +234,7 @@ void MainWindow::updateConnectionStatus(bool connected)
     }
 
     updateStagePanelUiState();
+    updateAcquisitionControlUiState();
 }
 
 void MainWindow::onConnectionProgressChanged(bool inProgress)
@@ -242,6 +251,33 @@ void MainWindow::onConnectionProgressChanged(bool inProgress)
     m_connectionStatusLabel->setStyleSheet(QStringLiteral("color: #d97706;"));
     m_connectButton->setEnabled(false);
     m_disconnectButton->setEnabled(false);
+    updateAcquisitionControlUiState();
+}
+
+void MainWindow::updateAcquisitionControlUiState()
+{
+    if (!m_startAcquisitionButton || !m_stopAcquisitionButton) {
+        return;
+    }
+
+    const QString backendType = m_backendTypeCombo
+        ? m_backendTypeCombo->currentData().toString().trimmed().toLower()
+        : QString();
+    const bool grpcLike = (backendType == QStringLiteral("grpc")
+                           || backendType == QStringLiteral("multifreq-grpc"));
+
+    m_startAcquisitionButton->setVisible(grpcLike);
+    m_stopAcquisitionButton->setVisible(grpcLike);
+    if (!grpcLike) {
+        return;
+    }
+
+    const bool connected = m_isConnected;
+    const bool acquiring = m_appController && m_appController->isAcquisitionActive();
+    const bool busy = m_connectionInProgress;
+
+    m_startAcquisitionButton->setEnabled(connected && !acquiring && !busy);
+    m_stopAcquisitionButton->setEnabled(connected && acquiring && !busy);
 }
 
 MainWindow::ConfigPersistSuppressor::ConfigPersistSuppressor(MainWindow* window)
@@ -257,11 +293,12 @@ MainWindow::ConfigPersistSuppressor::~ConfigPersistSuppressor()
 
 void MainWindow::persistLayout(const QString& reason)
 {
-    if (!m_uiReady || !m_layoutRestored || m_suppressConfigPersist) {
-        qDebug().noquote() << QString("[MainWindow] persistLayout skipped reason=%1 uiReady=%2 layoutRestored=%3 suppress=%4")
+    if (!m_uiReady || !m_layoutRestored || m_initializingUi || m_suppressConfigPersist) {
+        qDebug().noquote() << QString("[MainWindow] persistLayout skipped reason=%1 uiReady=%2 layoutRestored=%3 initializing=%4 suppress=%5")
                                   .arg(reason)
                                   .arg(m_uiReady)
                                   .arg(m_layoutRestored)
+                                  .arg(m_initializingUi)
                                   .arg(m_suppressConfigPersist);
         return;
     }
@@ -457,7 +494,8 @@ void MainWindow::initUI()
         }
         
         // 工具栏
-        QToolBar* toolBar = addToolBar("工具");
+        QToolBar* toolBar = addToolBar(QStringLiteral("工具"));
+        toolBar->setObjectName(QStringLiteral("mainToolBar"));
         toolBar->addAction(exitAction);
         toolBar->addSeparator();
         
@@ -552,10 +590,27 @@ void MainWindow::initUI()
         controlRowLayout->addWidget(m_disconnectButton);
         controlRowLayout->addStretch();
 
+        m_startAcquisitionButton = new QPushButton(QStringLiteral("开始采集"));
+        m_stopAcquisitionButton = new QPushButton(QStringLiteral("停止采集"));
+        m_startAcquisitionButton->setToolTip(
+            QStringLiteral("调用设备 gRPC 开始采集（阵列涡流：StartSampling；多频涡流：StartDetection）"));
+        m_stopAcquisitionButton->setToolTip(
+            QStringLiteral("调用设备 gRPC 停止采集（阵列涡流：StopSampling；多频涡流：StopDetection）"));
+        for (QPushButton* button : {m_startAcquisitionButton, m_stopAcquisitionButton}) {
+            button->setMinimumWidth(0);
+            button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        }
+
+        QHBoxLayout* acquisitionRowLayout = new QHBoxLayout();
+        acquisitionRowLayout->addWidget(m_startAcquisitionButton);
+        acquisitionRowLayout->addWidget(m_stopAcquisitionButton);
+        acquisitionRowLayout->addStretch();
+
         controlStatusLayout->addWidget(m_connectionStatusLabel);
         controlStatusLayout->addStretch();
 
         controlLayout->addLayout(controlRowLayout);
+        controlLayout->addLayout(acquisitionRowLayout);
         controlLayout->addLayout(controlStatusLayout);
 
         // gRPC 参数组（动态生成，后端驱动）
@@ -1204,21 +1259,9 @@ void MainWindow::initUI()
         setStatusBar(statusBar);
         qDebug() << "[MainWindow::initUI] 状态栏创建完成";
         
-        qDebug() << "[MainWindow::initUI] 加载保存的窗口状态...";
-        // 加载保存的窗口状态
+        // 主窗几何在 initUI 先恢复；Dock 布局在 initialize 末尾 restoreDockLayoutFromConfig 恢复
         AppConfig* config = AppConfig::instance();
         if (config) {
-            bool dockStateOk = true;
-            if (!config->mainWindowState().isEmpty()) {
-                dockStateOk = restoreState(config->mainWindowState());
-                qInfo().noquote() << QString("[MainWindow] restoreState ok=%1 bytes=%2")
-                                         .arg(dockStateOk ? 1 : 0)
-                                         .arg(config->mainWindowState().size());
-                if (!dockStateOk) {
-                    qWarning() << "[MainWindow] restoreState failed; fallback to Show*Panel flags only";
-                }
-            }
-
             bool geometryRestored = false;
             if (!config->mainWindowGeometry().isEmpty()) {
                 geometryRestored = restoreGeometry(config->mainWindowGeometry());
@@ -1229,57 +1272,6 @@ void MainWindow::initUI()
                     : QSize(1200, 800);
                 resize(fallbackSize);
             }
-
-            if (dockStateOk) {
-                showDeviceAction->setChecked(config->showDevicePanel());
-                showCommandAction->setChecked(config->showCommandPanel());
-                showPlotAction->setChecked(config->showPlotPanel());
-                showStageAction->setChecked(config->showStagePanel());
-                showMonitorAction->setChecked(config->showMonitorPanel());
-                showOverviewAction->setChecked(config->showOverviewPanel());
-
-                m_devicePanel->setVisible(config->showDevicePanel());
-                m_commandPanel->setVisible(config->showCommandPanel());
-                m_plotPanel->setVisible(config->showPlotPanel());
-                if (m_stagePanel) {
-                    m_stagePanel->setVisible(config->showStagePanel());
-                }
-                m_monitorPanel->setVisible(config->showMonitorPanel());
-                if (m_overviewPanel) {
-                    m_overviewPanel->setVisible(config->showOverviewPanel());
-                }
-
-                if (m_devicePanel->isVisible()) {
-                    m_devicePanel->raise();
-                } else if (m_plotPanel->isVisible()) {
-                    m_plotPanel->raise();
-                }
-                if (m_commandPanel && m_commandPanel->isVisible()) {
-                    m_commandPanel->raise();
-                } else if (m_stagePanel && m_stagePanel->isVisible()) {
-                    m_stagePanel->raise();
-                }
-            } else {
-                showDeviceAction->setChecked(config->showDevicePanel());
-                showCommandAction->setChecked(config->showCommandPanel());
-                showPlotAction->setChecked(config->showPlotPanel());
-                showStageAction->setChecked(config->showStagePanel());
-                showMonitorAction->setChecked(config->showMonitorPanel());
-                showOverviewAction->setChecked(config->showOverviewPanel());
-
-                m_devicePanel->setVisible(config->showDevicePanel());
-                m_commandPanel->setVisible(config->showCommandPanel());
-                m_plotPanel->setVisible(config->showPlotPanel());
-                if (m_stagePanel) {
-                    m_stagePanel->setVisible(config->showStagePanel());
-                }
-                m_monitorPanel->setVisible(config->showMonitorPanel());
-                if (m_overviewPanel) {
-                    m_overviewPanel->setVisible(config->showOverviewPanel());
-                }
-            }
-
-            applyScreenGeometryConstraints();
         }
         m_uiReady = true;
         qDebug() << "[MainWindow::initUI] 完成";
@@ -1297,8 +1289,15 @@ void MainWindow::initConnections()
     // 设备控制信号槽
     connect(m_connectButton, &QPushButton::clicked, this, &MainWindow::onConnectClicked);
     connect(m_disconnectButton, &QPushButton::clicked, this, &MainWindow::onDisconnectClicked);
+    connect(m_startAcquisitionButton, &QPushButton::clicked, this, &MainWindow::onStartAcquisitionClicked);
+    connect(m_stopAcquisitionButton, &QPushButton::clicked, this, &MainWindow::onStopAcquisitionClicked);
     connect(m_backendTypeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &MainWindow::onBackendTypeChanged);
+
+    if (m_appController) {
+        connect(m_appController, &ApplicationController::acquisitionActiveChanged,
+                this, [this](bool) { updateAcquisitionControlUiState(); });
+    }
 
     connect(m_stageApplyEndpointButton, &QPushButton::clicked, this, [this]() {
         const QString endpoint = m_stageEndpointEdit ? m_stageEndpointEdit->text().trimmed() : QString();
@@ -1726,7 +1725,7 @@ void MainWindow::saveConfigFromUI()
     case 3: config->setNewlineSequence(""); break;
     }
     
-    // 保存面板显示状态
+    // 面板显隐：与 saveState 一并保存，供 restoreState 失败时回退
     config->setShowDevicePanel(m_devicePanel->isVisible());
     config->setShowCommandPanel(m_commandPanel->isVisible());
     config->setShowPlotPanel(m_plotPanel->isVisible());
@@ -1737,15 +1736,87 @@ void MainWindow::saveConfigFromUI()
     if (m_overviewPanel) {
         config->setShowOverviewPanel(m_overviewPanel->isVisible());
     }
-    
-    // 保存窗口状态
-    const QSize windowSize = (isMaximized() || isFullScreen()) ? normalGeometry().size() : size();
-    if (windowSize.isValid()) {
-        config->setWindowSize(windowSize);
+
+    // 布局仅在 UI 就绪且非启动阶段写入内存，避免 loadConfigToUI 用默认布局覆盖已加载的 state
+    if (m_uiReady && m_layoutRestored && !m_initializingUi && !m_suppressConfigPersist) {
+        const QSize windowSize = (isMaximized() || isFullScreen()) ? normalGeometry().size() : size();
+        if (windowSize.isValid()) {
+            config->setWindowSize(windowSize);
+        }
+        config->setMainWindowState(saveState());
+        config->setMainWindowGeometry(saveGeometry());
+        config->setSavedPlotWindowTypes(collectCurrentPlotWindowTypes());
     }
-    config->setMainWindowState(saveState());
-    config->setMainWindowGeometry(saveGeometry());
-    config->setSavedPlotWindowTypes(collectCurrentPlotWindowTypes());
+}
+
+void MainWindow::restoreDockLayoutFromConfig()
+{
+    if (!m_devicePanel) {
+        return;
+    }
+
+    AppConfig* config = AppConfig::instance();
+    if (!config) {
+        return;
+    }
+
+    bool dockStateOk = true;
+    const QByteArray savedState = config->mainWindowState();
+    if (!savedState.isEmpty()) {
+        dockStateOk = restoreState(savedState);
+        qInfo().noquote() << QString("[MainWindow] restoreDockLayout ok=%1 bytes=%2")
+                                 .arg(dockStateOk ? 1 : 0)
+                                 .arg(savedState.size());
+        if (!dockStateOk) {
+            qWarning() << "[MainWindow] restoreDockLayout: restoreState failed, apply Show*Panel only";
+        }
+    }
+
+    if (dockStateOk) {
+        // restoreState 已编码 Dock 显隐/停靠；勿再用 Show*Panel 覆盖（配置里可能陈旧为全 false）
+        const bool allShowFlagsFalse = !config->showDevicePanel() && !config->showCommandPanel()
+                                       && !config->showPlotPanel() && !config->showMonitorPanel()
+                                       && !config->showStagePanel() && !config->showOverviewPanel();
+        if (allShowFlagsFalse && savedState.size() > 64) {
+            qWarning() << "[MainWindow] restoreDockLayout: UI/Show*Panel 全为 false，"
+                          "已忽略并沿用 MainWindowState 中的 Dock 显隐";
+        }
+        if (m_showStagePanelAction && m_stagePanel) {
+            m_showStagePanelAction->setChecked(m_stagePanel->isVisible());
+        }
+        if (m_showOverviewPanelAction && m_overviewPanel) {
+            m_showOverviewPanelAction->setChecked(m_overviewPanel->isVisible());
+        }
+        if (m_devicePanel->isVisible()) {
+            m_devicePanel->raise();
+        } else if (m_plotPanel && m_plotPanel->isVisible()) {
+            m_plotPanel->raise();
+        }
+        if (m_commandPanel && m_commandPanel->isVisible()) {
+            m_commandPanel->raise();
+        } else if (m_stagePanel && m_stagePanel->isVisible()) {
+            m_stagePanel->raise();
+        }
+    } else {
+        m_devicePanel->setVisible(config->showDevicePanel());
+        m_commandPanel->setVisible(config->showCommandPanel());
+        m_plotPanel->setVisible(config->showPlotPanel());
+        if (m_stagePanel) {
+            m_stagePanel->setVisible(config->showStagePanel());
+        }
+        m_monitorPanel->setVisible(config->showMonitorPanel());
+        if (m_overviewPanel) {
+            m_overviewPanel->setVisible(config->showOverviewPanel());
+        }
+        if (m_showStagePanelAction) {
+            m_showStagePanelAction->setChecked(config->showStagePanel());
+        }
+        if (m_showOverviewPanelAction) {
+            m_showOverviewPanelAction->setChecked(config->showOverviewPanel());
+        }
+    }
+
+    applyScreenGeometryConstraints();
 }
 
 QStringList MainWindow::collectCurrentPlotWindowTypes() const
@@ -2822,6 +2893,26 @@ void MainWindow::onDisconnectClicked()
     }
 }
 
+void MainWindow::onStartAcquisitionClicked()
+{
+    if (!m_appController) {
+        return;
+    }
+    saveConfigFromUI();
+    m_appController->reloadRuntimeConfig();
+    m_appController->startDeviceAcquisition();
+    updateAcquisitionControlUiState();
+}
+
+void MainWindow::onStopAcquisitionClicked()
+{
+    if (!m_appController) {
+        return;
+    }
+    m_appController->stopDeviceAcquisition();
+    updateAcquisitionControlUiState();
+}
+
 void MainWindow::onPauseClicked()
 {
     if (!m_appController) {
@@ -2877,6 +2968,7 @@ void MainWindow::onBackendTypeChanged(int index)
     if (m_appController) {
         m_appController->applyReceiverBackendFromConfig();
     }
+    updateAcquisitionControlUiState();
 }
 
 // ===== 动态参数与设备状态方法 =====
@@ -3614,11 +3706,12 @@ void MainWindow::setStyle(AppConfig::Style style)
 
     m_currentStyle = style;
     
-    // 保存样式配置
     AppConfig* config = AppConfig::instance();
     if (config) {
         config->setCurrentStyle(style);
-        persistLayout(QStringLiteral("styleChange"));
+        if (!m_initializingUi) {
+            persistLayout(QStringLiteral("styleChange"));
+        }
         qDebug() << "Style saved to config:" << style;
     }
 }

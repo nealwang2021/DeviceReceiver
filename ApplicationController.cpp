@@ -224,10 +224,16 @@ void ApplicationController::start()
 {
     if (m_isRunning) {
         qWarning() << "应用已在运行状态";
+        // UI 可能已提前置为“连接中...”（例如点击连接按钮后立即更新 UI），
+        // 此处必须回滚连接中状态，避免界面卡死。
+        emit connectionInProgressChanged(false);
+        emit started(true);
         return;
     }
     if (m_connectInProgress) {
         qWarning() << "应用正在连接后端，请稍候";
+        // 正在异步连接时，保持“连接中”状态即可；但仍发一次信号便于 UI 对齐防重入。
+        emit connectionInProgressChanged(true);
         return;
     }
     
@@ -238,6 +244,7 @@ void ApplicationController::start()
         qInfo() << "检测到后端类型变化，重建接收后端:" << m_activeBackendType << "->" << m_config.backendType;
         if (!initReceiverBackend()) {
             qCritical() << "重建接收后端失败";
+            emit connectionInProgressChanged(false);
             emit started(false);
             return;
         }
@@ -255,6 +262,7 @@ void ApplicationController::start()
     if (!m_serialReceiver) {
         qWarning() << "start: 接收后端未初始化";
         m_isRunning = false;
+        emit connectionInProgressChanged(false);
         emit started(false);
         return;
     }
@@ -327,9 +335,14 @@ void ApplicationController::start()
     }
 
     m_isRunning = startedReceiving;
+    setAcquisitionActive(startedReceiving);
     qInfo() << "应用启动完成，接收状态:" << m_isRunning;
     
     // 发射启动信号
+    if (!startedReceiving) {
+        // 串口同步连接失败/用户取消等路径：回滚 UI 的“连接中”状态
+        emit connectionInProgressChanged(false);
+    }
     emit started(m_isRunning);
 }
 
@@ -421,6 +434,7 @@ void ApplicationController::stop()
     
     m_isRunning = false;
     m_isPaused = false;
+    setAcquisitionActive(false);
 
     // 关键：受控断开已完成，释放 stop guard。否则窗口被 setUpdatesEnabled(false)
     // 持续屏蔽 paint 事件，导致：1) 断开后阵列图/阵列热力图不刷新；
@@ -743,6 +757,7 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
         }
 
         m_isRunning = true;
+        setAcquisitionActive(true);
         m_connectInProgress = false;
         emit connectionInProgressChanged(false);
         emit started(true);
@@ -906,6 +921,70 @@ void ApplicationController::sendCommand(const QString& command, bool isHex)
                               Qt::QueuedConnection,
                               Q_ARG(QString, command),
                               Q_ARG(bool, isHex));
+}
+
+void ApplicationController::setAcquisitionActive(bool active)
+{
+    if (m_acquisitionActive == active) {
+        return;
+    }
+    m_acquisitionActive = active;
+    emit acquisitionActiveChanged(active);
+}
+
+void ApplicationController::startDeviceAcquisition()
+{
+    if (!m_serialReceiver) {
+        qWarning() << "开始采集失败：接收后端未初始化";
+        return;
+    }
+    if (m_acquisitionActive) {
+        return;
+    }
+
+    bool connected = false;
+    QMetaObject::invokeMethod(m_serialReceiver.get(), "isBackendConnected",
+                              Qt::BlockingQueuedConnection,
+                              Q_RETURN_ARG(bool, connected));
+    if (!connected) {
+        qWarning() << "开始采集失败：后端未连接";
+        return;
+    }
+
+    int intervalMs = 100;
+    if (AppConfig* cfg = AppConfig::instance()) {
+        intervalMs = qMax(10, cfg->plotRefreshIntervalMs());
+    }
+    QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
+                              Qt::QueuedConnection,
+                              Q_ARG(int, intervalMs));
+
+    if (m_plotWindowManager) {
+        m_plotWindowManager->leaveStopGuard();
+        m_plotWindowManager->startUpdates();
+    }
+    m_isRunning = true;
+    m_isPaused = false;
+    setAcquisitionActive(true);
+    qInfo() << "用户触发开始采集";
+}
+
+void ApplicationController::stopDeviceAcquisition()
+{
+    if (!m_serialReceiver) {
+        return;
+    }
+
+    QMetaObject::invokeMethod(m_serialReceiver.get(), "stopAcquisition",
+                              Qt::BlockingQueuedConnection);
+
+    if (m_plotWindowManager) {
+        m_plotWindowManager->stopUpdates();
+    }
+    m_isRunning = false;
+    m_isPaused = false;
+    setAcquisitionActive(false);
+    qInfo() << "用户触发停止采集";
 }
 
 void ApplicationController::pauseAcquisition()
