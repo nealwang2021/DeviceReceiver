@@ -102,7 +102,7 @@ private:
     QDoubleSpinBox* m_mfCircleRadiusSpin = nullptr;
     QCheckBox* m_mfCircleShowCheck = nullptr;
     QCPItemEllipse* m_mfCircleItem = nullptr;
-    QVector<QCPCurve*> m_mfImpedanceCurves;
+    QVector<QCPGraph*> m_mfImpedanceCurves;
     bool m_mfUseNormalized = false;
     double m_mfRetentionSecs = 3.0;
 

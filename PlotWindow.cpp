@@ -459,8 +459,7 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfTbPlot1->yAxis->setLabel(QStringLiteral("时间 (ms)"));
         m_mfTbPlot1->yAxis->setRangeReversed(true);
         m_mfTbPlot2->xAxis->setLabel(QStringLiteral("实部 / 虚部"));
-        m_mfTbPlot2->yAxis->setLabel(QStringLiteral("时间 (ms)"));
-        m_mfTbPlot2->yAxis->setRangeReversed(true);
+        m_mfTbPlot2->yAxis->setVisible(false);  // 与时基图1共享时间轴
 
         // 阻抗图列
         auto* impCol = new QWidget(m_mfSplitter);
@@ -550,7 +549,7 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         row2Layout->addWidget(new QLabel(QStringLiteral("圆边界 R:"), row2));
         m_mfCircleRadiusSpin = new QDoubleSpinBox(row2);
         m_mfCircleRadiusSpin->setRange(0, 100000);
-        m_mfCircleRadiusSpin->setDecimals(1);
+        m_mfCircleRadiusSpin->setDecimals(3);
         m_mfCircleRadiusSpin->setSingleStep(10);
         m_mfCircleRadiusSpin->setValue(500);
         connect(m_mfCircleRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
@@ -570,6 +569,8 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfCircleItem->setVisible(false);
         updateCircleBoundary();
 
+        col1->setMinimumWidth(180);
+        col2->setMinimumWidth(180);
         m_mfSplitter->addWidget(col1);
         m_mfSplitter->addWidget(col2);
         m_mfSplitter->addWidget(impCol);
@@ -708,11 +709,11 @@ void PlotWindow::rebuildMultiFreqGraphs(int freqPointCount)
     for (QCustomPlot* p : {m_mfTbPlot1, m_mfTbPlot2}) {
         if (p) p->clearGraphs();
     }
-    // 阻抗图：清空 QCPCurve（用 clearPlottables 而非 clearGraphs）
+    // 阻抗图：清空圆滑曲线
     if (m_mfImpedancePlot) {
-        m_mfImpedancePlot->clearPlottables();
+        m_mfImpedancePlot->clearGraphs();
         m_mfImpedanceCurves.clear();
-        // 重新创建圆（clearPlottables 会删除）
+        // 重新创建圆（clearGraphs 会删除 QCPItemEllipse）
         m_mfCircleItem = new QCPItemEllipse(m_mfImpedancePlot);
         m_mfCircleItem->setPen(QPen(QColor(220, 60, 60), 1, Qt::DashLine));
         m_mfCircleItem->setBrush(Qt::NoBrush);
@@ -753,12 +754,15 @@ void PlotWindow::rebuildMultiFreqGraphs(int freqPointCount)
             gB->setName(QStringLiteral("f%1 虚部").arg(freqNum));
         }
 
-        // 阻抗图：QCPCurve 轨迹 — X=实部，Y=虚部
+        // 阻抗图：平滑曲线 — X=实部，Y=虚部
         {
-            auto* curve = new QCPCurve(m_mfImpedancePlot->xAxis, m_mfImpedancePlot->yAxis);
-            curve->setPen(QPen(color, 1.5));
-            curve->setName(QStringLiteral("f%1").arg(freqNum));
-            m_mfImpedanceCurves.append(curve);
+            auto* g = m_mfImpedancePlot->addGraph(
+                m_mfImpedancePlot->xAxis, m_mfImpedancePlot->yAxis);
+            g->setPen(QPen(color, 1.5));
+            g->setSmooth(1);  // 圆滑贝塞尔曲线
+            g->setScatterStyle(QCPScatterStyle::ssNone);
+            g->setName(QStringLiteral("f%1").arg(freqNum));
+            m_mfImpedanceCurves.append(g);
         }
 
         // 频率勾选（默认全选）
@@ -814,7 +818,7 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
         }
     }
     m_mfTbPlot1->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
-    m_mfTbPlot1->xAxis->rescale();
+    m_mfTbPlot1->xAxis->rescale(true);
 
     // 时基图2：实部(实线) + 虚部(虚线)
     for (int i = 0; i < nPoints && i < snapshot->mfImpedanceReal.size(); ++i) {
@@ -836,14 +840,13 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
         }
     }
     m_mfTbPlot2->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
-    m_mfTbPlot2->xAxis->rescale();
+    m_mfTbPlot2->xAxis->rescale(true);
 
-    // 阻抗图：QCPCurve 完整轨迹 — key=索引, X=实部, Y=虚部
+    // 阻抗图：平滑曲线 — key=索引, X=实部, Y=虚部
     const QVector<QVector<double>>& impX =
         m_mfUseNormalized ? snapshot->mfNormImpedanceReal : snapshot->mfImpedanceReal;
     const QVector<QVector<double>>& impY =
         m_mfUseNormalized ? snapshot->mfNormImpedanceImag : snapshot->mfImpedanceImag;
-    // 更新轴标签
     if (m_mfImpedancePlot) {
         m_mfImpedancePlot->xAxis->setLabel(m_mfUseNormalized
             ? QStringLiteral("归一化阻抗实部") : QStringLiteral("阻抗实部 (Ω)"));
@@ -851,33 +854,38 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
             ? QStringLiteral("归一化阻抗虚部") : QStringLiteral("阻抗虚部 (Ω)"));
     }
 
-    // 阻抗曲线保留时间窗口
-    const double retentionSecs = m_mfRetentionSecs * 1000.0; // 转为 ms
+    const double retentionSecs = m_mfRetentionSecs * 1000.0;
     const double cutoffMs = latest - retentionSecs;
     int impStartIdx = 0;
     for (; impStartIdx < n && snapshot->timeMs[impStartIdx] < cutoffMs; ++impStartIdx) {}
 
     for (int i = 0; i < nPoints && i < m_mfImpedanceCurves.size(); ++i) {
         if (i >= impX.size() || i >= impY.size()) continue;
-        QCPCurve* curve = m_mfImpedanceCurves[i];
-        if (!curve->visible()) continue;
+        QCPGraph* g = m_mfImpedanceCurves[i];
+        if (!g->visible()) continue;
 
         const auto& realVec = impX[i];
         const auto& imagVec = impY[i];
         const int pts = qMin(realVec.size(), imagVec.size());
         const int useCount = qMax(0, pts - impStartIdx);
-        QVector<double> t(useCount), x(useCount), y(useCount);
+        QVector<double> x(useCount), y(useCount);
         for (int j = 0; j < useCount; ++j) {
-            t[j] = j;
             x[j] = realVec[impStartIdx + j];
             y[j] = imagVec[impStartIdx + j];
         }
-        curve->setData(t, x, y, true);
+        g->setData(x, y, true);
     }
 
-    // 自适应模式
+    // 自适应模式：1:1.2 比例（正方形稍扁），两个轴都可见
     if (m_mfAdaptiveRadio && m_mfAdaptiveRadio->isChecked()) {
         m_mfImpedancePlot->rescaleAxes();
+        QCPRange xRange = m_mfImpedancePlot->xAxis->range();
+        QCPRange yRange = m_mfImpedancePlot->yAxis->range();
+        const double xCenter = (xRange.lower + xRange.upper) / 2.0;
+        const double yCenter = (yRange.lower + yRange.upper) / 2.0;
+        const double half = qMax(xRange.size(), yRange.size()) * 0.6;
+        m_mfImpedancePlot->xAxis->setRange(xCenter - half, xCenter + half);
+        m_mfImpedancePlot->yAxis->setRange(yCenter - half * 1.2, yCenter + half * 1.2);
     }
 }
 
@@ -889,6 +897,13 @@ void PlotWindow::applyImpedanceAxisMode()
         m_mfImpedancePlot->yAxis->setRange(-1000, 1000);
     } else {
         m_mfImpedancePlot->rescaleAxes();
+        QCPRange xRange = m_mfImpedancePlot->xAxis->range();
+        QCPRange yRange = m_mfImpedancePlot->yAxis->range();
+        const double xCenter = (xRange.lower + xRange.upper) / 2.0;
+        const double yCenter = (yRange.lower + yRange.upper) / 2.0;
+        const double half = qMax(xRange.size(), yRange.size()) * 0.6;
+        m_mfImpedancePlot->xAxis->setRange(xCenter - half, xCenter + half);
+        m_mfImpedancePlot->yAxis->setRange(yCenter - half * 1.2, yCenter + half * 1.2);
     }
     m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
 }
