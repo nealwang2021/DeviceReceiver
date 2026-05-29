@@ -94,7 +94,7 @@ void MagArrayWindow::buildUi()
     m_waveformPlot = new QCustomPlot(m_splitter);
     PlotWindowBase::applyConfiguredOpenGl(m_waveformPlot);
     m_waveformPlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
-    m_waveformPlot->plotLayout()->setRowSpacing(0);
+    m_waveformPlot->plotLayout()->setRowSpacing(10);
     m_waveformPlot->plotLayout()->setColumnSpacing(0);
 
     m_waveformScrollArea = new QScrollArea(m_splitter);
@@ -250,7 +250,7 @@ void MagArrayWindow::rebuildWaveformGraphs(int channelCount)
         m_waveformAxisRects.append(axisRect);
 
         axisRect->setAutoMargins(QCP::msNone);
-        axisRect->setMargins(QMargins(48, 0, 8, 0));
+        axisRect->setMargins(isLast ? QMargins(48, 0, 8, 18) : QMargins(48, 0, 8, 0));
         axisRect->setBackground(rowBg[axis]);
 
         // Axis labels
