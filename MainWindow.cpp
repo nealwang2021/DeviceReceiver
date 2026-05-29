@@ -7,6 +7,7 @@
 #include "SerialReceiver.h"
 #include "GrpcReceiverBackend.h"
 #include "GrpcMultiFreqBackend.h"
+#include "GrpcMagArrayBackend.h"
 #include "DataCacheManager.h"
 #include "HistoryOverviewWindow.h"
 #include <QSettings>
@@ -531,6 +532,7 @@ void MainWindow::initUI()
         m_backendTypeCombo->addItem(QStringLiteral("串口（被测设备）"), "serial");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（被测设备数据）"), "grpc");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（多频涡流）"), "multifreq-grpc");
+        m_backendTypeCombo->addItem(QStringLiteral("漏磁检测"), "magarray");
         // 三轴台测试装置为独立 gRPC，不在此列出（见右侧「三轴台测试装置」面板）
         m_grpcEndpointEdit = new QLineEdit();
         m_grpcEndpointEdit->setPlaceholderText(QStringLiteral("被测设备 gRPC，如 127.0.0.1:50051 或 [::1]:50051"));
@@ -2942,7 +2944,8 @@ void MainWindow::onBackendTypeChanged(int index)
     const QString backendType = m_backendTypeCombo->currentData().toString();
     const bool isGrpc = (backendType.compare("grpc", Qt::CaseInsensitive) == 0);
     const bool isMultiFreq = (backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
-    const bool isGrpcLike = isGrpc || isMultiFreq;
+    const bool isMagArray = (backendType.compare("magarray", Qt::CaseInsensitive) == 0);
+    const bool isGrpcLike = isGrpc || isMultiFreq || isMagArray;
 
     m_grpcEndpointEdit->setEnabled(isGrpcLike);
 
@@ -2961,6 +2964,9 @@ void MainWindow::onBackendTypeChanged(int index)
         params = tmp.configParameters();
     } else if (isMultiFreq) {
         GrpcMultiFreqBackend tmp;
+        params = tmp.configParameters();
+    } else if (isMagArray) {
+        GrpcMagArrayBackend tmp;
         params = tmp.configParameters();
     }
     rebuildGrpcParamUI(params);
