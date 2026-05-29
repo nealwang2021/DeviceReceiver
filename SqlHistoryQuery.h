@@ -78,6 +78,12 @@ public:
         double maxImpedanceImag = 0.0;
     };
 
+    struct MagArrayEnvelopeBucket {
+        qint64 bucketStartMs = 0;
+        double minMagnitude = 0.0;
+        double maxMagnitude = 0.0;
+    };
+
     explicit SqlHistoryQuery(QObject* parent = nullptr);
     ~SqlHistoryQuery() override;
 
@@ -127,6 +133,9 @@ public:
         qint64 lastTimestampMs, qint64 lastRowId, int chunkSize);
 
     QVector<MultiFreqEnvelopeBucket> queryMultiFreqOverviewEnvelope(
+        qint64 startMs, qint64 endMs, qint64 bucketMs);
+
+    QVector<MagArrayEnvelopeBucket> queryMagArrayOverviewEnvelope(
         qint64 startMs, qint64 endMs, qint64 bucketMs);
 
     qint64 estimateMultiFreqRowCount(qint64 startMs, qint64 endMs);

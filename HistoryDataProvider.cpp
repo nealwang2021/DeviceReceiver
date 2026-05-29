@@ -191,3 +191,10 @@ qint64 HistoryDataProvider::estimateMultiFreqRowCount(qint64 startMs, qint64 end
     if (!m_query) return 0;
     return m_query->estimateMultiFreqRowCount(startMs, endMs);
 }
+
+QVector<SqlHistoryQuery::MagArrayEnvelopeBucket> HistoryDataProvider::queryMagArrayOverviewEnvelope(
+    qint64 startMs, qint64 endMs, qint64 bucketMs)
+{
+    if (!m_query) return {};
+    return m_query->queryMagArrayOverviewEnvelope(startMs, endMs, bucketMs);
+}

@@ -75,6 +75,7 @@ private:
     void updateRefreshButtonToolTip();
     void rebuildEnvelope();
     void rebuildMultiFreqEnvelope();
+    void rebuildMagArrayEnvelope();
     void applyRangeToItems();
     void updateStatusLabels();
     bool isDarkThemeActive() const;

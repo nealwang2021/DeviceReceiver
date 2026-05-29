@@ -184,6 +184,13 @@ private:
 
         bool ok = true;
         for (const FrameData& frame : frames) {
+            if (frame.detectMode == FrameData::MagArray) {
+                if (!insertMagArrayFrame(frame)) {
+                    ok = false;
+                    break;
+                }
+                continue;
+            }
             if (frame.detectMode == FrameData::MultiFreqEddy) {
                 if (!insertMultiFreqFrame(frame)) {
                     ok = false;
@@ -280,6 +287,10 @@ private:
             qWarning() << "RealtimeSqlRecorder: ensure multifreq_frames schema failed:" << error;
             return false;
         }
+        if (!RealtimeSqlRecorder::ensureMagArrayFramesSchema(m_db, &error)) {
+            qWarning() << "RealtimeSqlRecorder: ensure mag_array_frames schema failed:" << error;
+            return false;
+        }
         return true;
     }
 
@@ -301,6 +312,17 @@ private:
             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
         if (!m_insertMultiFreqFrame.prepare(sqlMf)) {
             qWarning() << "RealtimeSqlRecorder: prepare insert multifreq_frames failed" << m_insertMultiFreqFrame.lastError();
+            return false;
+        }
+
+        m_insertMagArrayFrame = QSqlQuery(m_db);
+        const QString sqlMa = QStringLiteral(
+            "INSERT INTO mag_array_frames(timestamp_unix_ms, frame_index, sensor_index, "
+            "x_mean, y_mean, z_mean, x_latest, y_latest, z_latest, "
+            "magnitude_mean, magnitude_latest) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+        if (!m_insertMagArrayFrame.prepare(sqlMa)) {
+            qWarning() << "RealtimeSqlRecorder: prepare insert mag_array_frames failed" << m_insertMagArrayFrame.lastError();
             return false;
         }
 
@@ -369,7 +391,7 @@ private:
         if (m_owner->m_retentionMs > 0) {
             qint64 minWallMs = std::numeric_limits<qint64>::max();
             // 同时检查 aligned_frames 和 multifreq_frames
-            const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames")};
+            const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames"), QStringLiteral("mag_array_frames")};
             for (const QString& table : tables) {
                 QSqlQuery tq(m_db);
                 const QString sql = QStringLiteral(
@@ -538,6 +560,7 @@ private:
     QString m_connectionName;
     QSqlQuery m_insertAlignedFrame;
     QSqlQuery m_insertMultiFreqFrame;
+    QSqlQuery m_insertMagArrayFrame;
     qint64 m_lastPruneMs = 0;
 
     bool insertMultiFreqFrame(const FrameData& frame)
@@ -558,6 +581,28 @@ private:
             m_insertMultiFreqFrame.bindValue(12, pt.valid ? 1 : 0);
             if (!m_insertMultiFreqFrame.exec()) {
                 qWarning() << "RealtimeSqlRecorder: insert multifreq frame failed" << m_insertMultiFreqFrame.lastError();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool insertMagArrayFrame(const FrameData& frame)
+    {
+        for (const auto& sr : frame.magSensorResults) {
+            m_insertMagArrayFrame.bindValue(0, static_cast<qint64>(frame.timestamp));
+            m_insertMagArrayFrame.bindValue(1, static_cast<qint64>(frame.frameId));
+            m_insertMagArrayFrame.bindValue(2, sr.sensorIndex);
+            m_insertMagArrayFrame.bindValue(3, sr.xMean);
+            m_insertMagArrayFrame.bindValue(4, sr.yMean);
+            m_insertMagArrayFrame.bindValue(5, sr.zMean);
+            m_insertMagArrayFrame.bindValue(6, sr.xLatest);
+            m_insertMagArrayFrame.bindValue(7, sr.yLatest);
+            m_insertMagArrayFrame.bindValue(8, sr.zLatest);
+            m_insertMagArrayFrame.bindValue(9, sr.magnitudeMean);
+            m_insertMagArrayFrame.bindValue(10, sr.magnitudeLatest);
+            if (!m_insertMagArrayFrame.exec()) {
+                qWarning() << "RealtimeSqlRecorder: insert mag_array frame failed" << m_insertMagArrayFrame.lastError();
                 return false;
             }
         }
@@ -708,6 +753,34 @@ bool RealtimeSqlRecorder::ensureMultiFreqFramesSchema(QSqlDatabase& db, QString*
         if (!q.exec(sql)) {
             if (errorMessage) {
                 *errorMessage = QStringLiteral("multifreq_frames DDL 失败: %1").arg(q.lastError().text());
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RealtimeSqlRecorder::ensureMagArrayFramesSchema(QSqlDatabase& db, QString* errorMessage)
+{
+    const QStringList ddl{
+        QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS mag_array_frames ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "timestamp_unix_ms INTEGER NOT NULL,"
+            "frame_index INTEGER NOT NULL,"
+            "sensor_index INTEGER NOT NULL,"
+            "x_mean REAL, y_mean REAL, z_mean REAL,"
+            "x_latest REAL, y_latest REAL, z_latest REAL,"
+            "magnitude_mean REAL, magnitude_latest REAL"
+            ")"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_magarray_ts ON mag_array_frames(timestamp_unix_ms)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_magarray_sensor ON mag_array_frames(sensor_index)"),
+    };
+    QSqlQuery q(db);
+    for (const QString& sql : ddl) {
+        if (!q.exec(sql)) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("mag_array_frames DDL 失败: %1").arg(q.lastError().text());
             }
             return false;
         }

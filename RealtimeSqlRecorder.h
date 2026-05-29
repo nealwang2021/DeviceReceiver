@@ -43,6 +43,8 @@ public:
     static int alignedFramesBoundParamCount();
     /// 创建 multifreq_frames 表与索引（多频涡流数据存储）。
     static bool ensureMultiFreqFramesSchema(QSqlDatabase& db, QString* errorMessage = nullptr);
+    /// 创建 mag_array_frames 表与索引（漏磁检测数据存储）。
+    static bool ensureMagArrayFramesSchema(QSqlDatabase& db, QString* errorMessage = nullptr);
 
 private:
     QVector<FrameData> takeBatch(int maxBatchSize);

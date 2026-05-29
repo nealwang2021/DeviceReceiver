@@ -86,6 +86,10 @@ public:
     /// 多频行数估算（透传 SqlHistoryQuery）。
     qint64 estimateMultiFreqRowCount(qint64 startMs, qint64 endMs);
 
+    /// 漏磁总览包络查询（透传 SqlHistoryQuery）。
+    QVector<SqlHistoryQuery::MagArrayEnvelopeBucket> queryMagArrayOverviewEnvelope(
+        qint64 startMs, qint64 endMs, qint64 bucketMs);
+
     /// 透传 SqlHistoryQuery::fetchRawChunk，供需要原始 40 通道数据的 UI（如阵列热力图）按 review 范围分块读。
     bool fetchRawChunk(qint64 startMs,
                        qint64 endMs,

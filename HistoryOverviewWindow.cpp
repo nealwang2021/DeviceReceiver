@@ -943,6 +943,21 @@ void HistoryOverviewWindow::rebuildEnvelope()
     auto* hdp = HistoryDataProvider::instance();
     if (!hdp || !hdp->isDatabaseOpen()) return;
 
+    // 优先尝试漏磁检测包络
+    {
+        const qint64 testStart = plotEnvelopeStartMs();
+        const qint64 testEnd = plotEnvelopeEndMs();
+        if (testEnd > testStart) {
+            // 仅探测一小段以判断是否含漏磁数据，避免大范围 GROUP BY
+            const qint64 probeEnd = std::min(testEnd, testStart + 10000LL);
+            const auto testBuckets = hdp->queryMagArrayOverviewEnvelope(testStart, probeEnd, 1000);
+            if (!testBuckets.isEmpty()) {
+                rebuildMagArrayEnvelope();
+                return;
+            }
+        }
+    }
+
     // 优先尝试多频涡流包络
     {
         const qint64 testStart = plotEnvelopeStartMs();
@@ -1073,6 +1088,67 @@ void HistoryOverviewWindow::rebuildMultiFreqEnvelope()
         applyRangeToItems();
         m_plot->replot(QCustomPlot::rpQueuedReplot);
     }
+}
+
+void HistoryOverviewWindow::rebuildMagArrayEnvelope()
+{
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isDatabaseOpen()) return;
+
+    // 清除旧的多频图（如果有残留）
+    for (auto* g : m_mfEnvelopeMinGraphs) if (g) m_plot->removeGraph(g);
+    for (auto* g : m_mfEnvelopeMaxGraphs) if (g) m_plot->removeGraph(g);
+    m_mfEnvelopeMinGraphs.clear();
+    m_mfEnvelopeMaxGraphs.clear();
+
+    // 确保 aligned 图可见
+    if (m_maxGraph) m_maxGraph->setVisible(true);
+    if (m_minGraph) m_minGraph->setVisible(true);
+
+    const qint64 start = plotEnvelopeStartMs();
+    const qint64 end = plotEnvelopeEndMs();
+    if (end <= start) return;
+    const qint64 bucket = HistoryDataProvider::suggestBucketMs(start, end, kOverviewTargetBuckets);
+
+    const auto buckets = hdp->queryMagArrayOverviewEnvelope(start, end, bucket);
+    if (buckets.isEmpty()) return;
+
+    QVector<double> times, mins, maxs;
+    for (const auto& b : buckets) {
+        times.append(msToPlotX(b.bucketStartMs));
+        mins.append(b.minMagnitude);
+        maxs.append(b.maxMagnitude);
+    }
+
+    const bool dark = isDarkThemeActive();
+    const QColor envColor = dark ? QColor(96, 165, 250) : QColor(80, 140, 220);
+    const QColor envFill = dark ? QColor(96, 165, 250, 70) : QColor(120, 170, 240, 80);
+    QPen envPen(envColor);
+    envPen.setWidthF(1.2);
+    m_maxGraph->setPen(envPen);
+    m_minGraph->setPen(envPen);
+    m_maxGraph->setBrush(QBrush(envFill));
+    m_maxGraph->setChannelFillGraph(m_minGraph);
+    m_maxGraph->setData(times, maxs, true);
+    m_minGraph->setData(times, mins, true);
+    m_maxGraph->setVisible(true);
+    m_minGraph->setVisible(true);
+
+    double yMin = std::numeric_limits<double>::infinity();
+    double yMax = -std::numeric_limits<double>::infinity();
+    for (const auto& b : buckets) {
+        yMin = std::min(yMin, b.minMagnitude);
+        yMax = std::max(yMax, b.maxMagnitude);
+    }
+    setOverviewXAxisRangeMs(m_plot, start, end);
+    updateOverviewXAxisDateTimeFormat(m_plot, std::max<qint64>(1LL, end - start));
+    m_plot->yAxis->setLabel(QStringLiteral("漏磁幅值"));
+    if (std::isfinite(yMin) && std::isfinite(yMax) && yMax > yMin) {
+        const double pad = (yMax - yMin) * 0.08;
+        m_plot->yAxis->setRange(yMin - pad, yMax + pad);
+    }
+    applyRangeToItems();
+    m_plot->replot(QCustomPlot::rpQueuedReplot);
 }
 
 void HistoryOverviewWindow::applyRangeToItems()
