@@ -144,7 +144,7 @@ void MagArrayWindow::buildUi()
     const QColor rowBgOdd  = dark ? QColor(31, 35, 41) : QColor(241, 246, 252);
 
     for (int axis = 0; axis < 3; ++axis) {
-        QCPAxisRect* axisRect = new QCPAxisRect(m_heatmapPlot, false);
+        QCPAxisRect* axisRect = new QCPAxisRect(m_heatmapPlot);
         m_heatmapPlot->plotLayout()->addElement(axis, 0, axisRect);
         m_heatmapAxisRects[axis] = axisRect;
 
