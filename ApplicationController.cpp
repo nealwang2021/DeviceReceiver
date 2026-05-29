@@ -4,6 +4,7 @@
 #include "SerialReceiver.h"
 #include "GrpcReceiverBackend.h"
 #include "GrpcMultiFreqBackend.h"
+#include "GrpcMagArrayBackend.h"
 #include "StageReceiverBackend.h"
 #include "PlotWindowBase.h"
 #include "PlotWindow.h"
@@ -271,7 +272,8 @@ void ApplicationController::start()
     bool startedReceiving = false;
     m_isPaused = false;
     const bool isGrpcBackend = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0
-                                || m_config.backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
+                                || m_config.backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0
+                                || m_config.backendType.compare("magarray", Qt::CaseInsensitive) == 0);
 
     if (isGrpcBackend) {
         if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
@@ -529,6 +531,10 @@ bool ApplicationController::initReceiverBackend()
         auto* mf = new GrpcMultiFreqBackend;
         mf->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
         m_serialReceiver.reset(mf);
+    } else if (backendType.compare("magarray", Qt::CaseInsensitive) == 0) {
+        auto* mag = new GrpcMagArrayBackend;
+        mag->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
+        m_serialReceiver.reset(mag);
     } else {
         m_serialReceiver.reset(new SerialReceiver);
     }
@@ -562,6 +568,10 @@ bool ApplicationController::initReceiverBackend()
                          Qt::QueuedConnection);
     } else if (auto* mfBackend = qobject_cast<GrpcMultiFreqBackend*>(m_serialReceiver.get())) {
         QObject::connect(mfBackend, &GrpcMultiFreqBackend::connectAttemptFinished,
+                         this, &ApplicationController::handleGrpcConnectAttemptFinished,
+                         Qt::QueuedConnection);
+    } else if (auto* magBackend = qobject_cast<GrpcMagArrayBackend*>(m_serialReceiver.get())) {
+        QObject::connect(magBackend, &GrpcMagArrayBackend::connectAttemptFinished,
                          this, &ApplicationController::handleGrpcConnectAttemptFinished,
                          Qt::QueuedConnection);
     }

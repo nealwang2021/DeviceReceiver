@@ -70,6 +70,8 @@ private:
     bool shouldEmitRealtimePacket(qint64 timestampMs);
 
     QString m_endpoint;
+    QString m_portName;
+    int     m_baudrate = 1000000;
     int     m_acquisitionIntervalMs = 100;
     int     m_connectTimeoutMs = 6000;
 

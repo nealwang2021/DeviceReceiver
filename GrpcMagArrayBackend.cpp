@@ -48,14 +48,12 @@ GrpcMagArrayBackend::~GrpcMagArrayBackend()
 QVector<BackendParamDescriptor> GrpcMagArrayBackend::configParameters() const
 {
     return {
-        {"MagArray/PreprocessMode",  QStringLiteral("预处理模式"), ParamEnum,
-         QVariant(1), 0, 0, 1, {"None","FixedMidpoint","AutoBaseline","SlowTrackingBaseline"}},
-        {"MagArray/FixedMidpoint", QStringLiteral("固定中点值"), ParamDouble,
-         QVariant(32768.0), 0.0, 65535.0, 1.0, {}},
-        {"MagArray/BaselineFrames", QStringLiteral("基线帧数"), ParamInt,
-         QVariant(100), 1, 10000, 1, {}},
-        {"MagArray/TrackingFactor", QStringLiteral("慢跟踪因子"), ParamDouble,
-         QVariant(0.001), 0.0, 1.0, 0.001, {}},
+        {"MagArray/Baudrate", QStringLiteral("波特率"), ParamInt,
+         QVariant(1000000), 9600, 4000000, 100, {}},
+        {"MagArray/PreprocessMode", QStringLiteral("预处理模式"), ParamEnum,
+         QVariant(0), 0, 0, 1,
+         {QStringLiteral("None"), QStringLiteral("FixedMidpoint"),
+          QStringLiteral("AutoBaseline"), QStringLiteral("SlowTrackingBaseline")}},
     };
 }
 
@@ -75,16 +73,47 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
         return true;
     }
 
+    // endpoint 格式: "COM3|1000000" (串口|波特率) 或直接 gRPC 目标 "host:port"
     m_endpoint = endpoint;
-    emitBackendStatus(QStringLiteral("正在连接漏磁设备"), endpoint);
+
+    QString portName;
+    int baudrate = 1000000;
+    QString grpcEndpointStr;
+
+    if (endpoint.contains(QLatin1Char('|'))) {
+        // 格式: "port_name|baudrate"
+        const int pipeIdx = endpoint.indexOf(QLatin1Char('|'));
+        portName = endpoint.left(pipeIdx).trimmed();
+        bool brOk = false;
+        const int br = endpoint.midRef(pipeIdx + 1).trimmed().toInt(&brOk);
+        if (brOk && br > 0) {
+            baudrate = br;
+        }
+        // gRPC 服务器地址取自配置
+        const auto* cfg = AppConfig::instance();
+        grpcEndpointStr = cfg ? cfg->grpcEndpoint() : QStringLiteral("localhost:50051");
+        if (grpcEndpointStr.trimmed().isEmpty()) {
+            grpcEndpointStr = QStringLiteral("localhost:50051");
+        }
+    } else {
+        // 直接作为 gRPC 目标地址
+        grpcEndpointStr = endpoint;
+    }
+
+    m_portName = portName;
+    m_baudrate = baudrate;
+
+    emitBackendStatus(QStringLiteral("正在连接漏磁设备"), grpcEndpointStr);
 
 #ifdef HAS_GRPC
     QString grpcTarget;
     bool useTls = false;
     QString parsedHost;
     int parsedPort = 0;
-    if (!GrpcEndpointUtils::parseChannelEndpoint(endpoint, &grpcTarget, &useTls, &parsedHost, &parsedPort)) {
-        emitBackendStatus(QStringLiteral("漏磁连接失败"), QStringLiteral("无法解析端点: ") + endpoint);
+    if (!GrpcEndpointUtils::parseChannelEndpoint(grpcEndpointStr, &grpcTarget, &useTls,
+                                                  &parsedHost, &parsedPort)) {
+        emitBackendStatus(QStringLiteral("漏磁连接失败"),
+                          QStringLiteral("无法解析端点: ") + grpcEndpointStr);
         emit connectAttemptFinished(false, QStringLiteral("无法解析端点"));
         return false;
     }
@@ -156,7 +185,7 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
                     if (tryConnect(ipTarget, a.tls, a.tls ? parsedHost : QString(), &reason)) {
                         connected = true; useTls = a.tls; connectedTarget = ipTarget; break;
                     }
-                    failures << QStringLiteral("%1 -> %2").arg(a.label, reason);
+                    failures << QStringLiteral("%1 -> %2").arg(label, reason);
                 }
                 if (connected) break;
             }
@@ -210,6 +239,7 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
     return true;
 #else
     Q_UNUSED(endpoint)
+    Q_UNUSED(grpcEndpointStr)
     emitBackendStatus(QStringLiteral("gRPC 未编译"), QString());
     return false;
 #endif
@@ -341,25 +371,44 @@ void GrpcMagArrayBackend::onMockTick()
 
     constexpr int kSensorCount = 20;
     constexpr int kAxisCount = 3;
+    constexpr int kTotalChannels = kSensorCount * kAxisCount; // 60
 
     FrameData frame;
     frame.timestamp = QDateTime::currentMSecsSinceEpoch();
     frame.frameId = m_frameCounter;
     frame.sequence = m_frameCounter;
     frame.detectMode = FrameData::MagArray;
-    frame.channelCount = 0;
+    frame.channelCount = static_cast<uint8_t>(kTotalChannels);
 
+    // 生成 60 通道合成正弦波数据
+    const double t = static_cast<double>(m_frameCounter) * 0.02; // ~50Hz 等效时间
+    frame.channels_comp0.resize(kTotalChannels);
+    for (int i = 0; i < kTotalChannels; ++i) {
+        const int sensorIdx = i / kAxisCount;
+        const int axisIdx = i % kAxisCount;
+        // 每个传感器/轴不同的频率、幅度、相位
+        const double freq = 1.0 + 0.3 * sensorIdx + 0.1 * axisIdx;
+        const double phase = axisIdx * 2.0 * M_PI / 3.0;
+        const double amp = 100.0 + 20.0 * sensorIdx;
+        const double noise = (QRandomGenerator::global()->generateDouble() - 0.5) * 5.0;
+        frame.channels_comp0[i] = std::sin(t * freq + phase) * amp + noise;
+    }
+
+    // 生成 20 传感器结果（每传感器3轴统计）
     auto* rng = QRandomGenerator::global();
     frame.magSensorResults.resize(kSensorCount);
     for (int i = 0; i < kSensorCount; ++i) {
+        const int base = i * kAxisCount;
         MagSensorResult& sr = frame.magSensorResults[i];
         sr.sensorIndex = i;
-        sr.xMean = (rng->generateDouble() - 0.5) * 200.0;
-        sr.yMean = (rng->generateDouble() - 0.5) * 200.0;
-        sr.zMean = 32768.0 + (rng->generateDouble() - 0.5) * 500.0;
-        sr.xLatest = sr.xMean + (rng->generateDouble() - 0.5) * 10.0;
-        sr.yLatest = sr.yMean + (rng->generateDouble() - 0.5) * 10.0;
-        sr.zLatest = sr.zMean + (rng->generateDouble() - 0.5) * 10.0;
+        // 均值从 channels_comp0 计算
+        sr.xMean = frame.channels_comp0[base + 0];
+        sr.yMean = frame.channels_comp0[base + 1];
+        sr.zMean = frame.channels_comp0[base + 2];
+        // 最新值加小幅噪声
+        sr.xLatest = sr.xMean + (rng->generateDouble() - 0.5) * 2.0;
+        sr.yLatest = sr.yMean + (rng->generateDouble() - 0.5) * 2.0;
+        sr.zLatest = sr.zMean + (rng->generateDouble() - 0.5) * 2.0;
         sr.magnitudeMean = std::sqrt(sr.xMean * sr.xMean + sr.yMean * sr.yMean + sr.zMean * sr.zMean);
         sr.magnitudeLatest = std::sqrt(sr.xLatest * sr.xLatest + sr.yLatest * sr.yLatest + sr.zLatest * sr.zLatest);
     }
@@ -423,24 +472,16 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
         return;
     }
 
-    // 先调用 StartDetection
+    // 先调用 StartDetection，传入串口参数
     {
-        const auto* cfg = AppConfig::instance();
         magarray::StartDetectionRequest detReq;
-        detReq.set_port_name("");
-        detReq.set_baudrate(1000000);
+        detReq.set_port_name(m_portName.toStdString());
+        detReq.set_baudrate(m_baudrate);
         auto* preproc = detReq.mutable_preprocess();
-        if (cfg) {
-            preproc->set_mode(magarray::PREPROCESS_MODE_NONE);
-            preproc->set_fixed_midpoint(32768.0);
-            preproc->set_baseline_frames(100);
-            preproc->set_tracking_factor(0.001);
-        } else {
-            preproc->set_mode(magarray::PREPROCESS_MODE_NONE);
-            preproc->set_fixed_midpoint(32768.0);
-            preproc->set_baseline_frames(100);
-            preproc->set_tracking_factor(0.001);
-        }
+        preproc->set_mode(magarray::PREPROCESS_MODE_NONE);
+        preproc->set_fixed_midpoint(32768.0);
+        preproc->set_baseline_frames(100);
+        preproc->set_tracking_factor(0.001);
 
         grpc::ClientContext detCtx;
         magarray::OperationReply detReply;
@@ -456,11 +497,10 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
 
     // 构建 StreamFramesRequest
     magarray::StreamFramesRequest req;
-    req.set_include_raw_values(false);
-    req.set_include_processed_values(false);
     req.set_include_channel_values(true);
+    req.set_include_processed_values(true);
     req.set_include_sensor_values(true);
-    req.set_max_frames_per_second(0);
+    req.set_max_frames_per_second(0); // 不限制
 
     auto ctx = std::make_unique<grpc::ClientContext>();
     {
@@ -493,7 +533,21 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
         frame.frameId = static_cast<uint64_t>(pbFrame.frame_index());
         frame.sequence = frame.frameId;
         frame.detectMode = FrameData::MagArray;
-        frame.channelCount = 0;
+
+        // 转换通道数据：processed_values 取平均作为 comp0
+        const int nChan = pbFrame.channels_size();
+        frame.channelCount = static_cast<uint8_t>(qMin(nChan, 200));
+        frame.channels_comp0.resize(nChan);
+        for (int i = 0; i < nChan; ++i) {
+            const auto& ch = pbFrame.channels(i);
+            double sum = 0.0;
+            int cnt = 0;
+            for (int j = 0; j < ch.processed_values_size(); ++j) {
+                const double v = ch.processed_values(j);
+                if (std::isfinite(v)) { sum += v; cnt++; }
+            }
+            frame.channels_comp0[i] = (cnt > 0) ? (sum / static_cast<double>(cnt)) : 0.0;
+        }
 
         // 转换传感器结果
         const int nSensors = pbFrame.sensor_results_size();
@@ -520,6 +574,7 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
             QJsonObject pkt;
             pkt["type"] = QStringLiteral("magarray");
             pkt["frame_index"] = static_cast<qint64>(pbFrame.frame_index());
+            pkt["n_sensors"] = nSensors;
             emit dataReceived(QJsonDocument(pkt).toJson(QJsonDocument::Compact), false);
         }
     }
@@ -561,7 +616,7 @@ void GrpcMagArrayBackend::emitBackendStatus(const QString& status, const QString
 void GrpcMagArrayBackend::emitDeviceStatus()
 {
     QJsonObject s;
-    s["protocol"] = QStringLiteral("magarray-grpc");
+    s["protocol"] = QStringLiteral("magarray");
     s["endpoint"] = m_endpoint;
     s["mock"] = m_mockMode.load();
     emit backendStatusChanged(s);
