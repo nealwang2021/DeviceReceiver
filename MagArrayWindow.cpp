@@ -216,15 +216,18 @@ void MagArrayWindow::rebuildWaveformGraphs(int channelCount)
 {
     if (!m_waveformPlot) return;
 
-    m_waveformPlot->clearPlottables();
+    m_waveformPlot->clearGraphs();
     m_waveformPlot->clearItems();
     m_waveformPlot->plotLayout()->clear();
 
     const bool dark = isDarkThemeActive();
     m_waveformPlot->setBackground(QBrush(dark ? QColor(24, 26, 30) : QColor(255, 255, 255)));
 
-    const QColor rowBgEven = dark ? QColor(36, 40, 46) : QColor(248, 251, 255);
-    const QColor rowBgOdd  = dark ? QColor(31, 35, 41) : QColor(241, 246, 252);
+    const QColor rowBg[3] = {
+        dark ? QColor(36, 40, 46) : QColor(248, 251, 255),
+        dark ? QColor(31, 35, 41) : QColor(241, 246, 252),
+        dark ? QColor(36, 40, 46) : QColor(248, 251, 255),
+    };
     const QColor gridBottom = dark ? QColor(74, 82, 94) : QColor(210, 220, 232);
     const QColor gridLeft   = dark ? QColor(64, 72, 84) : QColor(198, 208, 220);
     const QColor tickColor  = dark ? QColor(200, 208, 220) : QColor(70, 78, 90);
@@ -233,83 +236,51 @@ void MagArrayWindow::rebuildWaveformGraphs(int channelCount)
 
     constexpr int kSensorsPerAxis = 20;
     constexpr int kAxisCount = 3;
-    const int totalChannels = qBound(0, channelCount, kSensorsPerAxis * kAxisCount);
+    const char* axisLabels[kAxisCount] = {"X 轴", "Y 轴", "Z 轴"};
 
     m_waveformAxisRects.clear();
-    m_waveformChannelCount = totalChannels;
+    m_waveformChannelCount = qBound(0, channelCount, kSensorsPerAxis * kAxisCount);
 
-    for (int i = 0; i < totalChannels; ++i) {
-        QCPAxisRect* axisRect = new QCPAxisRect(m_waveformPlot, true);
-        m_waveformPlot->plotLayout()->addElement(i, 0, axisRect);
+    // 3 个轴矩形，每轴 20 个通道在同一坐标轴内叠加（不同颜色区分）
+    for (int axis = 0; axis < kAxisCount; ++axis) {
+        QCPAxisRect* axisRect = new QCPAxisRect(m_waveformPlot);
+        m_waveformPlot->plotLayout()->addElement(axis * 2, 0, axisRect);
         m_waveformAxisRects.append(axisRect);
 
         axisRect->setAutoMargins(QCP::msNone);
         axisRect->setMargins(QMargins(48, 3, 8, 18));
-        axisRect->setMinimumMargins(QMargins(48, 3, 8, 18));
-        axisRect->setBackground((i % 2 == 0) ? rowBgEven : rowBgOdd);
+        axisRect->setBackground(rowBg[axis]);
 
-        // Add graph for this channel
-        m_waveformPlot->addGraph(axisRect->axis(QCPAxis::atBottom),
-                                 axisRect->axis(QCPAxis::atLeft));
-
-        // Set line color cycling through hue
-        const int sensorIdx = i % kSensorsPerAxis;
-        const QColor color = QColor::fromHsv((sensorIdx * 36) % 360, 200, 200);
-        m_waveformPlot->graph(i)->setPen(QPen(color, 1));
-        m_waveformPlot->graph(i)->setAntialiased(false);
+        // Axis labels
+        axisRect->axis(QCPAxis::atBottom)->setLabel(QStringLiteral("时间 (ms)"));
+        axisRect->axis(QCPAxis::atLeft)->setLabel(QString::fromLatin1(axisLabels[axis]));
+        axisRect->axis(QCPAxis::atBottom)->setTickLabelColor(tickColor);
+        axisRect->axis(QCPAxis::atLeft)->setTickLabelColor(tickColor);
+        axisRect->axis(QCPAxis::atLeft)->setLabelColor(labelColor);
+        axisRect->axis(QCPAxis::atBottom)->setLabelColor(labelColor);
+        axisRect->axis(QCPAxis::atLeft)->setBasePen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atBottom)->setBasePen(QPen(axisColor));
+        axisRect->axis(QCPAxis::atLeft)->setNumberFormat("f");
+        axisRect->axis(QCPAxis::atLeft)->setNumberPrecision(0);
 
         // Grids
         axisRect->axis(QCPAxis::atBottom)->grid()->setVisible(true);
         axisRect->axis(QCPAxis::atBottom)->grid()->setPen(QPen(gridBottom, 1, Qt::DotLine));
         axisRect->axis(QCPAxis::atLeft)->grid()->setVisible(true);
         axisRect->axis(QCPAxis::atLeft)->grid()->setPen(QPen(gridLeft, 1, Qt::DotLine));
-        axisRect->axis(QCPAxis::atBottom)->setTickLabelColor(tickColor);
-        axisRect->axis(QCPAxis::atLeft)->setTickLabelColor(tickColor);
-        axisRect->axis(QCPAxis::atLeft)->setLabelColor(labelColor);
-        axisRect->axis(QCPAxis::atLeft)->setBasePen(QPen(axisColor));
-        axisRect->axis(QCPAxis::atBottom)->setBasePen(QPen(axisColor));
-        axisRect->axis(QCPAxis::atLeft)->setTickPen(QPen(axisColor));
-        axisRect->axis(QCPAxis::atBottom)->setTickPen(QPen(axisColor));
-        axisRect->axis(QCPAxis::atLeft)->setSubTickPen(QPen(axisColor));
-        axisRect->axis(QCPAxis::atBottom)->setSubTickPen(QPen(axisColor));
-        axisRect->axis(QCPAxis::atLeft)->setNumberFormat("f");
-        axisRect->axis(QCPAxis::atLeft)->setNumberPrecision(0);
-        axisRect->axis(QCPAxis::atLeft)->setSubTicks(false);
-        axisRect->axis(QCPAxis::atLeft)->setTickLabelPadding(1);
 
-        QFont yTickFont = axisRect->axis(QCPAxis::atLeft)->tickLabelFont();
-        yTickFont.setPointSizeF(qMax(6.0, yTickFont.pointSizeF() - 1.0));
-        axisRect->axis(QCPAxis::atLeft)->setTickLabelFont(yTickFont);
-
-        // Set Y axis label: "X0".."X19", "Y0".."Y19", "Z0".."Z19"
-        const int groupIdx = i / kSensorsPerAxis; // 0=X, 1=Y, 2=Z
-        const int chInGroup = i % kSensorsPerAxis;
-        const char groupChar = (groupIdx == 0) ? 'X' : (groupIdx == 1) ? 'Y' : 'Z';
-        axisRect->axis(QCPAxis::atLeft)->setLabel(QStringLiteral("%1%2").arg(QChar::fromLatin1(groupChar)).arg(chInGroup));
-
-        // Hide bottom X axis except for the last channel
-        if (i < totalChannels - 1) {
-            axisRect->axis(QCPAxis::atBottom)->setVisible(false);
-        } else {
-            axisRect->axis(QCPAxis::atBottom)->setLabel(QStringLiteral("t(ms)"));
+        // 20 channels per axis, overlaid
+        for (int sensorIdx = 0; sensorIdx < kSensorsPerAxis; ++sensorIdx) {
+            const QColor color = QColor::fromHsv((sensorIdx * 36) % 360, 200, 200);
+            m_waveformPlot->addGraph(axisRect->axis(QCPAxis::atBottom),
+                                     axisRect->axis(QCPAxis::atLeft));
+            m_waveformPlot->graph()->setPen(QPen(color, 1));
+            m_waveformPlot->graph()->setAntialiased(false);
         }
     }
 
-    // Sync all X axes to mirror each other
-    for (int i = 0; i < totalChannels - 1; ++i) {
-        QCPAxis* xAxisCurrent = m_waveformAxisRects[i]->axis(QCPAxis::atBottom);
-        QCPAxis* xAxisNext = m_waveformAxisRects[i + 1]->axis(QCPAxis::atBottom);
-        connect(xAxisCurrent,
-                static_cast<void (QCPAxis::*)(const QCPRange&)>(&QCPAxis::rangeChanged),
-                xAxisNext,
-                [xAxisNext](const QCPRange& newRange) { xAxisNext->setRange(newRange); });
-    }
-
-    // Set minimum height
-    constexpr int kPerRowH = 28;
-    const int minH = qMax(300, totalChannels * kPerRowH + 40);
-    m_waveformPlot->setMinimumHeight(minH);
-
+    // Set minimum height: 3 axes × ~150px each
+    m_waveformPlot->setMinimumHeight(450);
     m_waveformPlot->replot(QCustomPlot::rpQueuedReplot);
 }
 
