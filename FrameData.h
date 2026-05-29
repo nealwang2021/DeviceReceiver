@@ -25,6 +25,20 @@ struct MultiFreqPointResult
     bool    valid = false;
 };
 
+/// 漏磁检测传感器结果（对应 mag_array.proto MagSensorResult）
+struct MagSensorResult
+{
+    int     sensorIndex = 0;
+    double  xMean = 0.0;
+    double  yMean = 0.0;
+    double  zMean = 0.0;
+    double  xLatest = 0.0;
+    double  yLatest = 0.0;
+    double  zLatest = 0.0;
+    double  magnitudeMean = 0.0;
+    double  magnitudeLatest = 0.0;
+};
+
 // 实时数据帧结构体（与硬件协议对应）
 struct FrameData
 {
@@ -38,7 +52,8 @@ struct FrameData
         Legacy = 0,
         MultiChannelReal = 1,    // 多通道实数（如漏磁模式）
         MultiChannelComplex = 2, // 多通道复数（如涡流模式）
-        MultiFreqEddy = 3        // 多频涡流（频点阻抗）
+        MultiFreqEddy = 3,       // 多频涡流（频点阻抗）
+        MagArray = 4             // 漏磁检测（60 通道实数）
     } detectMode;
 
     // 通道数
@@ -74,6 +89,9 @@ struct FrameData
     // 多频涡流：每帧 N 个频点的阻抗检测结果
     QVector<MultiFreqPointResult> mfFreqPoints;
 
+    // 漏磁检测：每帧 M 个传感器的 XYZ 概要数据
+    QVector<MagSensorResult> magSensorResults;
+
     FrameData() :
         timestamp(0),
         sequence(0),
@@ -96,7 +114,8 @@ struct FrameData
         stageXPulse(0),
         stageYPulse(0),
         stageZPulse(0),
-        mfFreqPoints()
+        mfFreqPoints(),
+        magSensorResults()
     {
     }
 };

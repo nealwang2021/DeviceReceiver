@@ -78,8 +78,10 @@ set(SOURCE_FILES
     SerialReceiver.cpp
     GrpcReceiverBackend.cpp
     GrpcMultiFreqBackend.cpp
+    GrpcMagArrayBackend.cpp
     StageReceiverBackend.cpp
     PlotWindow.cpp
+    MagArrayWindow.cpp
     PlotWindowBase.cpp
     HeatMapPlotWindow.cpp
     ArrayPlotWindow.cpp
@@ -116,8 +118,10 @@ set(HEADER_FILES
     SerialReceiver.h
     GrpcReceiverBackend.h
     GrpcMultiFreqBackend.h
+    GrpcMagArrayBackend.h
     StageReceiverBackend.h
     PlotWindow.h
+    MagArrayWindow.h
     PlotWindowBase.h
     HeatMapPlotWindow.h
     ArrayPlotWindow.h
@@ -278,6 +282,8 @@ if(ENABLE_GRPC)
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/stage.grpc.pb.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/multifreq_eddy.pb.cc
                 ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/multifreq_eddy.grpc.pb.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/mag_array.pb.cc
+                ${CMAKE_CURRENT_SOURCE_DIR}/proto/generated/mag_array.grpc.pb.cc
             )
             
             # 链接gRPC库（Windows MSVC）
