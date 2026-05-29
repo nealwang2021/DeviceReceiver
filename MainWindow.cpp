@@ -1137,7 +1137,8 @@ void MainWindow::initUI()
         
         m_windowTypeCombo = new QComboBox();
         m_windowTypeCombo->addItems({QStringLiteral("组合图"), QStringLiteral("热力图"), QStringLiteral("阵列图"),
-                                     QStringLiteral("脉冲衰减"), QStringLiteral("阵列热力图")});
+                                     QStringLiteral("脉冲衰减"), QStringLiteral("阵列热力图"),
+                                     QStringLiteral("漏磁检测")});
         m_createWindowButton = new QPushButton("新建窗口");
         
         createLayout->addRow("窗口类型:", m_windowTypeCombo);
@@ -3317,6 +3318,7 @@ void MainWindow::onCreateWindowClicked()
     case 2: type = PlotWindowManager::ArrayPlot; break;
     case 3: type = PlotWindowManager::PulsedDecayPlot; break;
     case 4: type = PlotWindowManager::ArrayHeatmapPlot; break;
+    case 5: type = PlotWindowManager::MagArrayPlot; break;
     default:
         qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
         type = PlotWindowManager::CombinedPlot;

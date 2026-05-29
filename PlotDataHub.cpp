@@ -153,7 +153,8 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
             next->mfNormImpedanceImag.clear();
             next->mfImpedancePhase.clear();
 
-            if (frame.detectMode == FrameData::MultiChannelReal) {
+            if (frame.detectMode == FrameData::MultiChannelReal
+		|| frame.detectMode == FrameData::MagArray) {
                 next->realAmp.resize(ch);
                 reserveMatrixTail(next->realAmp, frames.size());
             } else if (frame.detectMode == FrameData::MultiChannelComplex) {
@@ -187,7 +188,8 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
             }
         }
 
-        if (frame.detectMode == FrameData::MultiChannelReal) {
+        if (frame.detectMode == FrameData::MultiChannelReal
+		|| frame.detectMode == FrameData::MagArray) {
             for (int i = 0; i < ch; ++i) {
                 const double amp = (i < frame.channels_comp0.size()) ? frame.channels_comp0.at(i) : qQNaN();
                 next->realAmp[i].append(amp);

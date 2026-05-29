@@ -7,6 +7,7 @@
 #include "ArrayRgbHeatmapWindow.h"
 #include "PulsedDecayPlotWindow.h"
 #include "InspectionPlotWindow.h"
+#include "MagArrayWindow.h"
 #include "DataCacheManager.h"
 #include "AppConfig.h"
 #include "PlotDataHub.h"
@@ -159,6 +160,10 @@ PlotWindowBase* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
     case ArrayHeatmapPlot:
         window = new ArrayRgbHeatmapWindow(parent);
         title = QStringLiteral("阵列热力图");
+        break;
+    case MagArrayPlot:
+        window = new MagArrayWindow(parent);
+        title = QStringLiteral("漏磁检测");
         break;
     default:
         qWarning() << "PlotWindowManager::createWindow 未知类型，回退组合图, type=" << static_cast<int>(type);

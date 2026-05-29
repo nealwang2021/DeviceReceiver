@@ -3,17 +3,18 @@
 
 #include "PlotWindowBase.h"
 #include <QVector>
+#include <QScrollArea>
+#include <QLabel>
+#include <QRadioButton>
+#include <QDoubleSpinBox>
+#include <QElapsedTimer>
 
 class QCustomPlot;
 class QCPColorMap;
+class QCPColorScale;
+class QCPAxisRect;
+class QSplitter;
 
-/**
- * @brief 漏磁检测数据窗口：以热力图 / 时序图形式展示 20 个传感器 XYZ 数据。
- *
- * 支持两种视图：
- *   - Heatmap 视图：以 ColorMap 展示各轴（X/Y/Z）传感器幅值的空间分布
- *   - TimeSeries 视图：按传感器分组展示 XYZ 均值/最新值的时序变化
- */
 class MagArrayWindow : public PlotWindowBase
 {
     Q_OBJECT
@@ -23,14 +24,64 @@ public:
 
 public slots:
     void onDataUpdated(const QVector<FrameData>& frames) override;
-    void onCriticalFrame(const FrameData& frame) override;
     void onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot) override;
+    void onCriticalFrame(const FrameData& frame) override;
 
 private:
-    void setupUi();
+    void buildUi();
+    void rebuildWaveformGraphs(int channelCount);
+    void updateWaveformFromSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot);
+    void updateHeatmapFromFrame(const FrameData& frame);
+    void onThemeChanged() override;
+    void onColorRangeChanged();
+    void onHeatmapAxisModeChanged();
 
+    // Layout
+    QSplitter* m_splitter = nullptr;
+
+    // --- Waveform (left) ---
+    QCustomPlot* m_waveformPlot = nullptr;
+    QScrollArea* m_waveformScrollArea = nullptr;
+    QVector<QCPAxisRect*> m_waveformAxisRects;
+    int m_waveformChannelCount = 60;
+
+    // --- Heatmap (right) ---
     QCustomPlot* m_heatmapPlot = nullptr;
-    QCustomPlot* m_timeSeriesPlot = nullptr;
+    QScrollArea* m_heatmapScrollArea = nullptr;
+    // 3 stacked QCPAxisRects, each containing one QCPColorMap (X / Y / Z)
+    QCPAxisRect* m_heatmapAxisRects[3] = {nullptr, nullptr, nullptr};
+    QCPColorMap* m_heatmapColorMaps[3] = {nullptr, nullptr, nullptr};
+    QCPColorScale* m_heatmapColorScales[3] = {nullptr, nullptr, nullptr};
+
+    static constexpr int kHeatmapCols = 100;
+    static constexpr int kHeatmapRows = 20;
+
+    // heatmap data ring buffers: [axis][row * kHeatmapCols + col]
+    QVector<double> m_heatmapData[3];
+    // timestamp ring buffer for the X axis
+    QVector<double> m_heatmapTimeCol;
+    // position buffer for pos mode
+    QVector<double> m_heatmapPosCol;
+    int m_heatmapWriteCol = 0;  // next column to write (wraps, 0..kHeatmapCols-1)
+
+    // --- Controls ---
+    QRadioButton* m_posModeBtn = nullptr;
+    QRadioButton* m_timeModeBtn = nullptr;
+    QDoubleSpinBox* m_colorMinSpin = nullptr;
+    QDoubleSpinBox* m_colorMaxSpin = nullptr;
+    QLabel* m_stageStatusLabel = nullptr;
+    QLabel* m_statsLabel = nullptr;
+
+    // --- State ---
+    int m_liveFrameCount = 0;
+    QElapsedTimer m_replotThrottle;
+    int m_replotMinMs = 33;
+    FrameData::DetectionMode m_lastMode = FrameData::Legacy;
+    int m_lastSnapshotChannelCount = 0;
+    quint64 m_lastFrameId = 0;
+    bool m_usePosMode = false;  // false = time mode (default)
+    double m_colorRangeMin = 0.0;
+    double m_colorRangeMax = 100.0;
 };
 
 #endif // MAGARRAYWINDOW_H
