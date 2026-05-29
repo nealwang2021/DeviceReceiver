@@ -241,8 +241,9 @@ void MagArrayWindow::rebuildWaveformGraphs(int channelCount)
     m_waveformAxisRects.clear();
     m_waveformChannelCount = qBound(0, channelCount, kSensorsPerAxis * kAxisCount);
 
-    // 3 个轴矩形，每轴 20 个通道在同一坐标轴内叠加（不同颜色区分）
+    // 3 个轴矩形，共享时间轴，每轴 20 通道叠加显示（不同颜色区分）
     for (int axis = 0; axis < kAxisCount; ++axis) {
+        const bool isLast = (axis == kAxisCount - 1);
         QCPAxisRect* axisRect = new QCPAxisRect(m_waveformPlot);
         m_waveformPlot->plotLayout()->addElement(axis * 2, 0, axisRect);
         m_waveformAxisRects.append(axisRect);
@@ -276,6 +277,11 @@ void MagArrayWindow::rebuildWaveformGraphs(int channelCount)
                                      axisRect->axis(QCPAxis::atLeft));
             m_waveformPlot->graph()->setPen(QPen(color, 1));
             m_waveformPlot->graph()->setAntialiased(false);
+        }
+
+        // 仅最后一个轴显示时间标签，前两个隐藏（共享时间轴）
+        if (!isLast) {
+            axisRect->axis(QCPAxis::atBottom)->setVisible(false);
         }
     }
 
