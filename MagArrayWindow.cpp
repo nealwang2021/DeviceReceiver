@@ -355,42 +355,70 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         m_waveformPlot->graph(i)->rescaleValueAxis(false);
     }
 
-    // Apply unified axis visibility (waveform + heatmap)
-    for (int axis = 0; axis < 3; ++axis) {
-        const bool vis = m_axisChecks[axis] && m_axisChecks[axis]->isChecked();
+    // Rebuild layouts so hidden axes don't take space
+    const int oldMask = m_lastAxisMask;
+    int curMask = 0;
+    for (int a = 0; a < 3; ++a)
+        if (m_axisChecks[a] && m_axisChecks[a]->isChecked()) curMask |= (1 << a);
 
-        // Waveform: hide entire axis rect + all 20 channel graphs
-        if (axis < m_waveformAxisRects.size()) {
-            m_waveformAxisRects[axis]->setVisible(vis);
-            for (int s = 0; s < 20; ++s) {
-                int gi = axis * 20 + s;
-                if (gi < m_waveformPlot->graphCount())
-                    m_waveformPlot->graph(gi)->setVisible(vis);
+    if (curMask != oldMask) {
+        m_lastAxisMask = curMask;
+
+        // Waveform layout rebuild
+        {
+            auto* wl = m_waveformPlot->plotLayout();
+            const int n = wl->elementCount();
+            QVector<QCPLayoutElement*> saved;
+            for (int i = 0; i < n; ++i) saved.append(wl->elementAt(0));
+            for (auto* el : saved) wl->take(el);
+
+            int row = 0;
+            for (int a = 0; a < 3; ++a) {
+                if (!(curMask & (1 << a))) continue;
+                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
+                    wl->addElement(row++, 0, m_waveformAxisRects[a]);
             }
         }
 
-        // Heatmap: hide axis rect + color scale
-        if (m_heatmapAxisRects[axis]) {
-            m_heatmapAxisRects[axis]->setVisible(vis);
-            // Restore bottom axis visibility for the last VISIBLE axis
-            const bool showBottom = vis && (axis == 2 || (axis == 1 && !(m_axisChecks[2] && m_axisChecks[2]->isChecked()))
-                                          || (axis == 0 && !(m_axisChecks[1] && m_axisChecks[1]->isChecked())
-                                              && !(m_axisChecks[2] && m_axisChecks[2]->isChecked())));
-            m_heatmapAxisRects[axis]->axis(QCPAxis::atBottom)->setVisible(showBottom);
+        // Heatmap layout rebuild
+        {
+            auto* hl = m_heatmapPlot->plotLayout();
+            const int n = hl->elementCount();
+            QVector<QCPLayoutElement*> saved;
+            for (int i = 0; i < n; ++i) saved.append(hl->elementAt(0));
+            for (auto* el : saved) hl->take(el);
+
+            int row = 0;
+            for (int a = 0; a < 3; ++a) {
+                if (!(curMask & (1 << a))) continue;
+                if (m_heatmapAxisRects[a])
+                    hl->addElement(row, 0, m_heatmapAxisRects[a]);
+                if (m_heatmapColorScales[a])
+                    hl->addElement(row, 1, m_heatmapColorScales[a]);
+                ++row;
+            }
         }
-        if (m_heatmapColorScales[axis])
-            m_heatmapColorScales[axis]->setVisible(vis);
     }
 
-    // Waveform: restore bottom axis for last visible
-    {
-        int lastVis = -1;
-        for (int a = 2; a >= 0; --a) {
-            if (m_axisChecks[a] && m_axisChecks[a]->isChecked()) { lastVis = a; break; }
+    // Graph visibility + bottom axis for last visible
+    for (int a = 0; a < 3; ++a) {
+        const bool vis = (curMask & (1 << a)) != 0;
+        for (int s = 0; s < 20; ++s) {
+            int gi = a * 20 + s;
+            if (gi < m_waveformPlot->graphCount())
+                m_waveformPlot->graph(gi)->setVisible(vis);
         }
-        for (int a = 0; a < 3 && a < m_waveformAxisRects.size(); ++a) {
+        if (m_heatmapColorScales[a])
+            m_heatmapColorScales[a]->setVisible(vis);
+    }
+    // Bottom axis only on last visible
+    int lastVis = -1;
+    for (int a = 2; a >= 0; --a) if (curMask & (1 << a)) { lastVis = a; break; }
+    for (int a = 0; a < 3; ++a) {
+        if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
             m_waveformAxisRects[a]->axis(QCPAxis::atBottom)->setVisible(a == lastVis);
-        }
+        if (m_heatmapAxisRects[a])
+            m_heatmapAxisRects[a]->axis(QCPAxis::atBottom)->setVisible(a == lastVis);
     }
 
     // Set X axis range on all visible axis rects

@@ -84,6 +84,7 @@ private:
     int m_lastSnapshotChannelCount = 0;
     quint64 m_lastFrameId = 0;
     bool m_usePosMode = false;  // false = time mode (default)
+    int m_lastAxisMask = 7;  // bits 0=X, 1=Y, 2=Z
     double m_colorRangeMin = 0.0;
     double m_colorRangeMax = 100.0;
 };
