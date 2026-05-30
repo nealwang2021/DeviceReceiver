@@ -374,9 +374,15 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
 
             int row = 0;
             for (int a = 0; a < 3; ++a) {
-                if (!(curMask & (1 << a))) continue;
-                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
+                if (!(curMask & (1 << a))) {
+                    if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
+                        m_waveformAxisRects[a]->setVisible(false);
+                    continue;
+                }
+                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
+                    m_waveformAxisRects[a]->setVisible(true);
                     wl->addElement(row++, 0, m_waveformAxisRects[a]);
+                }
             }
         }
 
@@ -390,9 +396,13 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
 
             int row = 0;
             for (int a = 0; a < 3; ++a) {
-                if (!(curMask & (1 << a))) continue;
-                if (m_heatmapAxisRects[a])
+                if (!(curMask & (1 << a))) {
+                    if (m_heatmapAxisRects[a]) m_heatmapAxisRects[a]->setVisible(false);
+                    continue;
+                }
+                if (m_heatmapAxisRects[a]) {
                     hl->addElement(row, 0, m_heatmapAxisRects[a]);
+                }
                 if (m_heatmapColorScales[a])
                     hl->addElement(row, 1, m_heatmapColorScales[a]);
                 ++row;
