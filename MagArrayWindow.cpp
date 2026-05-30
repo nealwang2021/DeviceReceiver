@@ -384,6 +384,8 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
                     wl->addElement(row++, 0, m_waveformAxisRects[a]);
                 }
             }
+            // Stretch all visible rows equally
+            for (int r = 0; r < row; ++r) wl->setRowStretchFactor(r, 1);
         }
 
         // Heatmap layout rebuild
@@ -407,6 +409,8 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
                     hl->addElement(row, 1, m_heatmapColorScales[a]);
                 ++row;
             }
+            // Stretch all visible rows equally
+            for (int r = 0; r < row; ++r) hl->setRowStretchFactor(r, 1);
         }
     }
 
