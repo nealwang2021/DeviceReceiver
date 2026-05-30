@@ -56,19 +56,11 @@ void MagArrayWindow::buildUi()
     controlLayout->addWidget(m_maxFramesSpin);
     controlLayout->addSpacing(8);
 
-    QLabel* axisWLabel = new QLabel(QStringLiteral("波形轴:"), this);
+    QLabel* axisLabel = new QLabel(QStringLiteral("显示轴:"), this);
     for (int a = 0; a < 3; ++a) {
-        m_axisWaveChecks[a] = new QCheckBox(QString("XYZ"[a]), this);
-        m_axisWaveChecks[a]->setChecked(true);
-        controlLayout->addWidget(m_axisWaveChecks[a]);
-    }
-    controlLayout->addSpacing(8);
-
-    QLabel* axisHLabel = new QLabel(QStringLiteral("热力轴:"), this);
-    for (int a = 0; a < 3; ++a) {
-        m_axisHeatChecks[a] = new QCheckBox(QString("XYZ"[a]), this);
-        m_axisHeatChecks[a]->setChecked(true);
-        controlLayout->addWidget(m_axisHeatChecks[a]);
+        m_axisChecks[a] = new QCheckBox(QString("XYZ"[a]), this);
+        m_axisChecks[a]->setChecked(true);
+        controlLayout->addWidget(m_axisChecks[a]);
     }
     controlLayout->addSpacing(12);
 
@@ -363,30 +355,41 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         m_waveformPlot->graph(i)->rescaleValueAxis(false);
     }
 
-    // Apply axis visibility
-    for (int axis = 0; axis < 3 && axis < m_waveformAxisRects.size(); ++axis) {
-        const bool vis = m_axisWaveChecks[axis] && m_axisWaveChecks[axis]->isChecked();
-        m_waveformAxisRects[axis]->setVisible(vis);
-        for (int s = 0; s < 20; ++s) {
-            int gi = axis * 20 + s;
-            if (gi < m_waveformPlot->graphCount())
-                m_waveformPlot->graph(gi)->setVisible(vis);
+    // Apply unified axis visibility (waveform + heatmap)
+    for (int axis = 0; axis < 3; ++axis) {
+        const bool vis = m_axisChecks[axis] && m_axisChecks[axis]->isChecked();
+
+        // Waveform: hide entire axis rect + all 20 channel graphs
+        if (axis < m_waveformAxisRects.size()) {
+            m_waveformAxisRects[axis]->setVisible(vis);
+            for (int s = 0; s < 20; ++s) {
+                int gi = axis * 20 + s;
+                if (gi < m_waveformPlot->graphCount())
+                    m_waveformPlot->graph(gi)->setVisible(vis);
+            }
         }
+
+        // Heatmap: hide axis rect + color scale
+        if (m_heatmapAxisRects[axis]) {
+            m_heatmapAxisRects[axis]->setVisible(vis);
+            // Restore bottom axis visibility for the last VISIBLE axis
+            const bool showBottom = vis && (axis == 2 || (axis == 1 && !(m_axisChecks[2] && m_axisChecks[2]->isChecked()))
+                                          || (axis == 0 && !(m_axisChecks[1] && m_axisChecks[1]->isChecked())
+                                              && !(m_axisChecks[2] && m_axisChecks[2]->isChecked())));
+            m_heatmapAxisRects[axis]->axis(QCPAxis::atBottom)->setVisible(showBottom);
+        }
+        if (m_heatmapColorScales[axis])
+            m_heatmapColorScales[axis]->setVisible(vis);
     }
 
-    if (m_heatmapAxisRects[0]) {
-        for (int axis = 0; axis < 3; ++axis) {
-            const bool vis = m_axisHeatChecks[axis] && m_axisHeatChecks[axis]->isChecked();
-            if (m_heatmapAxisRects[axis]) m_heatmapAxisRects[axis]->setVisible(vis);
-            if (m_heatmapColorScales[axis]) {
-                m_heatmapColorScales[axis]->setVisible(vis);
-                if (auto* p = m_heatmapColorScales[axis]->parentPlot()) {
-                    for (int i = 0; i < p->plotLayout()->elementCount(); ++i) {
-                        auto* el = p->plotLayout()->elementAt(i);
-                        if (el == m_heatmapColorScales[axis]) continue;
-                    }
-                }
-            }
+    // Waveform: restore bottom axis for last visible
+    {
+        int lastVis = -1;
+        for (int a = 2; a >= 0; --a) {
+            if (m_axisChecks[a] && m_axisChecks[a]->isChecked()) { lastVis = a; break; }
+        }
+        for (int a = 0; a < 3 && a < m_waveformAxisRects.size(); ++a) {
+            m_waveformAxisRects[a]->axis(QCPAxis::atBottom)->setVisible(a == lastVis);
         }
     }
 
