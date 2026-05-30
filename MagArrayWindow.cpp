@@ -197,6 +197,9 @@ void MagArrayWindow::buildUi()
 
     m_heatmapPlot->plotLayout()->setRowSpacing(10);
     m_heatmapPlot->plotLayout()->setColumnSpacing(0);
+
+    m_heatmapPlot->plotLayout()->setRowSpacing(10);
+    m_heatmapPlot->plotLayout()->setColumnSpacing(0);
     const int perRowH = 40;
     const int minHeatmapH = qMax(200, 3 * perRowH + 40);
     m_heatmapPlot->setMinimumHeight(minHeatmapH);
@@ -313,16 +316,22 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         rebuildWaveformGraphs(ch);
     }
 
+    constexpr int kMaxDisplayFrames = 2000;
     const int effectiveCh = qMin(ch, m_waveformPlot->graphCount());
-    const QVector<double>& timeVec = snapshot->timeMs;
+    const QVector<double>& fullTime = snapshot->timeMs;
+    const int totalFrames = fullTime.size();
+    const int startIdx = qMax(0, totalFrames - kMaxDisplayFrames);
+    const int displayFrames = totalFrames - startIdx;
+
+    QVector<double> timeVec(displayFrames);
+    for (int i = 0; i < displayFrames; ++i) timeVec[i] = fullTime[startIdx + i];
 
     for (int i = 0; i < effectiveCh; ++i) {
         if (i >= snapshot->realAmp.size()) break;
-        const QVector<double>& vals = snapshot->realAmp[i];
-        if (vals.size() != timeVec.size()) {
-            // Size mismatch — skip to avoid crash
-            continue;
-        }
+        const QVector<double>& fullVals = snapshot->realAmp[i];
+        if (fullVals.size() < displayFrames) continue;
+        QVector<double> vals(displayFrames);
+        for (int j = 0; j < displayFrames; ++j) vals[j] = fullVals[startIdx + j];
         m_waveformPlot->graph(i)->setData(timeVec, vals, true);
         m_waveformPlot->graph(i)->rescaleValueAxis(false);
     }

@@ -53,7 +53,7 @@ private:
     QCPColorMap* m_heatmapColorMaps[3] = {nullptr, nullptr, nullptr};
     QCPColorScale* m_heatmapColorScales[3] = {nullptr, nullptr, nullptr};
 
-    static constexpr int kHeatmapCols = 100;
+    static constexpr int kHeatmapCols = 2000;  // 最大显示帧数
     static constexpr int kHeatmapRows = 20;
 
     // heatmap data ring buffers: [axis][row * kHeatmapCols + col]
