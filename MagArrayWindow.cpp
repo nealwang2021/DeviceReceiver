@@ -141,17 +141,15 @@ void MagArrayWindow::buildUi()
     m_heatmapPosCol.fill(qQNaN(), kHeatmapCols);
 
     const char* axisLabels[3] = {"X 轴", "Y 轴", "Z 轴"};
-    const QColor rowBgEven = dark ? QColor(36, 40, 46) : QColor(248, 251, 255);
-    const QColor rowBgOdd  = dark ? QColor(31, 35, 41) : QColor(241, 246, 252);
 
     for (int axis = 0; axis < 3; ++axis) {
+        const bool isLast = (axis == 2);
         QCPAxisRect* axisRect = new QCPAxisRect(m_heatmapPlot);
         m_heatmapPlot->plotLayout()->addElement(axis, 0, axisRect);
         m_heatmapAxisRects[axis] = axisRect;
 
-        axisRect->setBackground(axisRect->background());
         axisRect->setAutoMargins(QCP::msNone);
-        axisRect->setMargins(QMargins(48, 3, 8, 18));
+        axisRect->setMargins(isLast ? QMargins(48, 0, 8, 18) : QMargins(48, 0, 8, 0));
 
         QCPColorMap* colorMap = new QCPColorMap(axisRect->axis(QCPAxis::atBottom),
                                                  axisRect->axis(QCPAxis::atLeft));
@@ -184,6 +182,11 @@ void MagArrayWindow::buildUi()
         axisRect->axis(QCPAxis::atLeft)->setNumberPrecision(0);
         axisRect->axis(QCPAxis::atLeft)->setSubTicks(false);
 
+        // 仅最后一个轴显示底部标签（共享X轴）
+        if (!isLast) {
+            axisRect->axis(QCPAxis::atBottom)->setVisible(false);
+        }
+
         // Fill with NaN
         for (int col = 0; col < kHeatmapCols; ++col) {
             for (int row = 0; row < kHeatmapRows; ++row) {
@@ -192,7 +195,8 @@ void MagArrayWindow::buildUi()
         }
     }
 
-    m_heatmapPlot->plotLayout()->setRowSpacing(2);
+    m_heatmapPlot->plotLayout()->setRowSpacing(10);
+    m_heatmapPlot->plotLayout()->setColumnSpacing(0);
     const int perRowH = 40;
     const int minHeatmapH = qMax(200, 3 * perRowH + 40);
     m_heatmapPlot->setMinimumHeight(minHeatmapH);
