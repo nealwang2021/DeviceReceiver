@@ -45,6 +45,33 @@ void MagArrayWindow::buildUi()
     QHBoxLayout* controlLayout = new QHBoxLayout();
     controlLayout->setSpacing(6);
 
+    QLabel* framesLabel = new QLabel(QStringLiteral("最大帧:"), this);
+    m_maxFramesSpin = new QSpinBox(this);
+    m_maxFramesSpin->setRange(100, 10000);
+    m_maxFramesSpin->setValue(2000);
+    m_maxFramesSpin->setSingleStep(100);
+    m_maxFramesSpin->setToolTip(QStringLiteral("波形图和热力图最大显示帧数"));
+
+    controlLayout->addWidget(framesLabel);
+    controlLayout->addWidget(m_maxFramesSpin);
+    controlLayout->addSpacing(8);
+
+    QLabel* axisWLabel = new QLabel(QStringLiteral("波形轴:"), this);
+    for (int a = 0; a < 3; ++a) {
+        m_axisWaveChecks[a] = new QCheckBox(QString("XYZ"[a]), this);
+        m_axisWaveChecks[a]->setChecked(true);
+        controlLayout->addWidget(m_axisWaveChecks[a]);
+    }
+    controlLayout->addSpacing(8);
+
+    QLabel* axisHLabel = new QLabel(QStringLiteral("热力轴:"), this);
+    for (int a = 0; a < 3; ++a) {
+        m_axisHeatChecks[a] = new QCheckBox(QString("XYZ"[a]), this);
+        m_axisHeatChecks[a]->setChecked(true);
+        controlLayout->addWidget(m_axisHeatChecks[a]);
+    }
+    controlLayout->addSpacing(12);
+
     QLabel* modeLabel = new QLabel(QStringLiteral("热力图X轴:"), this);
     m_timeModeBtn = new QRadioButton(QStringLiteral("时间"), this);
     m_posModeBtn = new QRadioButton(QStringLiteral("台位"), this);
@@ -316,7 +343,7 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         rebuildWaveformGraphs(ch);
     }
 
-    constexpr int kMaxDisplayFrames = 2000;
+    const int kMaxDisplayFrames = m_maxFramesSpin ? m_maxFramesSpin->value() : 2000;
     const int effectiveCh = qMin(ch, m_waveformPlot->graphCount());
     const QVector<double>& fullTime = snapshot->timeMs;
     const int totalFrames = fullTime.size();
@@ -336,12 +363,40 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         m_waveformPlot->graph(i)->rescaleValueAxis(false);
     }
 
+    // Apply axis visibility
+    for (int axis = 0; axis < 3 && axis < m_waveformAxisRects.size(); ++axis) {
+        const bool vis = m_axisWaveChecks[axis] && m_axisWaveChecks[axis]->isChecked();
+        m_waveformAxisRects[axis]->setVisible(vis);
+        for (int s = 0; s < 20; ++s) {
+            int gi = axis * 20 + s;
+            if (gi < m_waveformPlot->graphCount())
+                m_waveformPlot->graph(gi)->setVisible(vis);
+        }
+    }
+
+    if (m_heatmapAxisRects[0]) {
+        for (int axis = 0; axis < 3; ++axis) {
+            const bool vis = m_axisHeatChecks[axis] && m_axisHeatChecks[axis]->isChecked();
+            if (m_heatmapAxisRects[axis]) m_heatmapAxisRects[axis]->setVisible(vis);
+            if (m_heatmapColorScales[axis]) {
+                m_heatmapColorScales[axis]->setVisible(vis);
+                if (auto* p = m_heatmapColorScales[axis]->parentPlot()) {
+                    for (int i = 0; i < p->plotLayout()->elementCount(); ++i) {
+                        auto* el = p->plotLayout()->elementAt(i);
+                        if (el == m_heatmapColorScales[axis]) continue;
+                    }
+                }
+            }
+        }
+    }
+
     // Set X axis range on all visible axis rects
     if (!timeVec.isEmpty()) {
         const double lower = timeVec.first();
         const double upper = timeVec.last() + 1.0;
         for (auto* axisRect : m_waveformAxisRects) {
-            axisRect->axis(QCPAxis::atBottom)->setRange(lower, upper);
+            if (axisRect->visible())
+                axisRect->axis(QCPAxis::atBottom)->setRange(lower, upper);
         }
     }
 

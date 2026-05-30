@@ -6,7 +6,9 @@
 #include <QScrollArea>
 #include <QLabel>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QSpinBox>
 #include <QElapsedTimer>
 
 class QCustomPlot;
@@ -65,6 +67,9 @@ private:
     int m_heatmapWriteCol = 0;  // next column to write (wraps, 0..kHeatmapCols-1)
 
     // --- Controls ---
+    QSpinBox* m_maxFramesSpin = nullptr;
+    QCheckBox* m_axisWaveChecks[3] = {nullptr, nullptr, nullptr};
+    QCheckBox* m_axisHeatChecks[3] = {nullptr, nullptr, nullptr};
     QRadioButton* m_posModeBtn = nullptr;
     QRadioButton* m_timeModeBtn = nullptr;
     QDoubleSpinBox* m_colorMinSpin = nullptr;
