@@ -402,7 +402,14 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         }
     }
 
-    // Heatmap color scale visibility
+    // Graph visibility: 隐藏轴上的 graph 也要隐藏，避免 graph 渲染到隐藏轴区域
+    if (m_waveformPlot && m_waveformPlot->graphCount() >= 60) {
+        for (int a = 0; a < 3; ++a) {
+            const bool vis = (curMask & (1 << a)) != 0;
+            for (int s = 0; s < 20; ++s)
+                m_waveformPlot->graph(a * 20 + s)->setVisible(vis);
+        }
+    }
     for (int a = 0; a < 3; ++a) {
         if (m_heatmapColorScales[a])
             m_heatmapColorScales[a]->setVisible((curMask & (1 << a)) != 0);
