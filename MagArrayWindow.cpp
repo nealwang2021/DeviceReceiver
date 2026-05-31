@@ -364,60 +364,36 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
     if (curMask != oldMask) {
         m_lastAxisMask = curMask;
 
-        {
-            auto* wl = m_waveformPlot->plotLayout();
-            // take ALL, then re-add only visible
-            QVector<QCPLayoutElement*> wSaved;
-            while (wl->elementCount() > 0) {
-                auto* el = wl->elementAt(0);
-                wl->take(el);
-                wSaved.append(el);
+        // 通过 rowSpacing + stretch + 零尺寸控制可见性
+        auto* wl = m_waveformPlot->plotLayout();
+        auto* hl = m_heatmapPlot->plotLayout();
+        wl->setRowSpacing(0);
+        hl->setRowSpacing(0);
+
+        for (int a = 0; a < 3; ++a) {
+            const bool vis = (curMask & (1 << a)) != 0;
+            // Waveform
+            if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
+                auto* r = m_waveformAxisRects[a];
+                r->setVisible(vis);
+                r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
+                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
+                r->setMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
+                r->setMinimumMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
             }
-            int row = 0;
-            for (int a = 0; a < 3; ++a) {
-                const bool vis = (curMask & (1 << a)) != 0;
-                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
-                    auto* r = m_waveformAxisRects[a];
-                    r->setVisible(vis);
-                    if (vis) {
-                        r->setMargins(QMargins(48, 0, 8, 0));
-                        wl->addElement(row, 0, r);
-                        wl->setRowStretchFactor(row, 1);
-                        ++row;
-                    } else {
-                        r->setMargins(QMargins(0,0,0,0));
-                    }
-                }
+            wl->setRowStretchFactor(a, vis ? 1 : 0);
+            // Heatmap
+            if (m_heatmapAxisRects[a]) {
+                auto* r = m_heatmapAxisRects[a];
+                r->setVisible(vis);
+                r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
+                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
+                r->setMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
+                r->setMinimumMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
             }
-        }
-        {
-            auto* hl = m_heatmapPlot->plotLayout();
-            QVector<QCPLayoutElement*> hSaved;
-            while (hl->elementCount() > 0) {
-                auto* el = hl->elementAt(0);
-                hl->take(el);
-                hSaved.append(el);
-            }
-            int row = 0;
-            for (int a = 0; a < 3; ++a) {
-                const bool vis = (curMask & (1 << a)) != 0;
-                if (m_heatmapAxisRects[a]) {
-                    auto* r = m_heatmapAxisRects[a];
-                    r->setVisible(vis);
-                    if (vis) {
-                        r->setMargins(QMargins(48, 0, 8, 0));
-                        hl->addElement(row, 0, r);
-                        if (m_heatmapColorScales[a])
-                            hl->addElement(row, 1, m_heatmapColorScales[a]);
-                        hl->setRowStretchFactor(row, 1);
-                        ++row;
-                    } else {
-                        r->setMargins(QMargins(0,0,0,0));
-                    }
-                }
-                if (m_heatmapColorScales[a])
-                    m_heatmapColorScales[a]->setVisible(vis);
-            }
+            if (m_heatmapColorScales[a])
+                m_heatmapColorScales[a]->setVisible(vis);
+            hl->setRowStretchFactor(a, vis ? 1 : 0);
         }
     }
 
