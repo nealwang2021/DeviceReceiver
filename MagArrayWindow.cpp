@@ -402,16 +402,10 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         }
     }
 
-    // Graph visibility + bottom axis for last visible
+    // Heatmap color scale visibility
     for (int a = 0; a < 3; ++a) {
-        const bool vis = (curMask & (1 << a)) != 0;
-        for (int s = 0; s < 20; ++s) {
-            int gi = a * 20 + s;
-            if (gi < m_waveformPlot->graphCount())
-                m_waveformPlot->graph(gi)->setVisible(vis);
-        }
         if (m_heatmapColorScales[a])
-            m_heatmapColorScales[a]->setVisible(vis);
+            m_heatmapColorScales[a]->setVisible((curMask & (1 << a)) != 0);
     }
     // Bottom axis only on last visible
     int lastVis = -1;
