@@ -347,12 +347,6 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
 
     for (int i = 0; i < effectiveCh; ++i) {
         if (i >= snapshot->realAmp.size()) break;
-        const int axisIdx = i / 20;
-        const bool axisVis = (axisIdx < 3 && m_axisChecks[axisIdx] && m_axisChecks[axisIdx]->isChecked());
-        if (!axisVis) {
-            m_waveformPlot->graph(i)->data()->clear();
-            continue;
-        }
         const QVector<double>& fullVals = snapshot->realAmp[i];
         if (fullVals.size() < displayFrames) continue;
         QVector<double> vals(displayFrames);
@@ -386,21 +380,18 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
             // Waveform
             if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
                 auto* r = m_waveformAxisRects[a];
-                r->setVisible(vis);
-                r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
-                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
+                // 不调 setVisible —— 保持 true 避免影响 graph 渲染
                 r->setMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
                 r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
+                if (!vis) r->setMinimumSize(0, 0);
             }
             wl->setRowStretchFactor(a, vis ? 1 : 0);
             // Heatmap
             if (m_heatmapAxisRects[a]) {
                 auto* r = m_heatmapAxisRects[a];
-                r->setVisible(vis);
-                r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
-                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
                 r->setMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
                 r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
+                if (!vis) r->setMinimumSize(0, 0);
             }
             if (m_heatmapColorScales[a])
                 m_heatmapColorScales[a]->setVisible(vis);
@@ -455,12 +446,9 @@ void MagArrayWindow::updateHeatmapFromFrame(const FrameData& frame)
         if (row < 0 || row >= kHeatmapRows) continue;
 
         const int idx = row * kHeatmapCols + col;
-        const double xVal = (m_axisChecks[0] && m_axisChecks[0]->isChecked()) ? sr.xMean : qQNaN();
-        const double yVal = (m_axisChecks[1] && m_axisChecks[1]->isChecked()) ? sr.yMean : qQNaN();
-        const double zVal = (m_axisChecks[2] && m_axisChecks[2]->isChecked()) ? sr.zMean : qQNaN();
-        m_heatmapData[0][idx] = xVal;
-        m_heatmapData[1][idx] = yVal;
-        m_heatmapData[2][idx] = zVal;
+        m_heatmapData[0][idx] = sr.xMean;
+        m_heatmapData[1][idx] = sr.yMean;
+        m_heatmapData[2][idx] = sr.zMean;
     }
 
     // Record the time column value
