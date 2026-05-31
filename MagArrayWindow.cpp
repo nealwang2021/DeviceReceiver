@@ -347,6 +347,12 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
 
     for (int i = 0; i < effectiveCh; ++i) {
         if (i >= snapshot->realAmp.size()) break;
+        const int axisIdx = i / 20;
+        const bool axisVis = (axisIdx < 3 && m_axisChecks[axisIdx] && m_axisChecks[axisIdx]->isChecked());
+        if (!axisVis) {
+            m_waveformPlot->graph(i)->data()->clear();
+            continue;
+        }
         const QVector<double>& fullVals = snapshot->realAmp[i];
         if (fullVals.size() < displayFrames) continue;
         QVector<double> vals(displayFrames);
@@ -402,14 +408,7 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
         }
     }
 
-    // Graph visibility: 隐藏轴上的 graph 也要隐藏，避免 graph 渲染到隐藏轴区域
-    if (m_waveformPlot && m_waveformPlot->graphCount() >= 60) {
-        for (int a = 0; a < 3; ++a) {
-            const bool vis = (curMask & (1 << a)) != 0;
-            for (int s = 0; s < 20; ++s)
-                m_waveformPlot->graph(a * 20 + s)->setVisible(vis);
-        }
-    }
+    // 颜色刻度显隐
     for (int a = 0; a < 3; ++a) {
         if (m_heatmapColorScales[a])
             m_heatmapColorScales[a]->setVisible((curMask & (1 << a)) != 0);
@@ -456,9 +455,12 @@ void MagArrayWindow::updateHeatmapFromFrame(const FrameData& frame)
         if (row < 0 || row >= kHeatmapRows) continue;
 
         const int idx = row * kHeatmapCols + col;
-        m_heatmapData[0][idx] = sr.xMean;
-        m_heatmapData[1][idx] = sr.yMean;
-        m_heatmapData[2][idx] = sr.zMean;
+        const double xVal = (m_axisChecks[0] && m_axisChecks[0]->isChecked()) ? sr.xMean : qQNaN();
+        const double yVal = (m_axisChecks[1] && m_axisChecks[1]->isChecked()) ? sr.yMean : qQNaN();
+        const double zVal = (m_axisChecks[2] && m_axisChecks[2]->isChecked()) ? sr.zMean : qQNaN();
+        m_heatmapData[0][idx] = xVal;
+        m_heatmapData[1][idx] = yVal;
+        m_heatmapData[2][idx] = zVal;
     }
 
     // Record the time column value
