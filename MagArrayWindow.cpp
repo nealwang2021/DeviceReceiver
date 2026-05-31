@@ -216,9 +216,8 @@ void MagArrayWindow::buildUi()
 
     m_heatmapPlot->plotLayout()->setRowSpacing(10);
     m_heatmapPlot->plotLayout()->setColumnSpacing(0);
-
-    m_heatmapPlot->plotLayout()->setRowSpacing(10);
-    m_heatmapPlot->plotLayout()->setColumnSpacing(0);
+    m_heatmapPlot->plotLayout()->setColumnStretchFactor(0, 4);
+    m_heatmapPlot->plotLayout()->setColumnStretchFactor(1, 1);
     const int perRowH = 40;
     const int minHeatmapH = qMax(200, 3 * perRowH + 40);
     m_heatmapPlot->setMinimumHeight(minHeatmapH);
@@ -314,6 +313,7 @@ void MagArrayWindow::rebuildWaveformGraphs(int channelCount)
 
     // Set minimum height: 3 axes × ~150px each
     m_waveformPlot->setMinimumHeight(450);
+    m_waveformPlot->plotLayout()->setColumnStretchFactor(0, 1); // 横向填满
     m_waveformPlot->replot(QCustomPlot::rpQueuedReplot);
 }
 
