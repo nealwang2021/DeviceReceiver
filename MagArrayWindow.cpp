@@ -347,6 +347,11 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
 
     for (int i = 0; i < effectiveCh; ++i) {
         if (i >= snapshot->realAmp.size()) break;
+        const int axisIdx = i / 20;
+        if (axisIdx < 3 && m_axisChecks[axisIdx] && !m_axisChecks[axisIdx]->isChecked()) {
+            m_waveformPlot->graph(i)->setData(QVector<double>(), QVector<double>(), true);
+            continue;
+        }
         const QVector<double>& fullVals = snapshot->realAmp[i];
         if (fullVals.size() < displayFrames) continue;
         QVector<double> vals(displayFrames);
@@ -363,6 +368,16 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
 
     if (curMask != oldMask) {
         m_lastAxisMask = curMask;
+
+        // 清空隐藏轴的热力图旧数据
+        for (int a = 0; a < 3; ++a) {
+            if (curMask & (1 << a)) continue; // visible, skip
+            for (int r = 0; r < kHeatmapRows; ++r) {
+                for (int c = 0; c < kHeatmapCols; ++c) {
+                    m_heatmapData[a][r * kHeatmapCols + c] = qQNaN();
+                }
+            }
+        }
 
         auto* wl = m_waveformPlot->plotLayout();
         auto* hl = m_heatmapPlot->plotLayout();
@@ -393,9 +408,13 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
                 r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
                 if (!vis) r->setMinimumSize(0, 0);
             }
-            if (m_heatmapColorScales[a])
+            if (m_heatmapColorScales[a]) {
                 m_heatmapColorScales[a]->setVisible(vis);
+                if (!vis) m_heatmapColorScales[a]->setMinimumSize(0, 0);
+            }
             hl->setRowStretchFactor(a, vis ? 1 : 0);
+            hl->setColumnStretchFactor(0, vis ? 1 : 0);
+            hl->setColumnStretchFactor(1, vis ? 1 : 0);
         }
     }
 
@@ -446,9 +465,9 @@ void MagArrayWindow::updateHeatmapFromFrame(const FrameData& frame)
         if (row < 0 || row >= kHeatmapRows) continue;
 
         const int idx = row * kHeatmapCols + col;
-        m_heatmapData[0][idx] = sr.xMean;
-        m_heatmapData[1][idx] = sr.yMean;
-        m_heatmapData[2][idx] = sr.zMean;
+        m_heatmapData[0][idx] = (m_axisChecks[0] && m_axisChecks[0]->isChecked()) ? sr.xMean : qQNaN();
+        m_heatmapData[1][idx] = (m_axisChecks[1] && m_axisChecks[1]->isChecked()) ? sr.yMean : qQNaN();
+        m_heatmapData[2][idx] = (m_axisChecks[2] && m_axisChecks[2]->isChecked()) ? sr.zMean : qQNaN();
     }
 
     // Record the time column value
