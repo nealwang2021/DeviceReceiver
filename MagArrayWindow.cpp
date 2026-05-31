@@ -364,53 +364,26 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
     if (curMask != oldMask) {
         m_lastAxisMask = curMask;
 
-        // Waveform layout rebuild
+        // 不移动布局元素，只通过 stretch factor 控制可见行高度
         {
             auto* wl = m_waveformPlot->plotLayout();
-            const int n = wl->elementCount();
-            QVector<QCPLayoutElement*> saved;
-            for (int i = 0; i < n; ++i) saved.append(wl->elementAt(0));
-            for (auto* el : saved) wl->take(el);
-
-            int row = 0;
             for (int a = 0; a < 3; ++a) {
-                if (!(curMask & (1 << a))) {
-                    if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
-                        m_waveformAxisRects[a]->setVisible(false);
-                    continue;
-                }
-                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
-                    m_waveformAxisRects[a]->setVisible(true);
-                    wl->addElement(row++, 0, m_waveformAxisRects[a]);
-                }
+                const bool vis = (curMask & (1 << a)) != 0;
+                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
+                    m_waveformAxisRects[a]->setVisible(vis);
+                wl->setRowStretchFactor(a, vis ? 1 : 0);
             }
-            // Stretch all visible rows equally
-            for (int r = 0; r < row; ++r) wl->setRowStretchFactor(r, 1);
         }
-
-        // Heatmap layout rebuild
         {
             auto* hl = m_heatmapPlot->plotLayout();
-            const int n = hl->elementCount();
-            QVector<QCPLayoutElement*> saved;
-            for (int i = 0; i < n; ++i) saved.append(hl->elementAt(0));
-            for (auto* el : saved) hl->take(el);
-
-            int row = 0;
             for (int a = 0; a < 3; ++a) {
-                if (!(curMask & (1 << a))) {
-                    if (m_heatmapAxisRects[a]) m_heatmapAxisRects[a]->setVisible(false);
-                    continue;
-                }
-                if (m_heatmapAxisRects[a]) {
-                    hl->addElement(row, 0, m_heatmapAxisRects[a]);
-                }
+                const bool vis = (curMask & (1 << a)) != 0;
+                if (m_heatmapAxisRects[a])
+                    m_heatmapAxisRects[a]->setVisible(vis);
                 if (m_heatmapColorScales[a])
-                    hl->addElement(row, 1, m_heatmapColorScales[a]);
-                ++row;
+                    m_heatmapColorScales[a]->setVisible(vis);
+                hl->setRowStretchFactor(a, vis ? 1 : 0);
             }
-            // Stretch all visible rows equally
-            for (int r = 0; r < row; ++r) hl->setRowStretchFactor(r, 1);
         }
     }
 
