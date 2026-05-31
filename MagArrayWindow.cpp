@@ -364,13 +364,17 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
     if (curMask != oldMask) {
         m_lastAxisMask = curMask;
 
-        // 不移动布局元素，只通过 stretch factor 控制可见行高度
         {
             auto* wl = m_waveformPlot->plotLayout();
             for (int a = 0; a < 3; ++a) {
                 const bool vis = (curMask & (1 << a)) != 0;
-                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a])
-                    m_waveformAxisRects[a]->setVisible(vis);
+                if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
+                    auto* r = m_waveformAxisRects[a];
+                    r->setVisible(vis);
+                    r->setMinimumMargins(vis ? QMargins(48, 0, 8, 0) : QMargins(0,0,0,0));
+                    r->setMargins(vis ? QMargins(48, 0, 8, 0) : QMargins(0,0,0,0));
+                    r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
+                }
                 wl->setRowStretchFactor(a, vis ? 1 : 0);
             }
         }
@@ -378,8 +382,13 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
             auto* hl = m_heatmapPlot->plotLayout();
             for (int a = 0; a < 3; ++a) {
                 const bool vis = (curMask & (1 << a)) != 0;
-                if (m_heatmapAxisRects[a])
-                    m_heatmapAxisRects[a]->setVisible(vis);
+                if (m_heatmapAxisRects[a]) {
+                    auto* r = m_heatmapAxisRects[a];
+                    r->setVisible(vis);
+                    r->setMinimumMargins(vis ? QMargins(48, 0, 8, 0) : QMargins(0,0,0,0));
+                    r->setMargins(vis ? QMargins(48, 0, 8, 0) : QMargins(0,0,0,0));
+                    r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
+                }
                 if (m_heatmapColorScales[a])
                     m_heatmapColorScales[a]->setVisible(vis);
                 hl->setRowStretchFactor(a, vis ? 1 : 0);
