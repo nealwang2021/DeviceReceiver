@@ -364,22 +364,27 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
     if (curMask != oldMask) {
         m_lastAxisMask = curMask;
 
-        // 通过 rowSpacing + stretch + 零尺寸控制可见性
         auto* wl = m_waveformPlot->plotLayout();
         auto* hl = m_heatmapPlot->plotLayout();
         wl->setRowSpacing(0);
         hl->setRowSpacing(0);
 
+        // Find last visible axis for bottom margin
+        int lastVis = -1;
+        for (int a = 2; a >= 0; --a)
+            if (curMask & (1 << a)) { lastVis = a; break; }
+
         for (int a = 0; a < 3; ++a) {
             const bool vis = (curMask & (1 << a)) != 0;
+            const int bottomMargin = (vis && a == lastVis) ? 18 : 0;
             // Waveform
             if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
                 auto* r = m_waveformAxisRects[a];
                 r->setVisible(vis);
                 r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
                 r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
-                r->setMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
-                r->setMinimumMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
+                r->setMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
+                r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
             }
             wl->setRowStretchFactor(a, vis ? 1 : 0);
             // Heatmap
@@ -388,8 +393,8 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
                 r->setVisible(vis);
                 r->setMinimumSize(vis ? QSize(0, 80) : QSize(0, 0));
                 r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
-                r->setMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
-                r->setMinimumMargins(vis ? QMargins(48, 5, 8, 5) : QMargins(0,0,0,0));
+                r->setMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
+                r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
             }
             if (m_heatmapColorScales[a])
                 m_heatmapColorScales[a]->setVisible(vis);
