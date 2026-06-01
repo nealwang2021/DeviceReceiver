@@ -265,7 +265,8 @@ void MainWindow::updateAcquisitionControlUiState()
         ? m_backendTypeCombo->currentData().toString().trimmed().toLower()
         : QString();
     const bool grpcLike = (backendType == QStringLiteral("grpc")
-                           || backendType == QStringLiteral("multifreq-grpc"));
+                           || backendType == QStringLiteral("multifreq-grpc")
+                           || backendType == QStringLiteral("magarray"));
 
     m_startAcquisitionButton->setVisible(grpcLike);
     m_stopAcquisitionButton->setVisible(grpcLike);
@@ -530,9 +531,9 @@ void MainWindow::initUI()
         m_serialPortCombo = new QComboBox();
         m_backendTypeCombo = new QComboBox();
         m_backendTypeCombo->addItem(QStringLiteral("串口（被测设备）"), "serial");
-        m_backendTypeCombo->addItem(QStringLiteral("gRPC（被测设备数据）"), "grpc");
+        m_backendTypeCombo->addItem(QStringLiteral("gRPC（阵列涡流）"), "grpc");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（多频涡流）"), "multifreq-grpc");
-        m_backendTypeCombo->addItem(QStringLiteral("漏磁检测"), "magarray");
+        m_backendTypeCombo->addItem(QStringLiteral("gRPC（漏磁检测）"), "magarray");
         // 三轴台测试装置为独立 gRPC，不在此列出（见右侧「三轴台测试装置」面板）
         m_grpcEndpointEdit = new QLineEdit();
         m_grpcEndpointEdit->setPlaceholderText(QStringLiteral("被测设备 gRPC，如 127.0.0.1:50051 或 [::1]:50051"));
@@ -1889,9 +1890,10 @@ void MainWindow::restoreSavedPlotWindowsFromConfig()
         case 7: return PlotWindowManager::PulsedDecayPlot;
         case 8: return PlotWindowManager::InspectionPlot;
         case 9: return PlotWindowManager::ArrayHeatmapPlot;
+        case 10: return PlotWindowManager::MagArrayPlot;
         default: break;
         }
-        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::ArrayHeatmapPlot)) {
+        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::MagArrayPlot)) {
             return static_cast<PlotWindowManager::PlotType>(v);
         }
         return PlotWindowManager::CombinedPlot;

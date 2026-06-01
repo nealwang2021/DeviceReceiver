@@ -481,28 +481,27 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfImpedancePlot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignRight | Qt::AlignTop);
         impLayout->addWidget(m_mfImpedancePlot, 1);
 
-        // 阻抗图控件行
-        // 自适应/默认
-        auto* scaleRow = new QWidget(impCol);
-        auto* scaleLayout = new QHBoxLayout(scaleRow);
-        scaleLayout->setContentsMargins(0, 0, 0, 0);
-        m_mfAdaptiveRadio = new QRadioButton(QStringLiteral("自适应"), scaleRow);
-        m_mfDefaultRadio = new QRadioButton(QStringLiteral("默认 (-1000~1000)"), scaleRow);
+        // 第一行：全部配置控件（自适应/默认 + 阻抗类型 + 曲线保留 + 圆边界）
+        auto* row1 = new QWidget(impCol);
+        auto* row1Layout = new QHBoxLayout(row1);
+        row1Layout->setContentsMargins(0, 0, 0, 0);
+        row1Layout->setSpacing(6);
+        m_mfAdaptiveRadio = new QRadioButton(QStringLiteral("自适应"), row1);
+        m_mfDefaultRadio = new QRadioButton(QStringLiteral("默认 (-1000~1000)"), row1);
         m_mfDefaultRadio->setChecked(true);
-        auto* scaleGroup = new QButtonGroup(scaleRow);
+        auto* scaleGroup = new QButtonGroup(row1);
         scaleGroup->addButton(m_mfAdaptiveRadio);
         scaleGroup->addButton(m_mfDefaultRadio);
         connect(scaleGroup, QOverload<QAbstractButton*>::of(&QButtonGroup::buttonClicked),
                 this, [this](QAbstractButton*) { applyImpedanceAxisMode(); });
-        scaleLayout->addWidget(m_mfAdaptiveRadio);
-        scaleLayout->addWidget(m_mfDefaultRadio);
-        scaleLayout->addSpacing(12);
-        auto* impTypeLabel = new QLabel(QStringLiteral("阻抗:"), scaleRow);
-        scaleLayout->addWidget(impTypeLabel);
-        m_mfRawRadio = new QRadioButton(QStringLiteral("原始"), scaleRow);
+        row1Layout->addWidget(m_mfAdaptiveRadio);
+        row1Layout->addWidget(m_mfDefaultRadio);
+        row1Layout->addSpacing(8);
+        row1Layout->addWidget(new QLabel(QStringLiteral("阻抗:"), row1));
+        m_mfRawRadio = new QRadioButton(QStringLiteral("原始"), row1);
         m_mfRawRadio->setChecked(true);
-        m_mfNormRadio = new QRadioButton(QStringLiteral("归一化"), scaleRow);
-        auto* impTypeGroup = new QButtonGroup(scaleRow);
+        m_mfNormRadio = new QRadioButton(QStringLiteral("归一化"), row1);
+        auto* impTypeGroup = new QButtonGroup(row1);
         impTypeGroup->addButton(m_mfRawRadio);
         impTypeGroup->addButton(m_mfNormRadio);
         connect(impTypeGroup, QOverload<QAbstractButton*>::of(&QButtonGroup::buttonClicked),
@@ -512,11 +511,49 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
                     if (snap) updateMultiFreqPlots(snap);
                     if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
                 });
-        scaleLayout->addWidget(m_mfRawRadio);
-        scaleLayout->addWidget(m_mfNormRadio);
-        // 频率勾选并入第一行
-        scaleLayout->addWidget(new QLabel(QStringLiteral("频率:"), scaleRow));
-        m_mfFreqCheckArea = new QScrollArea(scaleRow);
+        row1Layout->addWidget(m_mfRawRadio);
+        row1Layout->addWidget(m_mfNormRadio);
+        row1Layout->addSpacing(8);
+        row1Layout->addWidget(new QLabel(QStringLiteral("曲线保留:"), row1));
+        m_mfRetentionSpin = new QDoubleSpinBox(row1);
+        m_mfRetentionSpin->setRange(0.1, 60.0);
+        m_mfRetentionSpin->setDecimals(1);
+        m_mfRetentionSpin->setSingleStep(1.0);
+        m_mfRetentionSpin->setValue(3.0);
+        m_mfRetentionSpin->setSuffix(QStringLiteral(" s"));
+        m_mfRetentionSpin->setFixedWidth(80);
+        connect(m_mfRetentionSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double v) {
+                    m_mfRetentionSecs = v;
+                    auto snap = PlotDataHub::instance()->snapshot();
+                    if (snap) { updateMultiFreqPlots(snap); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); }
+                });
+        row1Layout->addWidget(m_mfRetentionSpin);
+        row1Layout->addWidget(new QLabel(QStringLiteral("圆 R:"), row1));
+        m_mfCircleRadiusSpin = new QDoubleSpinBox(row1);
+        m_mfCircleRadiusSpin->setRange(0, 100000);
+        m_mfCircleRadiusSpin->setDecimals(3);
+        m_mfCircleRadiusSpin->setSingleStep(10);
+        m_mfCircleRadiusSpin->setValue(500);
+        m_mfCircleRadiusSpin->setFixedWidth(80);
+        connect(m_mfCircleRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+                this, [this](double) { updateCircleBoundary(); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); });
+        row1Layout->addWidget(m_mfCircleRadiusSpin);
+        m_mfCircleShowCheck = new QCheckBox(QStringLiteral("显示"), row1);
+        m_mfCircleShowCheck->setChecked(false);
+        connect(m_mfCircleShowCheck, &QCheckBox::toggled, this, &PlotWindow::onMfCircleToggled);
+        row1Layout->addWidget(m_mfCircleShowCheck);
+        row1Layout->addStretch();
+        impLayout->addWidget(row1);
+
+        // 第二行：频率勾选（整行）
+        auto* freqRow = new QWidget(impCol);
+        auto* freqRowLayout = new QHBoxLayout(freqRow);
+        freqRowLayout->setContentsMargins(0, 0, 0, 0);
+        freqRowLayout->setSpacing(4);
+        freqRowLayout->addWidget(new QLabel(QStringLiteral("频率:"), freqRow));
+        m_mfFreqCheckArea = new QScrollArea(freqRow);
+        m_mfFreqCheckArea->setWidgetResizable(true);
         m_mfFreqCheckArea->setFixedHeight(28);
         m_mfFreqCheckArea->setFrameShape(QFrame::NoFrame);
         m_mfFreqCheckArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -525,42 +562,8 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfFreqCheckLayout->setContentsMargins(0, 0, 0, 0);
         m_mfFreqCheckLayout->setSpacing(4);
         m_mfFreqCheckArea->setWidget(m_mfFreqCheckContainer);
-        scaleLayout->addWidget(m_mfFreqCheckArea, 1);
-        impLayout->addWidget(scaleRow);
-
-        // 第二行：曲线保留 + 圆边界
-        auto* row2 = new QWidget(impCol);
-        auto* row2Layout = new QHBoxLayout(row2);
-        row2Layout->setContentsMargins(0, 0, 0, 0);
-        row2Layout->addWidget(new QLabel(QStringLiteral("曲线保留:"), row2));
-        m_mfRetentionSpin = new QDoubleSpinBox(row2);
-        m_mfRetentionSpin->setRange(0.1, 60.0);
-        m_mfRetentionSpin->setDecimals(1);
-        m_mfRetentionSpin->setSingleStep(1.0);
-        m_mfRetentionSpin->setValue(3.0);
-        m_mfRetentionSpin->setSuffix(QStringLiteral(" s"));
-        connect(m_mfRetentionSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-                this, [this](double v) {
-                    m_mfRetentionSecs = v;
-                    auto snap = PlotDataHub::instance()->snapshot();
-                    if (snap) { updateMultiFreqPlots(snap); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); }
-                });
-        row2Layout->addWidget(m_mfRetentionSpin);
-        row2Layout->addWidget(new QLabel(QStringLiteral("圆边界 R:"), row2));
-        m_mfCircleRadiusSpin = new QDoubleSpinBox(row2);
-        m_mfCircleRadiusSpin->setRange(0, 100000);
-        m_mfCircleRadiusSpin->setDecimals(3);
-        m_mfCircleRadiusSpin->setSingleStep(10);
-        m_mfCircleRadiusSpin->setValue(500);
-        connect(m_mfCircleRadiusSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-                this, [this](double) { updateCircleBoundary(); m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot); });
-        row2Layout->addWidget(m_mfCircleRadiusSpin);
-        m_mfCircleShowCheck = new QCheckBox(QStringLiteral("显示"), row2);
-        m_mfCircleShowCheck->setChecked(false);
-        connect(m_mfCircleShowCheck, &QCheckBox::toggled, this, &PlotWindow::onMfCircleToggled);
-        row2Layout->addWidget(m_mfCircleShowCheck);
-        row2Layout->addStretch();
-        impLayout->addWidget(row2);
+        freqRowLayout->addWidget(m_mfFreqCheckArea, 1);
+        impLayout->addWidget(freqRow);
 
         // 圆边框 ellipse（默认隐藏）
         m_mfCircleItem = new QCPItemEllipse(m_mfImpedancePlot);
@@ -774,6 +777,9 @@ void PlotWindow::rebuildMultiFreqGraphs(int freqPointCount)
             m_mfFreqCheckLayout->addWidget(cb);
         }
     }
+    // 强制容器更新布局，确保 QScrollArea 内可见
+    if (m_mfFreqCheckContainer)
+        m_mfFreqCheckContainer->adjustSize();
 }
 
 void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& snapshot)
@@ -818,7 +824,31 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
         }
     }
     m_mfTbPlot1->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
-    m_mfTbPlot1->xAxis->rescale(true);
+    {
+        // 时基图1 X轴：仅按可见频点 rescale（NaN 不影响 QCustomPlot range finder）
+        double xMin = std::numeric_limits<double>::max();
+        double xMax = std::numeric_limits<double>::lowest();
+        bool   any  = false;
+        for (int i = 0; i < nPoints; ++i) {
+            const bool vis = (i < m_mfFreqChecks.size()) ? m_mfFreqChecks[i]->isChecked() : true;
+            if (!vis) continue;
+            auto scan = [&](const QVector<QVector<double>>& arrs, int idx) {
+                if (idx >= arrs.size()) return;
+                for (int j = startIdx; j < arrs[idx].size() && j < n; ++j) {
+                    const double v = arrs[idx][j];
+                    if (std::isfinite(v)) { xMin = qMin(xMin, v); xMax = qMax(xMax, v); any = true; }
+                }
+            };
+            scan(snapshot->mfImpedanceMag, i);
+            scan(snapshot->mfImpedancePhase, i);
+        }
+        if (any) {
+            const double margin = qMax((xMax - xMin) * 0.05, 1e-9);
+            m_mfTbPlot1->xAxis->setRange(xMin - margin, xMax + margin);
+        } else {
+            m_mfTbPlot1->xAxis->rescale(true);
+        }
+    }
 
     // 时基图2：实部(实线) + 虚部(虚线)
     for (int i = 0; i < nPoints && i < snapshot->mfImpedanceReal.size(); ++i) {
@@ -840,7 +870,31 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
         }
     }
     m_mfTbPlot2->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
-    m_mfTbPlot2->xAxis->rescale(true);
+    {
+        // 时基图2 X轴：仅按可见频点 rescale
+        double xMin = std::numeric_limits<double>::max();
+        double xMax = std::numeric_limits<double>::lowest();
+        bool   any  = false;
+        for (int i = 0; i < nPoints; ++i) {
+            const bool vis = (i < m_mfFreqChecks.size()) ? m_mfFreqChecks[i]->isChecked() : true;
+            if (!vis) continue;
+            auto scan = [&](const QVector<QVector<double>>& arrs, int idx) {
+                if (idx >= arrs.size()) return;
+                for (int j = startIdx; j < arrs[idx].size() && j < n; ++j) {
+                    const double v = arrs[idx][j];
+                    if (std::isfinite(v)) { xMin = qMin(xMin, v); xMax = qMax(xMax, v); any = true; }
+                }
+            };
+            scan(snapshot->mfImpedanceReal, i);
+            scan(snapshot->mfImpedanceImag, i);
+        }
+        if (any) {
+            const double margin = qMax((xMax - xMin) * 0.05, 1e-9);
+            m_mfTbPlot2->xAxis->setRange(xMin - margin, xMax + margin);
+        } else {
+            m_mfTbPlot2->xAxis->rescale(true);
+        }
+    }
 
     // 阻抗图：平滑曲线 — key=索引, X=实部, Y=虚部
     const QVector<QVector<double>>& impX =
@@ -876,17 +930,8 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
         g->setData(x, y, true);
     }
 
-    // 自适应模式：1:1.2 比例（正方形稍扁），两个轴都可见
-    if (m_mfAdaptiveRadio && m_mfAdaptiveRadio->isChecked()) {
-        m_mfImpedancePlot->rescaleAxes();
-        QCPRange xRange = m_mfImpedancePlot->xAxis->range();
-        QCPRange yRange = m_mfImpedancePlot->yAxis->range();
-        const double xCenter = (xRange.lower + xRange.upper) / 2.0;
-        const double yCenter = (yRange.lower + yRange.upper) / 2.0;
-        const double half = qMax(xRange.size(), yRange.size()) * 0.6;
-        m_mfImpedancePlot->xAxis->setRange(xCenter - half, xCenter + half);
-        m_mfImpedancePlot->yAxis->setRange(yCenter - half * 1.2, yCenter + half * 1.2);
-    }
+    // 自适应/默认模式委托给 applyImpedanceAxisMode（仅计算可见频点）
+    applyImpedanceAxisMode();
 }
 
 void PlotWindow::applyImpedanceAxisMode()
@@ -896,14 +941,38 @@ void PlotWindow::applyImpedanceAxisMode()
         m_mfImpedancePlot->xAxis->setRange(-1000, 1000);
         m_mfImpedancePlot->yAxis->setRange(-1000, 1000);
     } else {
-        m_mfImpedancePlot->rescaleAxes();
-        QCPRange xRange = m_mfImpedancePlot->xAxis->range();
-        QCPRange yRange = m_mfImpedancePlot->yAxis->range();
-        const double xCenter = (xRange.lower + xRange.upper) / 2.0;
-        const double yCenter = (yRange.lower + yRange.upper) / 2.0;
-        const double half = qMax(xRange.size(), yRange.size()) * 0.6;
-        m_mfImpedancePlot->xAxis->setRange(xCenter - half, xCenter + half);
-        m_mfImpedancePlot->yAxis->setRange(yCenter - half * 1.2, yCenter + half * 1.2);
+        // 自适应：仅根据可见频点的阻抗曲线计算范围
+        double xMin = std::numeric_limits<double>::max();
+        double xMax = std::numeric_limits<double>::lowest();
+        double yMin = std::numeric_limits<double>::max();
+        double yMax = std::numeric_limits<double>::lowest();
+        bool any = false;
+        for (int i = 0; i < m_mfImpedanceCurves.size(); ++i) {
+            QCPGraph* g = m_mfImpedanceCurves[i];
+            if (!g || !g->visible()) continue;
+            auto dataPtr = g->data();
+            if (!dataPtr || dataPtr->isEmpty()) continue;
+            for (auto it = dataPtr->constBegin(); it != dataPtr->constEnd(); ++it) {
+                const double k = it->key;
+                const double v = it->value;
+                if (std::isfinite(k) && std::isfinite(v)) {
+                    xMin = qMin(xMin, k); xMax = qMax(xMax, k);
+                    yMin = qMin(yMin, v); yMax = qMax(yMax, v);
+                    any = true;
+                }
+            }
+        }
+        if (any) {
+            const double xCenter = (xMin + xMax) / 2.0;
+            const double yCenter = (yMin + yMax) / 2.0;
+            const double half = qMax(xMax - xMin, yMax - yMin) * 0.6;
+            const double margin = qMax(half, 1.0);
+            m_mfImpedancePlot->xAxis->setRange(xCenter - margin, xCenter + margin);
+            m_mfImpedancePlot->yAxis->setRange(yCenter - margin * 1.2, yCenter + margin * 1.2);
+        } else {
+            m_mfImpedancePlot->xAxis->setRange(-1000, 1000);
+            m_mfImpedancePlot->yAxis->setRange(-1000, 1000);
+        }
     }
     m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
 }
@@ -924,11 +993,49 @@ void PlotWindow::styleMultiFreqPlot(QCustomPlot* p)
 
 void PlotWindow::onMfFreqCheckToggled()
 {
-    if (!m_mfImpedancePlot) return;
-    for (int i = 0; i < m_mfFreqChecks.size() && i < m_mfImpedanceCurves.size(); ++i) {
+    const int nFreq = m_mfFreqChecks.size();
+
+    // 1) 阻抗图曲线显隐
+    for (int i = 0; i < nFreq && i < m_mfImpedanceCurves.size(); ++i) {
         m_mfImpedanceCurves[i]->setVisible(m_mfFreqChecks[i]->isChecked());
     }
-    m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+
+    // 2) 时基图1（幅值/相位）— 每个频点2条graph
+    for (int i = 0; i < nFreq; ++i) {
+        const bool vis = m_mfFreqChecks[i]->isChecked();
+        const int gA = i * 2;       // 幅值
+        const int gB = i * 2 + 1;   // 相位
+        if (gA < m_mfTbPlot1->graphCount())
+            m_mfTbPlot1->graph(gA)->setVisible(vis);
+        if (gB < m_mfTbPlot1->graphCount())
+            m_mfTbPlot1->graph(gB)->setVisible(vis);
+    }
+
+    // 3) 时基图2（实部/虚部）— 每个频点2条graph
+    for (int i = 0; i < nFreq; ++i) {
+        const bool vis = m_mfFreqChecks[i]->isChecked();
+        const int gA = i * 2;       // 实部
+        const int gB = i * 2 + 1;   // 虚部
+        if (gA < m_mfTbPlot2->graphCount())
+            m_mfTbPlot2->graph(gA)->setVisible(vis);
+        if (gB < m_mfTbPlot2->graphCount())
+            m_mfTbPlot2->graph(gB)->setVisible(vis);
+    }
+
+    // 4) 重绘三列
+    if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
+    if (m_mfTbPlot1)       m_mfTbPlot1->replot(QCustomPlot::rpQueuedReplot);
+    if (m_mfTbPlot2)       m_mfTbPlot2->replot(QCustomPlot::rpQueuedReplot);
+
+    // 5) 自适应模式下按可见频点重新调整坐标轴
+    applyImpedanceAxisMode();
+    // 时基图X轴仅根据可见频点 rescale
+    if (m_mfTbPlot1) {
+        m_mfTbPlot1->xAxis->rescale(true);
+    }
+    if (m_mfTbPlot2) {
+        m_mfTbPlot2->xAxis->rescale(true);
+    }
 }
 
 void PlotWindow::onMfCircleToggled()

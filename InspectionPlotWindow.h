@@ -136,6 +136,7 @@ private:
     // State
     FrameData::DetectionMode m_lastMode = FrameData::Legacy;
     int m_lastChannelCount = 0;
+    int m_lastMfFreqPointCount = 0;
     quint64 m_lastSnapshotVersion = 0;
     int m_channelsPerGroup = 8;
 

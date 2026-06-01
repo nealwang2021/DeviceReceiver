@@ -259,28 +259,43 @@ QWidget* InspectionPlotWindow::buildImpedanceColumn()
     m_impedancePlot->axisRect()->setRangeZoom(Qt::Horizontal | Qt::Vertical);
     lay->addWidget(m_impedancePlot, 1);
 
-    // --- mode radio buttons ---
-    QWidget* modeRow = new QWidget(col);
-    QHBoxLayout* modeLay = new QHBoxLayout(modeRow);
-    modeLay->setContentsMargins(0, 2, 0, 0);
-    modeLay->setSpacing(8);
-    m_adaptiveRadio = new QRadioButton(QStringLiteral("自适应"), modeRow);
-    m_defaultRadio  = new QRadioButton(QStringLiteral("默认 (-1000~1000)"), modeRow);
+    // --- 第一行：模式 + 圆边界（全部配置控件合并）---
+    QWidget* row1 = new QWidget(col);
+    QHBoxLayout* row1Lay = new QHBoxLayout(row1);
+    row1Lay->setContentsMargins(0, 2, 0, 0);
+    row1Lay->setSpacing(8);
+    m_adaptiveRadio = new QRadioButton(QStringLiteral("自适应"), row1);
+    m_defaultRadio  = new QRadioButton(QStringLiteral("默认 (-1000~1000)"), row1);
     m_defaultRadio->setChecked(true);
     QButtonGroup* modeGroup = new QButtonGroup(this);
     modeGroup->addButton(m_adaptiveRadio);
     modeGroup->addButton(m_defaultRadio);
-    modeLay->addWidget(m_adaptiveRadio);
-    modeLay->addWidget(m_defaultRadio);
-    modeLay->addStretch();
-    lay->addWidget(modeRow);
+    row1Lay->addWidget(m_adaptiveRadio);
+    row1Lay->addWidget(m_defaultRadio);
+    row1Lay->addSpacing(8);
+    row1Lay->addWidget(new QLabel(QStringLiteral("圆 R:"), row1));
+    m_circleRadiusSpin = new QDoubleSpinBox(row1);
+    m_circleRadiusSpin->setRange(0.0, 100000.0);
+    m_circleRadiusSpin->setValue(500.0);
+    m_circleRadiusSpin->setDecimals(1);
+    m_circleRadiusSpin->setSingleStep(10.0);
+    m_circleRadiusSpin->setFixedWidth(80);
+    row1Lay->addWidget(m_circleRadiusSpin);
+    m_circleShowCheck = new QCheckBox(QStringLiteral("显示"), row1);
+    m_circleShowCheck->setChecked(false);
+    row1Lay->addWidget(m_circleShowCheck);
+    row1Lay->addStretch();
+    lay->addWidget(row1);
 
-    // --- frequency / channel checkboxes ---
-    QLabel* freqLabel = new QLabel(QStringLiteral("频率/通道:"), col);
+    // --- 第二行：频率/通道勾选（整行）---
+    QWidget* freqRow = new QWidget(col);
+    QHBoxLayout* freqRowLay = new QHBoxLayout(freqRow);
+    freqRowLay->setContentsMargins(0, 0, 0, 0);
+    freqRowLay->setSpacing(4);
+    QLabel* freqLabel = new QLabel(QStringLiteral("频率/通道:"), freqRow);
     freqLabel->setStyleSheet("font-size: 9pt; color: #555;");
-    lay->addWidget(freqLabel);
-
-    m_freqCheckArea = new QScrollArea(col);
+    freqRowLay->addWidget(freqLabel);
+    m_freqCheckArea = new QScrollArea(freqRow);
     m_freqCheckArea->setWidgetResizable(true);
     m_freqCheckArea->setFixedHeight(32);
     m_freqCheckArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -291,25 +306,8 @@ QWidget* InspectionPlotWindow::buildImpedanceColumn()
     m_freqCheckLayout->setContentsMargins(0, 0, 0, 0);
     m_freqCheckLayout->setSpacing(4);
     m_freqCheckArea->setWidget(m_freqCheckContainer);
-    lay->addWidget(m_freqCheckArea);
-
-    // --- circle boundary ---
-    QWidget* circleRow = new QWidget(col);
-    QHBoxLayout* circleLay = new QHBoxLayout(circleRow);
-    circleLay->setContentsMargins(0, 2, 0, 0);
-    circleLay->setSpacing(6);
-    circleLay->addWidget(new QLabel(QStringLiteral("圆边界 R:")));
-    m_circleRadiusSpin = new QDoubleSpinBox(circleRow);
-    m_circleRadiusSpin->setRange(0.0, 100000.0);
-    m_circleRadiusSpin->setValue(500.0);
-    m_circleRadiusSpin->setDecimals(1);
-    m_circleRadiusSpin->setSingleStep(10.0);
-    circleLay->addWidget(m_circleRadiusSpin);
-    m_circleShowCheck = new QCheckBox(QStringLiteral("显示"), circleRow);
-    m_circleShowCheck->setChecked(false);
-    circleLay->addWidget(m_circleShowCheck);
-    circleLay->addStretch();
-    lay->addWidget(circleRow);
+    freqRowLay->addWidget(m_freqCheckArea, 1);
+    lay->addWidget(freqRow);
 
     // --- status ---
     m_statusLabel = new QLabel(col);
@@ -406,7 +404,8 @@ void InspectionPlotWindow::applyTimeBaseModeLayout()
     if (!m_plotSplitter || !m_timeCol2 || !m_legendBar || !m_curveCheckArea)
         return;
 
-    const bool complex = (m_lastMode == FrameData::MultiChannelComplex);
+    const bool complex = (m_lastMode == FrameData::MultiChannelComplex
+                          || m_lastMode == FrameData::MultiFreqEddy);
     m_timeCol2->setVisible(complex);
     m_legendBar->setVisible(complex);
     m_curveCheckArea->setVisible(complex);
@@ -428,7 +427,8 @@ void InspectionPlotWindow::applyTimeBaseModeLayout()
 
 void InspectionPlotWindow::onComponentCheckToggled()
 {
-    if (m_lastMode == FrameData::MultiChannelComplex && !m_curveChecks.isEmpty()) {
+    if ((m_lastMode == FrameData::MultiChannelComplex || m_lastMode == FrameData::MultiFreqEddy)
+        && !m_curveChecks.isEmpty()) {
         const bool showMag = m_showMagCheck && m_showMagCheck->isChecked();
         const bool showPh  = m_showPhaseCheck && m_showPhaseCheck->isChecked();
         const bool showRe  = m_showRealCheck && m_showRealCheck->isChecked();
@@ -467,22 +467,30 @@ void InspectionPlotWindow::onPlotSnapshotUpdated(const QSharedPointer<const Plot
 
     const auto mode = snapshot->mode;
     const int ch = snapshot->channelCount;
+    const int mfFreq = snapshot->mfFreqPointCount;
+    const bool isMfEddy = (mode == FrameData::MultiFreqEddy);
+    const int effectiveCount = isMfEddy ? mfFreq : ch;
 
-    if (mode == FrameData::Legacy || ch <= 0)
+    if (mode == FrameData::Legacy || (effectiveCount <= 0 && !isMfEddy))
         return;
 
-    const bool structureChanged = (mode != m_lastMode || ch != m_lastChannelCount);
+    const bool structureChanged = (mode != m_lastMode
+                                   || (isMfEddy ? (mfFreq != m_lastMfFreqPointCount)
+                                                : (ch != m_lastChannelCount)));
     if (structureChanged) {
         m_lastMode = mode;
         m_lastChannelCount = ch;
+        m_lastMfFreqPointCount = mfFreq;
 
-        rebuildGroupCombo(ch);
+        if (!isMfEddy) {
+            rebuildGroupCombo(ch);
+        }
         rebuildChannelChecks();
         rebuildCurveChecks();
         rebuildTimeBaseGraphs();
 
-        rebuildFreqChecks(ch);
-        rebuildImpedanceCurves(ch);
+        rebuildFreqChecks(effectiveCount);
+        rebuildImpedanceCurves(effectiveCount);
 
         applyTimeBaseModeLayout();
     }
@@ -522,6 +530,10 @@ void InspectionPlotWindow::rebuildChannelChecks()
         QLayoutItem* item = m_channelCheckLayout->takeAt(0);
         delete item;
     }
+
+    // 多频涡流模式：通道勾选隐藏在 onPlotSnapshotUpdated 中已屏蔽 groupCombo
+    if (m_lastMode == FrameData::MultiFreqEddy)
+        return;
 
     const int groupIdx = m_groupCombo->currentIndex();
     if (groupIdx < 0)
@@ -577,11 +589,19 @@ void InspectionPlotWindow::rebuildCurveChecks()
             addCheck(QStringLiteral("Ch%1 实部").arg(ch + 1));
             addCheck(QStringLiteral("Ch%1 虚部").arg(ch + 1));
         }
+    } else if (m_lastMode == FrameData::MultiFreqEddy) {
+        for (int fi = 0; fi < m_lastMfFreqPointCount; ++fi) {
+            addCheck(QStringLiteral("f%1 幅值").arg(fi + 1));
+            addCheck(QStringLiteral("f%1 相位").arg(fi + 1));
+            addCheck(QStringLiteral("f%1 实部").arg(fi + 1));
+            addCheck(QStringLiteral("f%1 虚部").arg(fi + 1));
+        }
     }
 
     m_curveCheckLayout->addStretch();
     if (m_curveCheckArea)
-        m_curveCheckArea->setVisible(m_lastMode == FrameData::MultiChannelComplex);
+        m_curveCheckArea->setVisible(m_lastMode == FrameData::MultiChannelComplex
+                                      || m_lastMode == FrameData::MultiFreqEddy);
 }
 
 void InspectionPlotWindow::onGroupComboChanged(int /*index*/)
@@ -643,6 +663,35 @@ void InspectionPlotWindow::rebuildTimeBaseGraphs()
     m_tbPlot1->clearGraphs();
     m_tbPlot2->clearGraphs();
 
+    if (m_lastMode == FrameData::MultiFreqEddy) {
+        // 多频涡流：每个频点 2 条线 × 两个时基图（共 4 条/频点）
+        const int nFreq = m_lastMfFreqPointCount;
+        m_tbPlot1->xAxis->setLabel(QStringLiteral("幅值 / 相位"));
+        m_tbPlot2->xAxis->setLabel(QStringLiteral("实部 / 虚部"));
+        for (int fi = 0; fi < nFreq; ++fi) {
+            const QColor c = QColor::fromHsv((fi * 47) % 360, 200, 200);
+            // TB1: 幅值 + 相位
+            {
+                QCPGraph* gA = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
+                gA->setPen(QPen(c, 1.5, Qt::SolidLine));
+                gA->setName(QStringLiteral("f%1 幅值").arg(fi + 1));
+                QCPGraph* gP = m_tbPlot1->addGraph(m_tbPlot1->yAxis, m_tbPlot1->xAxis);
+                gP->setPen(QPen(c.lighter(130), 1.0, Qt::DashLine));
+                gP->setName(QStringLiteral("f%1 相位").arg(fi + 1));
+            }
+            // TB2: 实部 + 虚部
+            {
+                QCPGraph* gR = m_tbPlot2->addGraph(m_tbPlot2->yAxis, m_tbPlot2->xAxis);
+                gR->setPen(QPen(c, 1.5, Qt::SolidLine));
+                gR->setName(QStringLiteral("f%1 实部").arg(fi + 1));
+                QCPGraph* gI = m_tbPlot2->addGraph(m_tbPlot2->yAxis, m_tbPlot2->xAxis);
+                gI->setPen(QPen(c.lighter(130), 1.0, Qt::DashLine));
+                gI->setName(QStringLiteral("f%1 虚部").arg(fi + 1));
+            }
+        }
+        return;
+    }
+
     const int groupIdx = m_groupCombo->currentIndex();
     if (groupIdx < 0 || m_lastChannelCount <= 0)
         return;
@@ -693,15 +742,6 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
     if (!snap || snap->timeMs.isEmpty())
         return;
 
-    const int groupIdx = m_groupCombo->currentIndex();
-    if (groupIdx < 0)
-        return;
-
-    const int firstCh = groupIdx * m_channelsPerGroup;
-    const int chCount  = qMin(m_channelsPerGroup, m_lastChannelCount - firstCh);
-    if (chCount <= 0)
-        return;
-
     const double latestTime = snap->timeMs.last();
     const double windowStart = qMax(0.0, latestTime - kTimeWindowMs);
 
@@ -725,6 +765,114 @@ void InspectionPlotWindow::updateTimeBasePlots(const QSharedPointer<const PlotSn
         }
         graph->setData(timeRel.mid(0, count), series.mid(startIdx, count), true);
     };
+
+    // ===== 多频涡流模式 =====
+    if (m_lastMode == FrameData::MultiFreqEddy) {
+        const int nFreq = m_lastMfFreqPointCount;
+        const int n = snap->timeMs.size();
+
+        // TB1: 幅值 + 相位
+        for (int fi = 0; fi < nFreq; ++fi) {
+            const bool vis = (fi < m_freqChecks.size()) ? m_freqChecks[fi]->isChecked() : true;
+            const int gA = fi * 2;       // 幅值
+            const int gP = fi * 2 + 1;   // 相位
+            if (gA < m_tbPlot1->graphCount()) {
+                m_tbPlot1->graph(gA)->setVisible(vis);
+                if (vis && fi < snap->mfImpedanceMag.size())
+                    setGraphData(m_tbPlot1->graph(gA), snap->mfImpedanceMag[fi]);
+            }
+            if (gP < m_tbPlot1->graphCount()) {
+                m_tbPlot1->graph(gP)->setVisible(vis);
+                if (vis && fi < snap->mfImpedancePhase.size())
+                    setGraphData(m_tbPlot1->graph(gP), snap->mfImpedancePhase[fi]);
+            }
+        }
+
+        // TB2: 实部 + 虚部
+        for (int fi = 0; fi < nFreq; ++fi) {
+            const bool vis = (fi < m_freqChecks.size()) ? m_freqChecks[fi]->isChecked() : true;
+            const int gR = fi * 2;       // 实部
+            const int gI = fi * 2 + 1;   // 虚部
+            if (gR < m_tbPlot2->graphCount()) {
+                m_tbPlot2->graph(gR)->setVisible(vis);
+                if (vis && fi < snap->mfImpedanceReal.size())
+                    setGraphData(m_tbPlot2->graph(gR), snap->mfImpedanceReal[fi]);
+            }
+            if (gI < m_tbPlot2->graphCount()) {
+                m_tbPlot2->graph(gI)->setVisible(vis);
+                if (vis && fi < snap->mfImpedanceImag.size())
+                    setGraphData(m_tbPlot2->graph(gI), snap->mfImpedanceImag[fi]);
+            }
+        }
+
+        // Y 轴时间范围
+        const double timeSpan = qMax(1.0, latestTime - windowStart);
+        m_tbPlot1->yAxis->setRange(0.0, timeSpan);
+        m_tbPlot2->yAxis->setRange(0.0, timeSpan);
+
+        // TB1 X 轴：仅按可见频点 rescale
+        {
+            double xMin = std::numeric_limits<double>::max();
+            double xMax = std::numeric_limits<double>::lowest();
+            bool any = false;
+            for (int fi = 0; fi < nFreq; ++fi) {
+                const bool vis = (fi < m_freqChecks.size()) ? m_freqChecks[fi]->isChecked() : true;
+                if (!vis) continue;
+                auto scan = [&](const QVector<QVector<double>>& arrs, int idx) {
+                    if (idx >= arrs.size()) return;
+                    for (int j = startIdx; j < arrs[idx].size() && j < n; ++j) {
+                        const double v = arrs[idx][j];
+                        if (std::isfinite(v)) { xMin = qMin(xMin, v); xMax = qMax(xMax, v); any = true; }
+                    }
+                };
+                scan(snap->mfImpedanceMag, fi);
+                scan(snap->mfImpedancePhase, fi);
+            }
+            if (any) {
+                const double margin = qMax((xMax - xMin) * 0.05, 1e-9);
+                m_tbPlot1->xAxis->setRange(xMin - margin, xMax + margin);
+            } else {
+                m_tbPlot1->xAxis->rescale(true);
+            }
+        }
+
+        // TB2 X 轴：仅按可见频点 rescale
+        {
+            double xMin = std::numeric_limits<double>::max();
+            double xMax = std::numeric_limits<double>::lowest();
+            bool any = false;
+            for (int fi = 0; fi < nFreq; ++fi) {
+                const bool vis = (fi < m_freqChecks.size()) ? m_freqChecks[fi]->isChecked() : true;
+                if (!vis) continue;
+                auto scan = [&](const QVector<QVector<double>>& arrs, int idx) {
+                    if (idx >= arrs.size()) return;
+                    for (int j = startIdx; j < arrs[idx].size() && j < n; ++j) {
+                        const double v = arrs[idx][j];
+                        if (std::isfinite(v)) { xMin = qMin(xMin, v); xMax = qMax(xMax, v); any = true; }
+                    }
+                };
+                scan(snap->mfImpedanceReal, fi);
+                scan(snap->mfImpedanceImag, fi);
+            }
+            if (any) {
+                const double margin = qMax((xMax - xMin) * 0.05, 1e-9);
+                m_tbPlot2->xAxis->setRange(xMin - margin, xMax + margin);
+            } else {
+                m_tbPlot2->xAxis->rescale(true);
+            }
+        }
+        return;
+    }
+
+    // ===== 通道模式（MultiChannelReal / MultiChannelComplex）=====
+    const int groupIdx = m_groupCombo->currentIndex();
+    if (groupIdx < 0)
+        return;
+
+    const int firstCh = groupIdx * m_channelsPerGroup;
+    const int chCount  = qMin(m_channelsPerGroup, m_lastChannelCount - firstCh);
+    if (chCount <= 0)
+        return;
 
     if (m_lastMode == FrameData::MultiChannelReal) {
         for (int i = 0; i < chCount && i < m_tbPlot1->graphCount(); ++i) {
@@ -804,16 +952,25 @@ void InspectionPlotWindow::rebuildFreqChecks(int totalChannels)
         delete item;
     }
 
-    for (int ch = 0; ch < totalChannels; ++ch) {
-        QCheckBox* cb = new QCheckBox(
-            QStringLiteral("Ch%1").arg(ch + 1), m_freqCheckContainer);
-        cb->setChecked(ch < 4);
+    const bool isMfEddy = (m_lastMode == FrameData::MultiFreqEddy);
+    for (int i = 0; i < totalChannels; ++i) {
+        const QString label = isMfEddy
+            ? QStringLiteral("f%1").arg(i + 1)
+            : QStringLiteral("Ch%1").arg(i + 1);
+        QCheckBox* cb = new QCheckBox(label, m_freqCheckContainer);
+        // 多频涡流默认前4个频率使能，通道模式默认前4个通道使能
+        cb->setChecked(i < 4);
         connect(cb, &QCheckBox::toggled,
                 this, &InspectionPlotWindow::onFreqCheckToggled);
         m_freqCheckLayout->addWidget(cb);
         m_freqChecks.append(cb);
     }
     m_freqCheckLayout->addStretch();
+
+    // 强制容器重算尺寸，确保 QScrollArea 内部 widget 正确显示
+    m_freqCheckContainer->adjustSize();
+    if (m_freqCheckArea)
+        m_freqCheckArea->setVisible(true);
 }
 
 void InspectionPlotWindow::rebuildImpedanceCurves(int totalChannels)
@@ -826,11 +983,17 @@ void InspectionPlotWindow::rebuildImpedanceCurves(int totalChannels)
     m_circleItem->setVisible(m_circleShowCheck->isChecked());
     updateCircleBoundary();
 
-    for (int ch = 0; ch < totalChannels; ++ch) {
+    const bool isMfEddy = (m_lastMode == FrameData::MultiFreqEddy);
+    for (int i = 0; i < totalChannels; ++i) {
         QCPCurve* curve = new QCPCurve(m_impedancePlot->xAxis, m_impedancePlot->yAxis);
-        curve->setPen(QPen(colorForChannel(ch), 1.5));
-        curve->setName(QStringLiteral("Ch%1").arg(ch + 1));
-        const bool visible = (ch < m_freqChecks.size()) ? m_freqChecks[ch]->isChecked() : false;
+        const QColor c = isMfEddy
+            ? QColor::fromHsv((i * 47) % 360, 200, 200)
+            : colorForChannel(i);
+        curve->setPen(QPen(c, 1.5));
+        curve->setName(isMfEddy
+            ? QStringLiteral("f%1").arg(i + 1)
+            : QStringLiteral("Ch%1").arg(i + 1));
+        const bool visible = (i < m_freqChecks.size()) ? m_freqChecks[i]->isChecked() : false;
         curve->setVisible(visible);
         m_impedanceCurves.append(curve);
     }
@@ -840,10 +1003,41 @@ void InspectionPlotWindow::rebuildImpedanceCurves(int totalChannels)
 
 void InspectionPlotWindow::updateImpedancePlane(const QSharedPointer<const PlotSnapshot>& snap)
 {
-    if (!snap || m_lastMode != FrameData::MultiChannelComplex)
+    if (!snap)
         return;
 
     const int n = snap->timeMs.size();
+
+    if (m_lastMode == FrameData::MultiFreqEddy) {
+        // 多频涡流阻抗平面：从 mfImpedanceReal / mfImpedanceImag 读取
+        const int nFreq = m_lastMfFreqPointCount;
+        for (int fi = 0; fi < nFreq && fi < m_impedanceCurves.size(); ++fi) {
+            QCPCurve* curve = m_impedanceCurves[fi];
+            if (!curve->visible())
+                continue;
+            if (fi >= snap->mfImpedanceReal.size() || fi >= snap->mfImpedanceImag.size())
+                continue;
+            const auto& re = snap->mfImpedanceReal[fi];
+            const auto& im = snap->mfImpedanceImag[fi];
+            const int pts = qMin(n, qMin(re.size(), im.size()));
+            QVector<double> t(pts), x(pts), y(pts);
+            for (int i = 0; i < pts; ++i) {
+                t[i] = i;
+                x[i] = re[i];
+                y[i] = im[i];
+            }
+            curve->setData(t, x, y, true);
+        }
+
+        applyImpedanceAxisMode();
+
+        m_statusLabel->setText(
+            QStringLiteral("频点数: %1  数据点: %2").arg(nFreq).arg(n));
+        return;
+    }
+
+    if (m_lastMode != FrameData::MultiChannelComplex)
+        return;
 
     for (int ch = 0; ch < m_impedanceCurves.size() && ch < snap->complexReal.size(); ++ch) {
         QCPCurve* curve = m_impedanceCurves[ch];
@@ -872,12 +1066,40 @@ void InspectionPlotWindow::updateImpedancePlane(const QSharedPointer<const PlotS
 
 void InspectionPlotWindow::onFreqCheckToggled()
 {
-    for (int ch = 0; ch < m_impedanceCurves.size() && ch < m_freqChecks.size(); ++ch)
-        m_impedanceCurves[ch]->setVisible(m_freqChecks[ch]->isChecked());
+    const int nFreq = m_freqChecks.size();
 
+    // 1) 阻抗图曲线显隐
+    for (int i = 0; i < nFreq && i < m_impedanceCurves.size(); ++i)
+        m_impedanceCurves[i]->setVisible(m_freqChecks[i]->isChecked());
+
+    // 2) 时基图1 图形显隐 — 每个频点 2 条（幅值/相位）
+    for (int i = 0; i < nFreq; ++i) {
+        const bool vis = m_freqChecks[i]->isChecked();
+        const int gA = i * 2;
+        const int gP = i * 2 + 1;
+        if (gA < m_tbPlot1->graphCount())
+            m_tbPlot1->graph(gA)->setVisible(vis);
+        if (gP < m_tbPlot1->graphCount())
+            m_tbPlot1->graph(gP)->setVisible(vis);
+    }
+
+    // 3) 时基图2 图形显隐 — 每个频点 2 条（实部/虚部）
+    for (int i = 0; i < nFreq; ++i) {
+        const bool vis = m_freqChecks[i]->isChecked();
+        const int gR = i * 2;
+        const int gI = i * 2 + 1;
+        if (gR < m_tbPlot2->graphCount())
+            m_tbPlot2->graph(gR)->setVisible(vis);
+        if (gI < m_tbPlot2->graphCount())
+            m_tbPlot2->graph(gI)->setVisible(vis);
+    }
+
+    // 4) 更新数据（重绘时仅可见曲线有数据）
     auto snap = PlotDataHub::instance()->snapshot();
-    if (snap)
+    if (snap) {
         updateImpedancePlane(snap);
+        updateTimeBasePlots(snap);
+    }
     scheduleReplot();
 }
 
@@ -893,7 +1115,35 @@ void InspectionPlotWindow::applyImpedanceAxisMode()
         m_impedancePlot->xAxis->setRange(-kDefaultImpedanceRange, kDefaultImpedanceRange);
         m_impedancePlot->yAxis->setRange(-kDefaultImpedanceRange, kDefaultImpedanceRange);
     } else {
-        m_impedancePlot->rescaleAxes();
+        // 自适应：仅根据可见曲线计算范围
+        double xMin = std::numeric_limits<double>::max();
+        double xMax = std::numeric_limits<double>::lowest();
+        double yMin = std::numeric_limits<double>::max();
+        double yMax = std::numeric_limits<double>::lowest();
+        bool any = false;
+        for (int i = 0; i < m_impedanceCurves.size(); ++i) {
+            QCPCurve* curve = m_impedanceCurves[i];
+            if (!curve || !curve->visible()) continue;
+            auto dataPtr = curve->data();
+            if (!dataPtr || dataPtr->isEmpty()) continue;
+            for (auto it = dataPtr->constBegin(); it != dataPtr->constEnd(); ++it) {
+                const double x = it->key;
+                const double y = it->value;
+                if (std::isfinite(x) && std::isfinite(y)) {
+                    xMin = qMin(xMin, x); xMax = qMax(xMax, x);
+                    yMin = qMin(yMin, y); yMax = qMax(yMax, y);
+                    any = true;
+                }
+            }
+        }
+        if (any) {
+            const double margin = qMax(qMax(xMax - xMin, yMax - yMin) * 0.1, 1.0);
+            m_impedancePlot->xAxis->setRange(xMin - margin, xMax + margin);
+            m_impedancePlot->yAxis->setRange(yMin - margin, yMax + margin);
+        } else {
+            m_impedancePlot->xAxis->setRange(-kDefaultImpedanceRange, kDefaultImpedanceRange);
+            m_impedancePlot->yAxis->setRange(-kDefaultImpedanceRange, kDefaultImpedanceRange);
+        }
     }
 }
 
