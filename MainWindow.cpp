@@ -8,6 +8,7 @@
 #include "GrpcReceiverBackend.h"
 #include "GrpcMultiFreqBackend.h"
 #include "GrpcMagArrayBackend.h"
+#include "GrpcPulseEddyBackend.h"
 #include "DataCacheManager.h"
 #include "HistoryOverviewWindow.h"
 #include <QSettings>
@@ -266,7 +267,8 @@ void MainWindow::updateAcquisitionControlUiState()
         : QString();
     const bool grpcLike = (backendType == QStringLiteral("grpc")
                            || backendType == QStringLiteral("multifreq-grpc")
-                           || backendType == QStringLiteral("magarray"));
+                           || backendType == QStringLiteral("magarray")
+                           || backendType == QStringLiteral("pulseeddy"));
 
     m_startAcquisitionButton->setVisible(grpcLike);
     m_stopAcquisitionButton->setVisible(grpcLike);
@@ -534,6 +536,7 @@ void MainWindow::initUI()
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（阵列涡流）"), "grpc");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（多频涡流）"), "multifreq-grpc");
         m_backendTypeCombo->addItem(QStringLiteral("gRPC（漏磁检测）"), "magarray");
+        m_backendTypeCombo->addItem(QStringLiteral("gRPC（脉冲涡流）"), "pulseeddy");
         // 三轴台测试装置为独立 gRPC，不在此列出（见右侧「三轴台测试装置」面板）
         m_grpcEndpointEdit = new QLineEdit();
         m_grpcEndpointEdit->setPlaceholderText(QStringLiteral("被测设备 gRPC，如 127.0.0.1:50051 或 [::1]:50051"));
@@ -633,8 +636,28 @@ void MainWindow::initUI()
         m_deviceStatusLayout->addWidget(m_deviceStatusEndpointLabel);
         m_deviceStatusLayout->addWidget(m_deviceStatusDetailsLabel);
 
+        // 漏磁检测：设备端串口选择（ListSerialPorts 返回后填充）
+        m_magArrayPortGroup = new QGroupBox(QStringLiteral("漏磁串口"));
+        auto* magPortLayout = new QFormLayout(m_magArrayPortGroup);
+        m_magArrayPortCombo = new QComboBox(m_magArrayPortGroup);
+        connect(m_magArrayPortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this]() { saveConfigFromUI(); });
+        magPortLayout->addRow(QStringLiteral("设备串口:"), m_magArrayPortCombo);
+        m_magArrayPortGroup->setVisible(false);
+
+        // 脉冲涡流：设备选择（ListDevices 返回后填充）
+        m_pulseEddyDeviceGroup = new QGroupBox(QStringLiteral("脉冲涡流设备"));
+        auto* peDevLayout = new QFormLayout(m_pulseEddyDeviceGroup);
+        m_pulseEddyDeviceCombo = new QComboBox(m_pulseEddyDeviceGroup);
+        connect(m_pulseEddyDeviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this]() { saveConfigFromUI(); });
+        peDevLayout->addRow(QStringLiteral("设备:"), m_pulseEddyDeviceCombo);
+        m_pulseEddyDeviceGroup->setVisible(false);
+
         deviceLayout->addWidget(serialGroup);
         deviceLayout->addWidget(m_grpcParamGroup);
+        deviceLayout->addWidget(m_magArrayPortGroup);
+        deviceLayout->addWidget(m_pulseEddyDeviceGroup);
         deviceLayout->addWidget(controlGroup);
         deviceLayout->addWidget(m_deviceStatusGroup);
         // 与「三轴台测试装置」一致：停靠条内用纵向滚动条承载内容。
@@ -1141,7 +1164,7 @@ void MainWindow::initUI()
         m_windowTypeCombo = new QComboBox();
         m_windowTypeCombo->addItems({QStringLiteral("组合图"), QStringLiteral("热力图"), QStringLiteral("阵列图"),
                                      QStringLiteral("脉冲衰减"), QStringLiteral("阵列热力图"),
-                                     QStringLiteral("漏磁检测")});
+                                     QStringLiteral("漏磁检测"), QStringLiteral("脉冲涡流")});
         m_createWindowButton = new QPushButton("新建窗口");
         
         createLayout->addRow("窗口类型:", m_windowTypeCombo);
@@ -1650,7 +1673,7 @@ void MainWindow::loadConfigToUI()
         switch (p.type) {
         case ParamInt: if (auto* s = qobject_cast<QSpinBox*>(w)) s->setValue(val.toInt()); break;
         case ParamDouble: if (auto* s = qobject_cast<QDoubleSpinBox*>(w)) s->setValue(val.toDouble()); break;
-        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) c->setCurrentText(val.toString()); break;
+        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) c->setCurrentIndex(val.toInt()); break;
         case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) e->setText(val.toString()); break;
         }
     }
@@ -1676,11 +1699,13 @@ void MainWindow::loadConfigToUI()
 
 void MainWindow::saveConfigFromUI()
 {
+    if (m_suppressConfigPersist) return;
+
     AppConfig* config = AppConfig::instance();
     if (!config) {
         return;
     }
-    
+
     // 保存串口配置
     config->setReceiverBackendType(m_backendTypeCombo->currentData().toString());
     config->setGrpcEndpoint(m_grpcEndpointEdit->text().trimmed());
@@ -1711,8 +1736,25 @@ void MainWindow::saveConfigFromUI()
         switch (p.type) {
         case ParamInt: setConfigValue(p.key, qobject_cast<QSpinBox*>(w)->value()); break;
         case ParamDouble: setConfigValue(p.key, qobject_cast<QDoubleSpinBox*>(w)->value()); break;
-        case ParamEnum: setConfigValue(p.key, qobject_cast<QComboBox*>(w)->currentText().toInt()); break;
+        case ParamEnum: setConfigValue(p.key, qobject_cast<QComboBox*>(w)->currentIndex()); break;
         case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) setConfigValue(p.key, e->text()); break;
+        }
+    }
+
+    // 保存脉冲涡流设备选择
+    if (m_pulseEddyDeviceCombo && m_pulseEddyDeviceCombo->count() > 0) {
+        const QString text = m_pulseEddyDeviceCombo->currentText().trimmed();
+        if (!text.isEmpty()) {
+            setConfigValue("PulseEddy/DeviceIndex", text);
+        }
+    }
+
+    // 保存漏磁检测设备串口选择（不判断 isVisible，确保任意路径都能保存）
+    if (m_magArrayPortCombo && m_magArrayPortCombo->count() > 0) {
+        const QString port = m_magArrayPortCombo->currentText().trimmed();
+        if (!port.isEmpty()) {
+            setConfigValue("MagArray/DetectionPort", port);
+            qInfo() << "[MainWindow] 保存漏磁串口选择:" << port;
         }
     }
 
@@ -1891,9 +1933,10 @@ void MainWindow::restoreSavedPlotWindowsFromConfig()
         case 8: return PlotWindowManager::InspectionPlot;
         case 9: return PlotWindowManager::ArrayHeatmapPlot;
         case 10: return PlotWindowManager::MagArrayPlot;
+        case 11: return PlotWindowManager::PulseEddyPlot;
         default: break;
         }
-        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::MagArrayPlot)) {
+        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::PulseEddyPlot)) {
             return static_cast<PlotWindowManager::PlotType>(v);
         }
         return PlotWindowManager::CombinedPlot;
@@ -2947,9 +2990,14 @@ void MainWindow::onBackendTypeChanged(int index)
     const bool isGrpc = (backendType.compare("grpc", Qt::CaseInsensitive) == 0);
     const bool isMultiFreq = (backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
     const bool isMagArray = (backendType.compare("magarray", Qt::CaseInsensitive) == 0);
-    const bool isGrpcLike = isGrpc || isMultiFreq || isMagArray;
+    const bool isPulseEddy = (backendType.compare("pulseeddy", Qt::CaseInsensitive) == 0);
+    const bool isGrpcLike = isGrpc || isMultiFreq || isMagArray || isPulseEddy;
 
     m_grpcEndpointEdit->setEnabled(isGrpcLike);
+    if (m_magArrayPortGroup)
+        m_magArrayPortGroup->setVisible(isMagArray);
+    if (m_pulseEddyDeviceGroup)
+        m_pulseEddyDeviceGroup->setVisible(isPulseEddy);
 
     for (QWidget* field : m_serialOnlyFields) {
         if (field) { field->setVisible(!isGrpcLike); field->setEnabled(!isGrpcLike); }
@@ -2970,10 +3018,27 @@ void MainWindow::onBackendTypeChanged(int index)
     } else if (isMagArray) {
         GrpcMagArrayBackend tmp;
         params = tmp.configParameters();
+    } else if (isPulseEddy) {
+        GrpcPulseEddyBackend tmp;
+        params = tmp.configParameters();
     }
     rebuildGrpcParamUI(params);
 
-    saveConfigFromUI();
+    // 从 config.ini 恢复上次保存的参数值（rebuildGrpcParamUI 填入了默认值，需覆盖）
+    for (int i = 0; i < m_currentBackendParams.size() && i < m_grpcParamWidgets.size(); ++i) {
+        const auto& p = m_currentBackendParams[i];
+        QWidget* w = m_grpcParamWidgets[i];
+        QVariant val = configValue(p.key, p.defaultValue);
+        switch (p.type) {
+        case ParamInt: if (auto* s = qobject_cast<QSpinBox*>(w)) s->setValue(val.toInt()); break;
+        case ParamDouble: if (auto* s = qobject_cast<QDoubleSpinBox*>(w)) s->setValue(val.toDouble()); break;
+        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) c->setCurrentIndex(val.toInt()); break;
+        case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) e->setText(val.toString()); break;
+        }
+    }
+
+    // 不在此处 saveConfigFromUI：控件刚填好默认值/恢复值，保存会覆盖旧配置
+    // 参数变更时 rebuildGrpcParamUI 内的 lambda 会自动调用 saveConfigFromUI
     if (m_appController) {
         m_appController->applyReceiverBackendFromConfig();
     }
@@ -3025,9 +3090,17 @@ void MainWindow::rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& param
         case ParamEnum: {
             auto* combo = new QComboBox(m_grpcParamGroup);
             combo->addItems(p.enumOptions);
-            combo->setCurrentText(p.defaultValue.toString());
-            QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                    this, [this]() { saveConfigFromUI(); });
+            combo->setCurrentIndex(p.defaultValue.toInt());
+            if (p.key == "MagArray/PreprocessMode") {
+                QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                        this, [this]() {
+                            saveConfigFromUI();
+                            updateMagArrayConditionalVisibility();
+                        });
+            } else {
+                QObject::connect(combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                        this, [this]() { saveConfigFromUI(); });
+            }
             w = combo; break;
         }
         case ParamIntList: {
@@ -3045,6 +3118,45 @@ void MainWindow::rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& param
         }
     }
     m_grpcParamGroup->setVisible(true);
+
+    // 初始按预处理模式设定条件参数显隐
+    updateMagArrayConditionalVisibility();
+}
+
+void MainWindow::updateMagArrayConditionalVisibility()
+{
+    // 仅漏磁检测的预处理模式需要动态控制条件参数
+    int modeIdx = -1;
+    int modeComboIdx = -1;
+    for (int i = 0; i < m_currentBackendParams.size(); ++i) {
+        if (m_currentBackendParams[i].key == "MagArray/PreprocessMode") {
+            modeIdx = i;
+            if (i < m_grpcParamWidgets.size()) {
+                if (auto* combo = qobject_cast<QComboBox*>(m_grpcParamWidgets[i]))
+                    modeComboIdx = combo->currentIndex();
+            }
+            break;
+        }
+    }
+    if (modeIdx < 0 || modeComboIdx < 0) return;
+
+    // modeComboIdx → proto PreprocessMode: 见 configParameters 枚举顺序
+    for (int i = 0; i < m_currentBackendParams.size() && i < m_grpcParamWidgets.size(); ++i) {
+        const QString& key = m_currentBackendParams[i].key;
+        bool show = true;
+        if (key == "MagArray/BaselineFrames") {
+            show = (modeComboIdx == 3); // AutoBaseline
+        } else if (key == "MagArray/FixedMidpoint") {
+            show = (modeComboIdx == 2); // FixedMidpoint
+        } else if (key == "MagArray/TrackingFactor") {
+            show = (modeComboIdx == 4); // SlowTrackingBaseline
+        }
+        if (!show) {
+            m_grpcParamWidgets[i]->setVisible(false);
+            if (auto* label = m_grpcParamLayout->labelForField(m_grpcParamWidgets[i]))
+                label->setVisible(false);
+        }
+    }
 }
 
 void MainWindow::onBackendStatusChanged(const QJsonObject& status)
@@ -3071,7 +3183,11 @@ QVariant MainWindow::configValue(const QString& key, const QVariant& fallback) c
     if (slash < 0) return fallback;
     QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
     const QString fullKey = key.left(slash) + "/" + key.mid(slash + 1);
-    return settings.value(fullKey, fallback);
+    QVariant val = settings.value(fullKey, fallback);
+    if (val != fallback) {
+        qInfo() << "[Config] 读取" << fullKey << "=" << val;
+    }
+    return val;
 }
 
 void MainWindow::setConfigValue(const QString& key, const QVariant& value)
@@ -3088,6 +3204,17 @@ void MainWindow::setConfigValue(const QString& key, const QVariant& value)
             if (ok && f > 0) factors.append(f);
         }
         if (!factors.isEmpty()) cfg->setMultiFreqFrequencyFactors(factors);
+    }
+    // 通用回退：直接写入 QSettings（支持 MagArray/* 等动态 key）
+    else {
+        const int slash = key.indexOf('/');
+        if (slash >= 0) {
+            QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+            const QString fullKey = key.left(slash) + "/" + key.mid(slash + 1);
+            settings.setValue(fullKey, value);
+            settings.sync();  // 立即落盘，确保 streamLoop 读取前已持久化
+            qInfo() << "[Config] 写入" << fullKey << "=" << value;
+        }
     }
 }
 
@@ -3327,6 +3454,7 @@ void MainWindow::onCreateWindowClicked()
     case 3: type = PlotWindowManager::PulsedDecayPlot; break;
     case 4: type = PlotWindowManager::ArrayHeatmapPlot; break;
     case 5: type = PlotWindowManager::MagArrayPlot; break;
+    case 6: type = PlotWindowManager::PulseEddyPlot; break;
     default:
         qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
         type = PlotWindowManager::CombinedPlot;
@@ -3488,6 +3616,38 @@ void MainWindow::onStageCommandError(const QString& error)
 void MainWindow::onRecorderDropAlert(const QString& message)
 {
     qWarning().noquote() << QStringLiteral("[丢帧告警] %1").arg(message);
+}
+
+void MainWindow::onMagArrayPortsDiscovered(QStringList ports)
+{
+    if (!m_magArrayPortCombo) return;
+    m_magArrayPortCombo->clear();
+    m_magArrayPortCombo->addItems(ports);
+    // 恢复用户上次选择的串口
+    {
+        QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+        const QString savedPort = settings.value("MagArray/DetectionPort").toString();
+        if (!savedPort.isEmpty()) {
+            const int idx = m_magArrayPortCombo->findText(savedPort);
+            if (idx >= 0) m_magArrayPortCombo->setCurrentIndex(idx);
+        }
+    }
+}
+
+void MainWindow::onPulseEddyDevicesDiscovered(QStringList devices)
+{
+    if (!m_pulseEddyDeviceCombo) return;
+    m_pulseEddyDeviceCombo->clear();
+    m_pulseEddyDeviceCombo->addItems(devices);
+    // 恢复用户上次选择的设备
+    {
+        QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+        const QString savedIdx = settings.value("PulseEddy/DeviceIndex").toString();
+        if (!savedIdx.isEmpty()) {
+            const int idx = m_pulseEddyDeviceCombo->findText(savedIdx, Qt::MatchStartsWith);
+            if (idx >= 0) m_pulseEddyDeviceCombo->setCurrentIndex(idx);
+        }
+    }
 }
 
 void MainWindow::onStageConnectionStateChanged(bool connected)

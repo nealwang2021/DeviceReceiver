@@ -101,7 +101,7 @@ bool SqlHistoryQuery::queryTimeBoundsFast(qint64& minTimestampMs, qint64& maxTim
     qint64 gMin = std::numeric_limits<qint64>::max();
     qint64 gMax = std::numeric_limits<qint64>::min();
     // 同时检查 aligned_frames 和 multifreq_frames
-    const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames"), QStringLiteral("mag_array_frames")};
+    const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames"), QStringLiteral("mag_array_frames"), QStringLiteral("pulse_eddy_frames")};
     for (const QString& table : tables) {
         QSqlQuery tq(db);
         if (tq.exec(QStringLiteral("SELECT MIN(timestamp_unix_ms), MAX(timestamp_unix_ms) FROM %1").arg(table))
@@ -534,6 +534,39 @@ QVector<SqlHistoryQuery::MagArrayEnvelopeBucket> SqlHistoryQuery::queryMagArrayO
         b.bucketStartMs = q.value(0).toLongLong();
         b.minMagnitude = q.value(1).toDouble();
         b.maxMagnitude = q.value(2).toDouble();
+        result.append(b);
+    }
+    return result;
+}
+
+QVector<SqlHistoryQuery::PulseEddyEnvelopeBucket>
+SqlHistoryQuery::queryPulseEddyOverviewEnvelope(qint64 startMs, qint64 endMs, qint64 bucketMs)
+{
+    QVector<PulseEddyEnvelopeBucket> result;
+    if (!m_isOpen) return result;
+    if (bucketMs <= 0) bucketMs = 1000;
+
+    QSqlDatabase db = QSqlDatabase::database(m_connectionName);
+    if (!db.isValid() || !db.isOpen()) return result;
+
+    QSqlQuery q(db);
+    q.prepare(QStringLiteral(
+        "SELECT (timestamp_unix_ms / :bucket) * :bucket AS bucket_start, "
+        "MIN(min_value), MAX(max_value) "
+        "FROM pulse_eddy_frames "
+        "WHERE timestamp_unix_ms BETWEEN :start AND :end "
+        "GROUP BY bucket_start ORDER BY bucket_start ASC"));
+    q.bindValue(":bucket", bucketMs);
+    q.bindValue(":start", startMs);
+    q.bindValue(":end", endMs);
+
+    if (!q.exec()) return result;
+
+    while (q.next()) {
+        PulseEddyEnvelopeBucket b;
+        b.bucketStartMs = q.value(0).toLongLong();
+        b.minValue = q.value(1).toDouble();
+        b.maxValue = q.value(2).toDouble();
         result.append(b);
     }
     return result;

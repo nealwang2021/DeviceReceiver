@@ -8,6 +8,7 @@
 #include "PulsedDecayPlotWindow.h"
 #include "InspectionPlotWindow.h"
 #include "MagArrayWindow.h"
+#include "PulseEddyPlotWindow.h"
 #include "DataCacheManager.h"
 #include "AppConfig.h"
 #include "PlotDataHub.h"
@@ -164,6 +165,10 @@ PlotWindowBase* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
     case MagArrayPlot:
         window = new MagArrayWindow(parent);
         title = QStringLiteral("漏磁检测");
+        break;
+    case PulseEddyPlot:
+        window = new PulseEddyPlotWindow(parent);
+        title = QStringLiteral("脉冲涡流");
         break;
     default:
         qWarning() << "PlotWindowManager::createWindow 未知类型，回退组合图, type=" << static_cast<int>(type);

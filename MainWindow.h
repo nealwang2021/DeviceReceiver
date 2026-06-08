@@ -97,6 +97,10 @@ public slots:
     void onStageConnectionStateChanged(bool connected);
     void onRecorderDropAlert(const QString& message);
     void onConnectionProgressChanged(bool inProgress);
+    /// 漏磁检测 ListSerialPorts 返回后填充设备串口下拉
+    void onMagArrayPortsDiscovered(QStringList ports);
+    /// 脉冲涡流 ListDevices 返回后填充设备下拉
+    void onPulseEddyDevicesDiscovered(QStringList devices);
 
 protected:
     /**
@@ -271,6 +275,7 @@ private:
 
     // 动态参数与设备状态
     void rebuildGrpcParamUI(const QVector<BackendParamDescriptor>& params);
+    void updateMagArrayConditionalVisibility();
     QVariant configValue(const QString& key, const QVariant& fallback) const;
     void setConfigValue(const QString& key, const QVariant& value);
 
@@ -387,6 +392,14 @@ private:
     QFormLayout* m_grpcParamLayout = nullptr;
     QVector<QWidget*> m_grpcParamWidgets;
     QVector<BackendParamDescriptor> m_currentBackendParams;
+
+    // 漏磁检测：设备端串口选择（ListSerialPorts 返回）
+    QGroupBox* m_magArrayPortGroup = nullptr;
+    QComboBox* m_magArrayPortCombo = nullptr;
+
+    // 脉冲涡流：设备选择（ListDevices 返回）
+    QGroupBox* m_pulseEddyDeviceGroup = nullptr;
+    QComboBox* m_pulseEddyDeviceCombo = nullptr;
 
     // 设备状态面板
     QGroupBox* m_deviceStatusGroup = nullptr;

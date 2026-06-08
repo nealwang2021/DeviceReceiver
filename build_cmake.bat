@@ -594,6 +594,42 @@ if "%FAST_BUILD%"=="0" if "%ENABLE_WASM%"=="0" (
             echo [INFO] 已复制 gRPC DLL
         )
     )
+
+)
+
+REM --- 复制 VC 运行库 DLL（始终执行，windeployqt --compiler-runtime 不可靠）---
+if exist "!EXE_FULL_PATH!" (
+    set "VCREDIST_FOUND=0"
+    if defined VCToolsRedistDir (
+        for /d %%D in ("!VCToolsRedistDir!\x64\Microsoft.VC14*.CRT") do (
+            if exist "%%D\*.dll" (
+                copy /Y "%%D\*.dll" "!EXE_DIR!" >nul 2>&1
+                echo [INFO] 已复制 VC 运行库 DLL ^(%%~nxD^)
+                set "VCREDIST_FOUND=1"
+            )
+        )
+    )
+    if "!VCREDIST_FOUND!"=="0" (
+        echo [WARN] 未找到 VC 运行库 DLL 目录
+    )
+)
+
+REM --- 打包 VC 可再发行安装包 (vc_redist.x64.exe) ---
+if exist "!EXE_DIR!" (
+    set "VCREDIST_INSTALLER="
+    if defined VS_PATH (
+        for /d %%D in ("!VS_PATH!\VC\Redist\MSVC\*") do (
+            if exist "%%D\vc_redist.x64.exe" (
+                set "VCREDIST_INSTALLER=%%D\vc_redist.x64.exe"
+            )
+        )
+    )
+    if defined VCREDIST_INSTALLER (
+        copy /Y "!VCREDIST_INSTALLER!" "!EXE_DIR!" >nul 2>&1
+        echo [INFO] 已复制 VC 可再发行安装包: vc_redist.x64.exe
+    ) else (
+        echo [WARN] 未找到 vc_redist.x64.exe，请从微软官网下载后放到 exe 目录
+    )
 )
 
 REM --- 返回项目根目录 ---

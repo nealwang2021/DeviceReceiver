@@ -198,3 +198,10 @@ QVector<SqlHistoryQuery::MagArrayEnvelopeBucket> HistoryDataProvider::queryMagAr
     if (!m_query) return {};
     return m_query->queryMagArrayOverviewEnvelope(startMs, endMs, bucketMs);
 }
+
+QVector<SqlHistoryQuery::PulseEddyEnvelopeBucket> HistoryDataProvider::queryPulseEddyOverviewEnvelope(
+    qint64 startMs, qint64 endMs, qint64 bucketMs)
+{
+    if (!m_query) return {};
+    return m_query->queryPulseEddyOverviewEnvelope(startMs, endMs, bucketMs);
+}

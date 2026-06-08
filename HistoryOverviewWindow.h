@@ -76,6 +76,7 @@ private:
     void rebuildEnvelope();
     void rebuildMultiFreqEnvelope();
     void rebuildMagArrayEnvelope();
+    void rebuildPulseEddyEnvelope();
     void applyRangeToItems();
     void updateStatusLabels();
     bool isDarkThemeActive() const;

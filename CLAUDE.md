@@ -121,7 +121,8 @@ clang-format --dry-run --Werror <changed_files...>
 - [ArrayRgbHeatmapWindow](ArrayRgbHeatmapWindow.h) — 阵列 RGB 热力图。
 - [PulsedDecayPlotWindow](PulsedDecayPlotWindow.h) — 脉冲衰减图。
 - [InspectionPlotWindow](InspectionPlotWindow.h) — 检测分析窗口（分组视图）。
-- [PlotWindowManager](PlotWindowManager.h) — 单例，统一管理所有绘图窗口。定时轮询 DataCacheManager，经 PlotDataHub 聚合后广播 `dataUpdated` / `plotSnapshotUpdated` 信号。
+- [MagArrayWindow](MagArrayWindow.h) — 漏磁检测窗口（MDI 子窗口）。左右分割布局：左侧 3 行 QCPLayoutGrid 波形图（折线），右侧 3 行 QCPLayoutGrid 热力图（ColorMap + ColorScale）。顶部单行控制栏：最大帧数、XYZ 轴 CheckBox 显隐、热力图 X 轴时间/台位模式、色标范围 + 双色渐变颜色选择器。所有控件状态持久化到 `[MagArray]` 配置节。[[magarray-layout-lessons]] [[magarray-restore-bug]]
+- [PlotWindowManager](PlotWindowManager.h) — 单例，统一管理所有绘图窗口。定时轮询 DataCacheManager，经 PlotDataHub 聚合后广播 `dataUpdated` / `plotSnapshotUpdated` 信号。`PlotType` 枚举包含 `MagArrayPlot = 10`，工厂方法 `createWindow()` 按类型创建窗口实例。**注意：** 新增 `PlotType` 值时必须同步更新 `MainWindow::restoreSavedPlotWindowsFromConfig()` 和 `ApplicationController::normalizeStoredPlotType()` 中的类型归一化函数。[[magarray-restore-bug]]
 
 **跨线程模型：**
 - 设备 I/O 线程（QThread）运行 SerialReceiver / GrpcReceiverBackend 流线程，通过 `Qt::QueuedConnection` 信号将 FrameData 投递到主线程。
@@ -141,6 +142,7 @@ clang-format --dry-run --Werror <changed_files...>
 - `[General]` — 应用标题、后端类型、gRPC 端点、日志级别
 - `[SerialPort]` — 串口参数
 - `[Plot]` — 绘图点数、刷新间隔、OpenGL 开关、阵列图行高
+- `[MagArray]` — 漏磁检测窗口配置：最大帧数(`MaxFrames`)、轴显隐(`AxisX/Y/ZVisible`)、热力图X轴模式(`HeatmapXAxisMode`)、色标范围(`ColorDataMin/Max`)、渐变色(`GradientColorMin/Max`)
 - `[UI]` — 面板显隐、窗口状态/几何、指令历史
 - `[Export]` — 导出目录与格式
 
@@ -166,6 +168,67 @@ python -m grpc_tools.protoc -Iproto --python_out=proto/generated_py --grpc_pytho
 - QCustomPlot `HighQualityAntialiasing` 弃用警告来自 vendor 库，可忽略。
 - gRPC C++ 的 proto 生成文件（`proto/generated/`）针对 protobuf v6.x（Windows vcpkg），与 Ubuntu 系统 protobuf v3.21.x 不兼容，Linux 上须 `-DENABLE_GRPC=OFF`。
 - `config.ini` 不存在时应用使用内存默认值启动，正常退出时写出。
+- QCPAxisRect 构造函数硬编码了 `setMinimumSize(50, 50)`（qcustomplot.cpp:17645）。隐藏轴矩形时必须同时调用 `setMinimumSize(0, 0)`，否则 `QCPLayoutGrid::getSectionSizes` 的 minimum violation check 会将已折叠的行推回 50px。恢复可见时需设置回 `setMinimumSize(50, 50)`。[[magarray-layout-lessons]]
+- QCPLayoutGrid 的 `setRowStretchFactor(row, 0)` 是无效操作（要求 `factor > 0`），静默忽略。列宽 max 取跨行最小值（一个隐藏元素拖跨整列），行高 max 各行独立。[[magarray-layout-lessons]]
+
+## 新增 gRPC 设备后端检查清单
+
+每次新增 proto 文件并实现 `Grpc*Backend` 时，**必须**逐项确认（漏磁检测首次实现时全部踩坑）：
+
+1. **connectBackend 后是否需要获取设备列表？** — 若服务端管理多个子设备/串口（如 `ListSerialPorts`、`ListDevices`），必须在 `connectBackend` 中调用该 RPC，并将结果通过信号传给 UI。参考 `GrpcMagArrayBackend::connectBackend` → `availableSerialPortsChanged`。
+2. **connectBackend 后是否要自动 startAcquisition？** — 若需用户先选择子设备或配置参数，跳过自动采集。参考 `ApplicationController::handleGrpcConnectAttemptFinished` 中 `isMagArray` 判断。
+3. **启动 RPC（StartDetection/StartSampling/...）是否需要用户配置参数？** — 若是，参数必须通过 `configParameters()` 返回 `BackendParamDescriptor` 列表；`streamLoop` 中通过 `QSettings` 读取，不得硬编码。
+4. **参数是否需要持久化？** — 非标准参数（动态下拉框等）需在 `MainWindow::setConfigValue` 中添加处理或走通用 `QSettings` 回退，否则重启丢失。
+5. **是否需要后端专属 UI 控件？** — 标准参数用 `BackendParamDescriptor` 自动生成；动态列表（如设备串口下拉框）需手动添加 `QComboBox`，在 `onBackendTypeChanged` 中控制显隐。参考 `m_magArrayPortGroup`。
+6. **参数是否需要按条件显隐？** — 若参数之间存在依赖（如预处理模式决定哪些参数生效），需在 `rebuildGrpcParamUI` 后调用条件显隐更新，切换模式时同步刷新。参考 `updateMagArrayConditionalVisibility()`。
+
+## 漏磁检测集成踩坑实录（2026-06）
+
+### 信号连接时序
+- **陷阱：** `initReceiverBackend()` 在 `initMainWindow()` 之前执行，此时 `m_mainWindow` 为 `null`。在此处连接 Backend → MainWindow 的信号会被 `if (m_mainWindow)` 跳过。
+- **修复：** 将 UI 相关信号连接移至 `connectReceiverToMainWindow()`（在 `initMainWindow()` 末尾调用）。
+
+### 配置持久化
+- **陷阱 1：** `saveConfigFromUI` 在 `onBackendTypeChanged` 中于 `rebuildGrpcParamUI` 之后调用，此时控件是默认值，会覆盖已保存配置。
+- **修复 1：** 改为在 `rebuildGrpcParamUI` 之后从 `QSettings` 恢复已保存值，不在此处保存。
+- **陷阱 2：** `saveConfigFromUI` 不检查 `m_suppressConfigPersist` 标志，初始化期间填充默认值时触发保存。
+- **修复 2：** 顶部加 `if (m_suppressConfigPersist) return;`。
+- **陷阱 3：** `ParamEnum` 保存用 `currentText().toInt()`，"AutoBaseline"→0→永远读回0。加载用 `setCurrentText("0")` 匹配不到。
+- **修复 3：** 改为 `currentIndex()` 保存 / `setCurrentIndex()` 加载，且枚举选项必须与 proto 定义一一对应。
+
+### 数据数组索引映射
+- **陷阱：** `channels_comp0` 按 proto 顺序排列 `ch = sensor×3 + axis`，但波形图的 graph 按轴分块排列 `graph[axis×20 + sensor]`。直接 `realAmp[i] → graph[i]` 导致全图错位。
+- **修复：** `sensorIdx = i % 20; axisIdx = i / 20; dataIdx = sensorIdx * 3 + axisIdx`。
+
+### QScrollArea 内容不可见
+- **陷阱：** `QScrollArea` 默认 `widgetResizable = false`，内部容器不会随新添加的 widget 自动扩展。
+- **修复：** 创建后立即调用 `setWidgetResizable(true)`，添加内容后调用容器 `adjustSize()`。
+
+### Proto 枚举与 UI Combo 偏移
+- **陷阱：** ComboBox 选项漏掉 `Unspecified(0)`，导致 combo index 与 proto enum value 整体偏移 1 位。
+- **修复：** 补全 `Unspecified` 使 index == proto value。
+
+## 脉冲涡流集成踩坑实录（2026-06）
+
+### 数据帧体积与 PlotDataHub
+- **陷阱：** PulseFrame 每帧 ~64k double（512KB），不能走 PlotSnapshot 聚合（OOM）。
+- **修复：** `onDataUpdated` 直取最后一帧，PlotDataHub 仅记时间戳不存数据。
+
+### 64k 数据存储
+- **陷阱：** 512KB/帧不能拆成单值列存 SQLite（64000 列 × N 行不可行）。
+- **修复：** `QByteArray(reinterpret_cast<const double*>(data), n*sizeof(double))` 序列化为 BLOB，读写零拷贝。
+
+### 历史包络图聚合
+- **陷阱：** BLOB 列无法 SQL 聚合（MIN/MAX）。
+- **修复：** 入库时 `std::minmax_element` 预计算 `min_value` / `max_value` 存入独立列，包络查询直接聚合这两列。
+
+### HDF5 导出 2D 数据集
+- **陷阱：** 需在 `#ifdef HAS_HDF5` 内外各提供一份实现（真实 HDF5 + 空桩），否则未启用 HDF5 时链接失败。
+- **修复：** 参照 `exportMultiFreqHdf5` 模式，`Impl` 方法放 `#ifdef` 内，外部包装 + 空桩放 `#else`。
+
+### 多设备流程差异
+- **陷阱：** PulseEddy 比 MagArray 多了一层 `OpenDevice` RPC，不能照搬 `StreamFrames` 直连。
+- **修复：** `streamLoop` 内先 `OpenDevice` → `StartAcquisition` → `StreamFrames`，`stopAcquisition` 调 `StopAcquisition` + `CloseDevice`。
 
 ## 自愈协议
 

@@ -28,7 +28,8 @@ public:
         PulsedDecayPlot,
         InspectionPlot,
         ArrayHeatmapPlot = 9,
-        MagArrayPlot = 10
+        MagArrayPlot = 10,
+        PulseEddyPlot = 11
     };
 
     static PlotWindowManager* instance();

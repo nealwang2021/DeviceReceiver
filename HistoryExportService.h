@@ -75,7 +75,16 @@ public:
                              HistoryDataProvider::HistorySourceMode mode =
                                  HistoryDataProvider::HistorySourceMode::SessionRealtime);
 
+    /// 脉冲涡流 HDF5 导出（同步调用，返回 true/false）。
+    bool exportPulseEddyHdf5(const QString& filePath, qint64 startMs, qint64 endMs,
+                             const QString& dbPath = QString(),
+                             HistoryDataProvider::HistorySourceMode mode =
+                                 HistoryDataProvider::HistorySourceMode::SessionRealtime);
+
 private:
+    bool exportPulseEddyHdf5Impl(const QString& filePath, qint64 startMs, qint64 endMs,
+                                 const QString& dbPath,
+                                 HistoryDataProvider::HistorySourceMode mode);
 };
 
 #endif // HISTORYEXPORTSERVICE_H

@@ -14,6 +14,8 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QUuid>
+
+#include <algorithm>
 #include <QVariant>
 
 namespace {
@@ -191,6 +193,13 @@ private:
                 }
                 continue;
             }
+            if (frame.detectMode == FrameData::PulseEddy) {
+                if (!insertPulseEddyFrame(frame)) {
+                    ok = false;
+                    break;
+                }
+                continue;
+            }
             if (frame.detectMode == FrameData::MultiFreqEddy) {
                 if (!insertMultiFreqFrame(frame)) {
                     ok = false;
@@ -291,6 +300,10 @@ private:
             qWarning() << "RealtimeSqlRecorder: ensure mag_array_frames schema failed:" << error;
             return false;
         }
+        if (!RealtimeSqlRecorder::ensurePulseEddyFramesSchema(m_db, &error)) {
+            qWarning() << "RealtimeSqlRecorder: ensure pulse_eddy_frames schema failed:" << error;
+            return false;
+        }
         return true;
     }
 
@@ -319,10 +332,22 @@ private:
         const QString sqlMa = QStringLiteral(
             "INSERT INTO mag_array_frames(timestamp_unix_ms, frame_index, sensor_index, "
             "x_mean, y_mean, z_mean, x_latest, y_latest, z_latest, "
-            "magnitude_mean, magnitude_latest) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?)");
+            "magnitude_mean, magnitude_latest, "
+            "processed_value_x, processed_value_y, processed_value_z) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         if (!m_insertMagArrayFrame.prepare(sqlMa)) {
             qWarning() << "RealtimeSqlRecorder: prepare insert mag_array_frames failed" << m_insertMagArrayFrame.lastError();
+            return false;
+        }
+
+        m_insertPulseEddyFrame = QSqlQuery(m_db);
+        const QString sqlPe = QStringLiteral(
+            "INSERT INTO pulse_eddy_frames(timestamp_unix_ms, frame_index, "
+            "sample_count, sample_rate_hz, raw_values, "
+            "has_reference, reference_values, min_value, max_value) "
+            "VALUES(?,?,?,?,?,?,?,?,?)");
+        if (!m_insertPulseEddyFrame.prepare(sqlPe)) {
+            qWarning() << "RealtimeSqlRecorder: prepare insert pulse_eddy_frames failed" << m_insertPulseEddyFrame.lastError();
             return false;
         }
 
@@ -391,7 +416,7 @@ private:
         if (m_owner->m_retentionMs > 0) {
             qint64 minWallMs = std::numeric_limits<qint64>::max();
             // 同时检查 aligned_frames 和 multifreq_frames
-            const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames"), QStringLiteral("mag_array_frames")};
+            const QStringList tables = {QStringLiteral("aligned_frames"), QStringLiteral("multifreq_frames"), QStringLiteral("mag_array_frames"), QStringLiteral("pulse_eddy_frames")};
             for (const QString& table : tables) {
                 QSqlQuery tq(m_db);
                 const QString sql = QStringLiteral(
@@ -561,6 +586,7 @@ private:
     QSqlQuery m_insertAlignedFrame;
     QSqlQuery m_insertMultiFreqFrame;
     QSqlQuery m_insertMagArrayFrame;
+    QSqlQuery m_insertPulseEddyFrame;
     qint64 m_lastPruneMs = 0;
 
     bool insertMultiFreqFrame(const FrameData& frame)
@@ -589,10 +615,17 @@ private:
 
     bool insertMagArrayFrame(const FrameData& frame)
     {
+        // channels_comp0 排列: ch = sensorIndex * 3 + axis  (X=0, Y=1, Z=2)
+        const int chCount = frame.channels_comp0.size();
         for (const auto& sr : frame.magSensorResults) {
+            const int si = sr.sensorIndex;
+            const int chX = si * 3 + 0;
+            const int chY = si * 3 + 1;
+            const int chZ = si * 3 + 2;
+
             m_insertMagArrayFrame.bindValue(0, static_cast<qint64>(frame.timestamp));
             m_insertMagArrayFrame.bindValue(1, static_cast<qint64>(frame.frameId));
-            m_insertMagArrayFrame.bindValue(2, sr.sensorIndex);
+            m_insertMagArrayFrame.bindValue(2, si);
             m_insertMagArrayFrame.bindValue(3, sr.xMean);
             m_insertMagArrayFrame.bindValue(4, sr.yMean);
             m_insertMagArrayFrame.bindValue(5, sr.zMean);
@@ -601,10 +634,53 @@ private:
             m_insertMagArrayFrame.bindValue(8, sr.zLatest);
             m_insertMagArrayFrame.bindValue(9, sr.magnitudeMean);
             m_insertMagArrayFrame.bindValue(10, sr.magnitudeLatest);
+            m_insertMagArrayFrame.bindValue(11, (chX < chCount) ? frame.channels_comp0[chX] : qQNaN());
+            m_insertMagArrayFrame.bindValue(12, (chY < chCount) ? frame.channels_comp0[chY] : qQNaN());
+            m_insertMagArrayFrame.bindValue(13, (chZ < chCount) ? frame.channels_comp0[chZ] : qQNaN());
             if (!m_insertMagArrayFrame.exec()) {
                 qWarning() << "RealtimeSqlRecorder: insert mag_array frame failed" << m_insertMagArrayFrame.lastError();
                 return false;
             }
+        }
+        return true;
+    }
+
+    bool insertPulseEddyFrame(const FrameData& frame)
+    {
+        // raw_values → BLOB
+        const int nRaw = frame.pulseRawValues.size();
+        QByteArray rawBlob;
+        double minVal = qQNaN();
+        double maxVal = qQNaN();
+        if (nRaw > 0) {
+            rawBlob = QByteArray(reinterpret_cast<const char*>(frame.pulseRawValues.constData()),
+                                 nRaw * static_cast<int>(sizeof(double)));
+            // 计算 min/max 供包络图查询
+            auto [mn, mx] = std::minmax_element(frame.pulseRawValues.cbegin(), frame.pulseRawValues.cend());
+            minVal = *mn;
+            maxVal = *mx;
+        }
+
+        // reference_values → BLOB
+        QByteArray refBlob;
+        if (frame.hasPulseReference && !frame.pulseRefValues.isEmpty()) {
+            const int nRef = frame.pulseRefValues.size();
+            refBlob = QByteArray(reinterpret_cast<const char*>(frame.pulseRefValues.constData()),
+                                 nRef * static_cast<int>(sizeof(double)));
+        }
+
+        m_insertPulseEddyFrame.bindValue(0, static_cast<qint64>(frame.timestamp));
+        m_insertPulseEddyFrame.bindValue(1, static_cast<qint64>(frame.frameId));
+        m_insertPulseEddyFrame.bindValue(2, frame.pulseSampleCount > 0 ? frame.pulseSampleCount : nRaw);
+        m_insertPulseEddyFrame.bindValue(3, static_cast<double>(frame.pulseSampleRateHz));
+        m_insertPulseEddyFrame.bindValue(4, rawBlob.isEmpty() ? QVariant() : QVariant(rawBlob));
+        m_insertPulseEddyFrame.bindValue(5, frame.hasPulseReference ? 1 : 0);
+        m_insertPulseEddyFrame.bindValue(6, refBlob.isEmpty() ? QVariant() : QVariant(refBlob));
+        m_insertPulseEddyFrame.bindValue(7, std::isfinite(minVal) ? minVal : QVariant());
+        m_insertPulseEddyFrame.bindValue(8, std::isfinite(maxVal) ? maxVal : QVariant());
+        if (!m_insertPulseEddyFrame.exec()) {
+            qWarning() << "RealtimeSqlRecorder: insert pulse_eddy frame failed" << m_insertPulseEddyFrame.lastError();
+            return false;
         }
         return true;
     }
@@ -771,7 +847,8 @@ bool RealtimeSqlRecorder::ensureMagArrayFramesSchema(QSqlDatabase& db, QString* 
             "sensor_index INTEGER NOT NULL,"
             "x_mean REAL, y_mean REAL, z_mean REAL,"
             "x_latest REAL, y_latest REAL, z_latest REAL,"
-            "magnitude_mean REAL, magnitude_latest REAL"
+            "magnitude_mean REAL, magnitude_latest REAL,"
+            "processed_value_x REAL, processed_value_y REAL, processed_value_z REAL"
             ")"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_magarray_ts ON mag_array_frames(timestamp_unix_ms)"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_magarray_sensor ON mag_array_frames(sensor_index)"),
@@ -784,6 +861,55 @@ bool RealtimeSqlRecorder::ensureMagArrayFramesSchema(QSqlDatabase& db, QString* 
             }
             return false;
         }
+    }
+
+    // 兼容旧表：如果表已存在但缺少 processed_value 列，用 ALTER TABLE 补上
+    const QStringList alterCols{
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN processed_value_x REAL"),
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN processed_value_y REAL"),
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN processed_value_z REAL"),
+    };
+    for (const QString& sql : alterCols) {
+        q.exec(sql); // 列已存在时会失败，忽略错误
+    }
+    return true;
+}
+
+bool RealtimeSqlRecorder::ensurePulseEddyFramesSchema(QSqlDatabase& db, QString* errorMessage)
+{
+    const QStringList ddl{
+        QStringLiteral(
+            "CREATE TABLE IF NOT EXISTS pulse_eddy_frames ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "timestamp_unix_ms INTEGER NOT NULL,"
+            "frame_index INTEGER NOT NULL,"
+            "sample_count INTEGER NOT NULL DEFAULT 64000,"
+            "sample_rate_hz REAL,"
+            "raw_values BLOB,"
+            "has_reference INTEGER NOT NULL DEFAULT 0,"
+            "reference_values BLOB,"
+            "min_value REAL,"
+            "max_value REAL"
+            ")"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_pulse_eddy_ts ON pulse_eddy_frames(timestamp_unix_ms)"),
+        QStringLiteral("CREATE INDEX IF NOT EXISTS idx_pulse_eddy_frame ON pulse_eddy_frames(frame_index)"),
+    };
+    QSqlQuery q(db);
+    for (const QString& sql : ddl) {
+        if (!q.exec(sql)) {
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("pulse_eddy_frames DDL 失败: %1").arg(q.lastError().text());
+            }
+            return false;
+        }
+    }
+    // 兼容旧表：补上 min_value / max_value 列
+    const QStringList alterCols{
+        QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN min_value REAL"),
+        QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN max_value REAL"),
+    };
+    for (const QString& sql : alterCols) {
+        q.exec(sql);
     }
     return true;
 }

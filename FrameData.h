@@ -53,7 +53,8 @@ struct FrameData
         MultiChannelReal = 1,    // 多通道实数（如漏磁模式）
         MultiChannelComplex = 2, // 多通道复数（如涡流模式）
         MultiFreqEddy = 3,       // 多频涡流（频点阻抗）
-        MagArray = 4             // 漏磁检测（60 通道实数）
+        MagArray = 4,            // 漏磁检测（60 通道实数）
+        PulseEddy = 5            // 脉冲涡流（单通道 64k 采样点）
     } detectMode;
 
     // 通道数
@@ -91,6 +92,13 @@ struct FrameData
 
     // 漏磁检测：每帧 M 个传感器的 XYZ 概要数据
     QVector<MagSensorResult> magSensorResults;
+
+    // 脉冲涡流：每帧一条 ~64k 采样点的脉冲曲线 + 可选参考线
+    QVector<double> pulseRawValues;
+    QVector<double> pulseRefValues;
+    bool    hasPulseReference = false;
+    qint64  pulseSampleRateHz  = 0;
+    int     pulseSampleCount   = 0;
 
     FrameData() :
         timestamp(0),

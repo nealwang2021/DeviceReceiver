@@ -1,6 +1,8 @@
 #include "HistoryExportService.h"
 
 #include "SqlHistoryQuery.h"
+#include <QSqlDatabase>
+#include <QSqlQuery>
 
 #include <QByteArray>
 #include <QDateTime>
@@ -830,6 +832,160 @@ bool HistoryExportService::exportMultiFreqHdf5(
     emit progress(offset, offset);
     return true;
 }
+
+bool HistoryExportService::exportPulseEddyHdf5Impl(  // non-static, uses m_canceled/m_request
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    QFileInfo fi(filePath); QDir().mkpath(fi.absolutePath());
+    const int chunkRows = qMax(64, m_request.chunkSize);
+
+    hid_t fileId = H5Fcreate(filePath.toLocal8Bit().constData(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    if (fileId < 0) return false;
+    auto cleanup = [&]() { if (fileId >= 0) H5Fclose(fileId); };
+
+    hid_t fg = H5Gcreate2(fileId, "/frames", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t pg = H5Gcreate2(fileId, "/pulse",  H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (fg < 0 || pg < 0) { if (fg>=0) H5Gclose(fg); if (pg>=0) H5Gclose(pg); cleanup(); return false; }
+
+    hid_t dsTs  = createChunkedDataset1D(fg, "timestamp_ms_utc", H5T_STD_I64LE,  chunkRows);
+    hid_t dsFi  = createChunkedDataset1D(fg, "frame_index",      H5T_STD_I64LE,  chunkRows);
+    hid_t dsSc  = createChunkedDataset1D(fg, "sample_count",     H5T_STD_I32LE,  chunkRows);
+    hid_t dsSr  = createChunkedDataset1D(fg, "sample_rate_hz",   H5T_IEEE_F64LE, chunkRows);
+    hid_t dsMin = createChunkedDataset1D(fg, "min_value",        H5T_IEEE_F64LE, chunkRows);
+    hid_t dsMax = createChunkedDataset1D(fg, "max_value",        H5T_IEEE_F64LE, chunkRows);
+    hid_t dsRef = createChunkedDataset1D(fg, "has_reference",    H5T_STD_U8LE,   chunkRows);
+    H5Gclose(fg); H5Gclose(pg);
+    const hid_t mds[] = { dsTs, dsFi, dsSc, dsSr, dsMin, dsMax, dsRef };
+    for (hid_t d : mds) { if (d < 0) { for (hid_t dd : mds) if (dd>=0) H5Dclose(dd); cleanup(); return false; } }
+
+    writeInt32Attr(fileId, "schema_version", kSchemaVersion);
+    writeInt64Attr(fileId, "exported_at_ms", QDateTime::currentMSecsSinceEpoch());
+    writeInt64Attr(fileId, "range_start_ms", startMs);
+    writeInt64Attr(fileId, "range_end_ms",   endMs);
+    writeStringAttr(fileId, "source", QStringLiteral("pulse_eddy"));
+    writeStringAttr(fileId, "source_mode",
+        (mode == HistoryDataProvider::HistorySourceMode::SessionRealtime) ? QStringLiteral("SessionRealtime") : QStringLiteral("OfflineExternal"));
+
+    // 打开数据库读取 pulse_eddy_frames
+    QString adb = dbPath;
+    if (adb.isEmpty()) {
+        auto* h = HistoryDataProvider::instance();
+        if (!h || !h->isDatabaseOpen()) { for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
+        adb = h->currentDatabasePath();
+    }
+    QSqlDatabase sdb = QSqlDatabase::addDatabase("QSQLITE", "pe_h5_export");
+    sdb.setDatabaseName(adb);
+    if (!sdb.open()) { for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
+
+    QSqlQuery q(sdb);
+    q.prepare(QStringLiteral(
+        "SELECT timestamp_unix_ms, frame_index, sample_count, sample_rate_hz, "
+        "raw_values, has_reference, reference_values, min_value, max_value "
+        "FROM pulse_eddy_frames WHERE timestamp_unix_ms BETWEEN :s AND :e "
+        "ORDER BY timestamp_unix_ms ASC"));
+    q.bindValue(":s", startMs);
+    q.bindValue(":e", endMs);
+    if (!q.exec()) { for (hid_t d:mds) H5Dclose(d); sdb.close(); cleanup(); return false; }
+
+    struct Row { qint64 ts,fi; int sc; double sr; QByteArray raw; int hr; QByteArray ref; double mn,mx; };
+    QVector<Row> rows;
+    int nSamp = 64000;
+    while (q.next()) {
+        Row r;
+        r.ts  = q.value(0).toLongLong();
+        r.fi  = q.value(1).toLongLong();
+        r.sc  = q.value(2).toInt();
+        r.sr  = q.value(3).toDouble();
+        r.raw = q.value(4).toByteArray();
+        r.hr  = q.value(5).toInt();
+        r.ref = q.value(6).toByteArray();
+        r.mn  = q.value(7).isNull() ? qQNaN() : q.value(7).toDouble();
+        r.mx  = q.value(8).isNull() ? qQNaN() : q.value(8).toDouble();
+        rows.append(r);
+        if (nSamp == 64000 && r.sc > 0) nSamp = r.sc;
+    }
+    sdb.close();
+
+    const qint64 total = rows.size();
+    if (total == 0) { for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
+
+    // 创建 pulse 组 2D 数据集
+    fg = H5Gopen2(fileId, "/frames", H5P_DEFAULT);
+    pg = H5Gopen2(fileId, "/pulse",  H5P_DEFAULT);
+    hid_t dsRaw  = createChunkedDataset2D(pg, "raw_values",       H5T_IEEE_F64LE, chunkRows, nSamp);
+    hid_t dsRefV = createChunkedDataset2D(pg, "reference_values", H5T_IEEE_F64LE, chunkRows, nSamp);
+    H5Gclose(fg); H5Gclose(pg);
+    if (dsRaw < 0 || dsRefV < 0) {
+        if (dsRaw  >= 0) H5Dclose(dsRaw);
+        if (dsRefV >= 0) H5Dclose(dsRefV);
+        for (hid_t d:mds) H5Dclose(d);
+        cleanup(); return false;
+    }
+
+    emit progress(0, total);
+    qint64 off = 0;
+    while (off < total) {
+        if (m_canceled.loadRelaxed() == 1) {
+            H5Dclose(dsRaw); H5Dclose(dsRefV);
+            for (hid_t d:mds) H5Dclose(d);
+            cleanup(); return false;
+        }
+        const qint64 n = qMin((qint64)chunkRows, total - off);
+        QVector<qint64> bTs(n), bFi(n);
+        QVector<qint32> bSc(n);
+        QVector<double> bSr(n), bMn(n), bMx(n);
+        QVector<quint8> bHr(n);
+        QVector<double> bRaw(n * nSamp, qQNaN()), bRefV(n * nSamp, qQNaN());
+
+        for (qint64 i = 0; i < n; ++i) {
+            const Row& r = rows[off + i];
+            bTs[i]  = r.ts;
+            bFi[i]  = r.fi;
+            bSc[i]  = r.sc;
+            bSr[i]  = r.sr;
+            bMn[i]  = r.mn;
+            bMx[i]  = r.mx;
+            bHr[i]  = static_cast<quint8>(r.hr ? 1 : 0);
+
+            if (!r.raw.isEmpty()) {
+                const double* src = reinterpret_cast<const double*>(r.raw.constData());
+                int c = qMin(r.sc > 0 ? r.sc : nSamp, r.raw.size() / static_cast<int>(sizeof(double)));
+                std::copy(src, src + c, bRaw.data() + i * nSamp);
+            }
+            if (r.hr && !r.ref.isEmpty()) {
+                const double* src = reinterpret_cast<const double*>(r.ref.constData());
+                int c = qMin(nSamp, r.ref.size() / static_cast<int>(sizeof(double)));
+                std::copy(src, src + c, bRefV.data() + i * nSamp);
+            }
+        }
+
+        appendDataset1D(dsTs,  H5T_NATIVE_INT64,  off, n, bTs.constData());
+        appendDataset1D(dsFi,  H5T_NATIVE_INT64,  off, n, bFi.constData());
+        appendDataset1D(dsSc,  H5T_NATIVE_INT32,  off, n, bSc.constData());
+        appendDataset1D(dsSr,  H5T_NATIVE_DOUBLE, off, n, bSr.constData());
+        appendDataset1D(dsMin, H5T_NATIVE_DOUBLE, off, n, bMn.constData());
+        appendDataset1D(dsMax, H5T_NATIVE_DOUBLE, off, n, bMx.constData());
+        appendDataset1D(dsRef, H5T_NATIVE_UINT8,  off, n, bHr.constData());
+        appendDataset2D(dsRaw,  H5T_NATIVE_DOUBLE, off, n, nSamp, bRaw.constData());
+        appendDataset2D(dsRefV, H5T_NATIVE_DOUBLE, off, n, nSamp, bRefV.constData());
+
+        off += n;
+        emit progress(off, total);
+    }
+    H5Dclose(dsRaw); H5Dclose(dsRefV);
+    for (hid_t d : mds) H5Dclose(d);
+    cleanup();
+    emit progress(1, 1);
+    return true;
+}
+
+bool HistoryExportService::exportPulseEddyHdf5(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    return exportPulseEddyHdf5Impl(filePath, startMs, endMs, dbPath, mode);
+}
 #else
 bool HistoryExportService::exportHdf5(QString* errorMessage)
 {
@@ -838,6 +994,15 @@ bool HistoryExportService::exportHdf5(QString* errorMessage)
 }
 
 bool HistoryExportService::exportMultiFreqHdf5(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    Q_UNUSED(filePath); Q_UNUSED(startMs); Q_UNUSED(endMs);
+    Q_UNUSED(dbPath); Q_UNUSED(mode);
+    return false;
+}
+
+bool HistoryExportService::exportPulseEddyHdf5(
     const QString& filePath, qint64 startMs, qint64 endMs,
     const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
 {

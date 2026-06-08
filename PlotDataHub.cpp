@@ -124,6 +124,29 @@ QSharedPointer<const PlotSnapshot> PlotDataHub::appendFrames(const QVector<Frame
             continue; // MultiFreqEddy handled, skip per-channel logic below
         }
 
+        if (frame.detectMode == FrameData::PulseEddy) {
+            // 脉冲涡流：64k 数据点不聚合到 PlotSnapshot，仅设 mode 记时间戳
+            if (next->mode != FrameData::PulseEddy || next->timeMs.isEmpty()) {
+                next->mode = FrameData::PulseEddy;
+                next->channelCount = 0;
+                next->timeMs.clear();
+                next->realAmp.clear();
+                next->complexReal.clear();
+                next->complexImag.clear();
+                next->complexMag.clear();
+                next->complexPhase.clear();
+                next->mfFreqPointCount = 0;
+                next->mfImpedanceReal.clear();
+                next->mfImpedanceImag.clear();
+                next->mfImpedanceMag.clear();
+                next->mfImpedancePhase.clear();
+                next->mfNormImpedanceReal.clear();
+                next->mfNormImpedanceImag.clear();
+            }
+            next->timeMs.append(static_cast<double>(frame.timestamp));
+            continue;
+        }
+
         const int ch = qBound(0, static_cast<int>(frame.channelCount), 200);
         if (ch <= 0) {
             continue;

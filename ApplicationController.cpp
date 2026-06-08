@@ -5,6 +5,7 @@
 #include "GrpcReceiverBackend.h"
 #include "GrpcMultiFreqBackend.h"
 #include "GrpcMagArrayBackend.h"
+#include "GrpcPulseEddyBackend.h"
 #include "StageReceiverBackend.h"
 #include "PlotWindowBase.h"
 #include "PlotWindow.h"
@@ -41,9 +42,11 @@ PlotWindowManager::PlotType normalizeStoredPlotType(int v)
     case 7: return PlotWindowManager::PulsedDecayPlot;
     case 8: return PlotWindowManager::InspectionPlot;
     case 9: return PlotWindowManager::ArrayHeatmapPlot;
+    case 10: return PlotWindowManager::MagArrayPlot;
+    case 11: return PlotWindowManager::PulseEddyPlot;
     default: break;
     }
-    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::ArrayHeatmapPlot)) {
+    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::PulseEddyPlot)) {
         return static_cast<PlotWindowManager::PlotType>(v);
     }
     qWarning() << "ApplicationController: 无效的绘图类型序号" << v << "，回退为组合图";
@@ -273,7 +276,8 @@ void ApplicationController::start()
     m_isPaused = false;
     const bool isGrpcBackend = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0
                                 || m_config.backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0
-                                || m_config.backendType.compare("magarray", Qt::CaseInsensitive) == 0);
+                                || m_config.backendType.compare("magarray", Qt::CaseInsensitive) == 0
+                                || m_config.backendType.compare("pulseeddy", Qt::CaseInsensitive) == 0);
 
     if (isGrpcBackend) {
         if (auto* grpcBackend = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
@@ -535,6 +539,10 @@ bool ApplicationController::initReceiverBackend()
         auto* mag = new GrpcMagArrayBackend;
         mag->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
         m_serialReceiver.reset(mag);
+    } else if (backendType.compare("pulseeddy", Qt::CaseInsensitive) == 0) {
+        auto* pe = new GrpcPulseEddyBackend;
+        pe->setConnectTimeoutMs(m_config.grpcConnectTimeoutMs);
+        m_serialReceiver.reset(pe);
     } else {
         m_serialReceiver.reset(new SerialReceiver);
     }
@@ -572,6 +580,12 @@ bool ApplicationController::initReceiverBackend()
                          Qt::QueuedConnection);
     } else if (auto* magBackend = qobject_cast<GrpcMagArrayBackend*>(m_serialReceiver.get())) {
         QObject::connect(magBackend, &GrpcMagArrayBackend::connectAttemptFinished,
+                         this, &ApplicationController::handleGrpcConnectAttemptFinished,
+                         Qt::QueuedConnection);
+        // availableSerialPortsChanged → MainWindow 的连接在 connectReceiverToMainWindow() 中
+        // （此处 m_mainWindow 尚未创建，无法连接）
+    } else if (auto* peBackend = qobject_cast<GrpcPulseEddyBackend*>(m_serialReceiver.get())) {
+        QObject::connect(peBackend, &GrpcPulseEddyBackend::connectAttemptFinished,
                          this, &ApplicationController::handleGrpcConnectAttemptFinished,
                          Qt::QueuedConnection);
     }
@@ -728,6 +742,19 @@ void ApplicationController::connectReceiverToMainWindow()
                      m_mainWindow.get(), &MainWindow::updateConnectionStatus, Qt::QueuedConnection);
     QObject::connect(m_serialReceiver.get(), &IReceiverBackend::backendStatusChanged,
                      m_mainWindow.get(), &MainWindow::onBackendStatusChanged, Qt::QueuedConnection);
+
+    // 漏磁：ListSerialPorts 完成后通知 UI 填充串口列表
+    if (auto* magBackend = qobject_cast<GrpcMagArrayBackend*>(m_serialReceiver.get())) {
+        QObject::connect(magBackend, &GrpcMagArrayBackend::availableSerialPortsChanged,
+                         m_mainWindow.get(), &MainWindow::onMagArrayPortsDiscovered,
+                         Qt::QueuedConnection);
+    }
+    // 脉冲涡流：ListDevices 完成后通知 UI 填充设备列表
+    if (auto* peBackend = qobject_cast<GrpcPulseEddyBackend*>(m_serialReceiver.get())) {
+        QObject::connect(peBackend, &GrpcPulseEddyBackend::availableDevicesChanged,
+                         m_mainWindow.get(), &MainWindow::onPulseEddyDevicesDiscovered,
+                         Qt::QueuedConnection);
+    }
 }
 
 void ApplicationController::startGrpcBackendConnectAsync(const QString& endpoint)
@@ -757,9 +784,14 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
 
     if (connected) {
         qInfo() << "后端连接成功 grpc" << m_config.grpcEndpoint << detail;
-        QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
-                                  Qt::QueuedConnection,
-                                  Q_ARG(int, 100));
+        // 漏磁检测不自动开始采集：用户需先在界面选择设备串口与预处理参数
+        const bool isMagArray = (m_config.backendType.compare("magarray", Qt::CaseInsensitive) == 0);
+        const bool isPulseEddy = (m_config.backendType.compare("pulseeddy", Qt::CaseInsensitive) == 0);
+        if (!isMagArray && !isPulseEddy) {
+            QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
+                                      Qt::QueuedConnection,
+                                      Q_ARG(int, 100));
+        }
         if (m_plotWindowManager) {
             m_plotWindowManager->leaveStopGuard();
             m_plotWindowManager->startUpdates();
@@ -767,7 +799,7 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
         }
 
         m_isRunning = true;
-        setAcquisitionActive(true);
+        setAcquisitionActive((isMagArray || isPulseEddy) ? false : true);
         m_connectInProgress = false;
         emit connectionInProgressChanged(false);
         emit started(true);

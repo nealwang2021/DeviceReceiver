@@ -1,0 +1,124 @@
+﻿syntax = "proto3";
+
+option csharp_namespace = "PulseEddyGrpc";
+
+package pulseeddy;
+
+import "google/protobuf/empty.proto";
+
+service PulseEddy {
+  rpc ListDevices(google.protobuf.Empty) returns (ListDevicesResponse);
+
+  rpc OpenDevice(OpenDeviceRequest) returns (OperationReply);
+
+  rpc StartAcquisition(StartAcquisitionRequest) returns (OperationReply);
+
+  rpc StopAcquisition(google.protobuf.Empty) returns (OperationReply);
+
+  rpc CloseDevice(google.protobuf.Empty) returns (OperationReply);
+
+  rpc GetStatus(google.protobuf.Empty) returns (PulseStatus);
+
+  rpc GetLatestFrame(GetLatestFrameRequest) returns (PulseFrame);
+
+  rpc StreamFrames(StreamFramesRequest) returns (stream PulseFrame);
+
+  rpc StartReferenceCapture(StartReferenceCaptureRequest) returns (OperationReply);
+
+  rpc ClearReference(google.protobuf.Empty) returns (OperationReply);
+}
+
+message OperationReply {
+  bool success = 1;
+  string message = 2;
+}
+
+message DeviceInfo {
+  int32 index = 1;
+  string description = 2;
+  string serial_number = 3;
+  string device_type = 4;
+}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message OpenDeviceRequest {
+  int32 device_index = 1;
+  int32 baudrate = 2;
+}
+
+message StartAcquisitionRequest {
+  int32 device_index = 1;
+  int32 baudrate = 2;
+  bool clear_reference = 3;
+}
+
+message PulseStatus {
+  bool opened = 1;
+  bool running = 2;
+
+  string device_description = 3;
+  string serial_number = 4;
+  string last_error = 5;
+
+  int32 baudrate = 6;
+
+  int32 group = 7;
+  int32 channel_count = 8;
+  int32 sample_count_per_frame = 9;
+  double sample_rate_hz = 10;
+  string raw_data_type = 11;
+
+  bool device_use_trigger = 12;
+  uint32 device_trigger_len = 13;
+  bool force_continuous_mode = 14;
+
+  uint64 frame_index = 15;
+
+  int32 queue_max_position = 16;
+  int32 queue_capacity = 17;
+  int32 overrun_count = 18;
+
+  bool has_reference = 19;
+  bool reference_collecting = 20;
+  int32 reference_target_count = 21;
+  int32 reference_collected_count = 22;
+}
+
+message GetLatestFrameRequest {
+  bool include_reference = 1;
+}
+
+message StreamFramesRequest {
+  // 0 表示每产生一帧就推送。
+  double max_fps = 1;
+
+  bool include_reference = 2;
+}
+
+message StartReferenceCaptureRequest {
+  // 要取几条完整曲线求平均。
+  int32 frame_count = 1;
+}
+
+message PulseFrame {
+  uint64 frame_index = 1;
+  int64 timestamp_unix_ms = 2;
+
+  double sample_rate_hz = 3;
+  int32 sample_count = 4;
+
+  // 当前完整脉冲曲线，长度通常为 64000。
+  repeated double raw_values = 5;
+
+  bool has_reference = 6;
+
+  // 参考曲线，长度通常为 64000。
+  repeated double reference_values = 7;
+
+  bool reference_collecting = 8;
+  int32 reference_target_count = 9;
+  int32 reference_collected_count = 10;
+}

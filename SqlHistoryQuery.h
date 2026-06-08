@@ -84,6 +84,12 @@ public:
         double maxMagnitude = 0.0;
     };
 
+    struct PulseEddyEnvelopeBucket {
+        qint64 bucketStartMs = 0;
+        double minValue = 0.0;
+        double maxValue = 0.0;
+    };
+
     explicit SqlHistoryQuery(QObject* parent = nullptr);
     ~SqlHistoryQuery() override;
 
@@ -136,6 +142,9 @@ public:
         qint64 startMs, qint64 endMs, qint64 bucketMs);
 
     QVector<MagArrayEnvelopeBucket> queryMagArrayOverviewEnvelope(
+        qint64 startMs, qint64 endMs, qint64 bucketMs);
+
+    QVector<PulseEddyEnvelopeBucket> queryPulseEddyOverviewEnvelope(
         qint64 startMs, qint64 endMs, qint64 bucketMs);
 
     qint64 estimateMultiFreqRowCount(qint64 startMs, qint64 endMs);

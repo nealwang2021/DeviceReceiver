@@ -90,6 +90,10 @@ public:
     QVector<SqlHistoryQuery::MagArrayEnvelopeBucket> queryMagArrayOverviewEnvelope(
         qint64 startMs, qint64 endMs, qint64 bucketMs);
 
+    /// 脉冲涡流总览包络查询（透传 SqlHistoryQuery）。
+    QVector<SqlHistoryQuery::PulseEddyEnvelopeBucket> queryPulseEddyOverviewEnvelope(
+        qint64 startMs, qint64 endMs, qint64 bucketMs);
+
     /// 透传 SqlHistoryQuery::fetchRawChunk，供需要原始 40 通道数据的 UI（如阵列热力图）按 review 范围分块读。
     bool fetchRawChunk(qint64 startMs,
                        qint64 endMs,
