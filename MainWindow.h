@@ -99,6 +99,10 @@ public slots:
     void onConnectionProgressChanged(bool inProgress);
     /// 漏磁检测 ListSerialPorts 返回后填充设备串口下拉
     void onMagArrayPortsDiscovered(QStringList ports);
+    /// 阵列涡流 ListDevices 返回后填充设备下拉
+    void onGrpcDevicesDiscovered(QStringList devices);
+    /// 多频涡流 ListDevices 返回后填充设备下拉
+    void onMultiFreqDevicesDiscovered(QStringList devices);
     /// 脉冲涡流 ListDevices 返回后填充设备下拉
     void onPulseEddyDevicesDiscovered(QStringList devices);
 
@@ -400,6 +404,13 @@ private:
     // 脉冲涡流：设备选择（ListDevices 返回）
     QGroupBox* m_pulseEddyDeviceGroup = nullptr;
     QComboBox* m_pulseEddyDeviceCombo = nullptr;
+
+    // 阵列涡流：设备选择（ListDevices 返回）
+    QGroupBox* m_grpcDeviceGroup = nullptr;
+    QComboBox* m_grpcDeviceCombo = nullptr;
+    // 多频涡流：设备选择（ListDevices 返回）
+    QGroupBox* m_multiFreqDeviceGroup = nullptr;
+    QComboBox* m_multiFreqDeviceCombo = nullptr;
 
     // 设备状态面板
     QGroupBox* m_deviceStatusGroup = nullptr;

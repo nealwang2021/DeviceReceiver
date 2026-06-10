@@ -54,6 +54,8 @@ public slots:
 
 signals:
     void connectAttemptFinished(bool connected, const QString& detail);
+    /// ListDevices 完成后发射，用于 UI 填充设备下拉列表
+    void availableDevicesChanged(QStringList devices);
 
 private slots:
     void onMockTick();
@@ -70,6 +72,7 @@ private:
     bool shouldEmitRealtimePacket(qint64 timestampMs);
 
     QString m_endpoint;
+    QStringList m_availableDevices;  // ListDevices 返回的设备列表
     int     m_acquisitionIntervalMs = 100;
     int     m_connectTimeoutMs = 6000;
 

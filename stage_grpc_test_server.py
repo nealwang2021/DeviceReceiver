@@ -158,6 +158,7 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
     def PositionStream(self, request, context):
         interval_ms = max(10, request.intervalMs)
         print(f"[PositionStream] interval_ms={interval_ms}")
+        last_print = 0.0
         try:
             while context.is_active():
                 t0 = time.monotonic()
@@ -172,12 +173,23 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
                         self._x += self._jog_vx * dt
                         self._y += self._jog_vy * dt
                         self._z += self._jog_vz * dt
-                    elif self._serpentine_demo and not self._user_xy_locked:
+                    elif self._scan_running and not self._user_xy_locked:
+                        # 仅在扫描模式下自动弓字形走位，默认静止
                         sx, sy = _serpentine_xy_from_cell_index(self._serp_cell_index)
                         self._serp_cell_index += 1
                         self._x = sx
                         self._y = sy
                     reply = _fill_positions(self._x, self._y, self._z)
+
+                    # 扫描模式下每秒打印一次实时位置
+                    if self._scan_running and t0 - last_print >= 1.0:
+                        last_print = t0
+                        nx, ny = _serpentine_grid_dims()
+                        total = nx * ny
+                        prog = self._serp_cell_index
+                        print(f"[ScanPos] X={self._x:.1f} Y={self._y:.1f} Z={self._z:.1f}  "
+                              f"进度={prog}/{total} ({100.0*prog/total:.1f}%)")
+
                 yield reply
                 elapsed = time.monotonic() - t0
                 sleep_s = max(0.0, interval_ms / 1000.0 - elapsed)
@@ -249,12 +261,36 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
         with self._lock:
             self._scan_running = True
             self._scan_detail = detail
+            # 将扫描参数覆盖弓字形演示参数，使 PositionStream 按扫描范围走位
+            global SERP_X_MIN_MM, SERP_X_MAX_MM, SERP_Y_MIN_MM, SERP_Y_MAX_MM
+            global SERP_X_STEP_MM, SERP_Y_STEP_MM
+            SERP_X_MIN_MM = request.xs
+            SERP_X_MAX_MM = request.xe
+            SERP_Y_MIN_MM = request.ys
+            SERP_Y_MAX_MM = request.ye
+            step = max(0.1, request.yStep)
+            SERP_X_STEP_MM = step
+            SERP_Y_STEP_MM = step
+            # 重置蛇形走位起点
+            self._serp_cell_index = 0
+            self._user_xy_locked = False
+            # Z 轴固定到扫描平面
+            self._z = request.zFix
         print(f"[StartScan] {detail}")
         return stage_pb2.Result(ok=True, message="scan started (simulated): " + detail)
 
     def StopScan(self, request, context):
         with self._lock:
             self._scan_running = False
+            # 恢复默认演示范围
+            global SERP_X_MIN_MM, SERP_X_MAX_MM, SERP_Y_MIN_MM, SERP_Y_MAX_MM
+            global SERP_X_STEP_MM, SERP_Y_STEP_MM
+            SERP_X_MIN_MM = 0.0
+            SERP_X_MAX_MM = 1000.0
+            SERP_Y_MIN_MM = 0.0
+            SERP_Y_MAX_MM = 1000.0
+            SERP_X_STEP_MM = 10.0
+            SERP_Y_STEP_MM = 10.0
         print("[StopScan]")
         return stage_pb2.Result(ok=True, message="scan stopped (simulated)")
 

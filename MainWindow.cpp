@@ -654,9 +654,29 @@ void MainWindow::initUI()
         peDevLayout->addRow(QStringLiteral("设备:"), m_pulseEddyDeviceCombo);
         m_pulseEddyDeviceGroup->setVisible(false);
 
+        // 阵列涡流：设备选择（ListDevices 返回后填充）
+        m_grpcDeviceGroup = new QGroupBox(QStringLiteral("阵列涡流设备"));
+        auto* grpcDevLay = new QFormLayout(m_grpcDeviceGroup);
+        m_grpcDeviceCombo = new QComboBox(m_grpcDeviceGroup);
+        connect(m_grpcDeviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this]() { saveConfigFromUI(); });
+        grpcDevLay->addRow(QStringLiteral("设备:"), m_grpcDeviceCombo);
+        m_grpcDeviceGroup->setVisible(false);
+
+        // 多频涡流：设备选择（ListDevices 返回后填充）
+        m_multiFreqDeviceGroup = new QGroupBox(QStringLiteral("多频涡流设备"));
+        auto* mfDevLay = new QFormLayout(m_multiFreqDeviceGroup);
+        m_multiFreqDeviceCombo = new QComboBox(m_multiFreqDeviceGroup);
+        connect(m_multiFreqDeviceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                this, [this]() { saveConfigFromUI(); });
+        mfDevLay->addRow(QStringLiteral("设备:"), m_multiFreqDeviceCombo);
+        m_multiFreqDeviceGroup->setVisible(false);
+
         deviceLayout->addWidget(serialGroup);
         deviceLayout->addWidget(m_grpcParamGroup);
         deviceLayout->addWidget(m_magArrayPortGroup);
+        deviceLayout->addWidget(m_grpcDeviceGroup);
+        deviceLayout->addWidget(m_multiFreqDeviceGroup);
         deviceLayout->addWidget(m_pulseEddyDeviceGroup);
         deviceLayout->addWidget(controlGroup);
         deviceLayout->addWidget(m_deviceStatusGroup);
@@ -1162,9 +1182,12 @@ void MainWindow::initUI()
         QFormLayout* createLayout = new QFormLayout(createGroup);
         
         m_windowTypeCombo = new QComboBox();
-        m_windowTypeCombo->addItems({QStringLiteral("组合图"), QStringLiteral("热力图"), QStringLiteral("阵列图"),
-                                     QStringLiteral("脉冲衰减"), QStringLiteral("阵列热力图"),
-                                     QStringLiteral("漏磁检测"), QStringLiteral("脉冲涡流")});
+        m_windowTypeCombo->addItems({QStringLiteral("多频组合图"),
+                                     QStringLiteral("多频台位热力图"),
+                                     QStringLiteral("阵列图"),
+                                     QStringLiteral("阵列热力图"),
+                                     QStringLiteral("漏磁检测"), 
+                                     QStringLiteral("脉冲涡流")});
         m_createWindowButton = new QPushButton("新建窗口");
         
         createLayout->addRow("窗口类型:", m_windowTypeCombo);
@@ -1741,6 +1764,22 @@ void MainWindow::saveConfigFromUI()
         }
     }
 
+    // 保存阵列涡流设备选择
+    if (m_grpcDeviceCombo && m_grpcDeviceCombo->count() > 0) {
+        const QString text = m_grpcDeviceCombo->currentText().trimmed();
+        // 从 "xxx (ID:device-1)" 中提取 device_id
+        const int idStart = text.indexOf("ID:");
+        if (idStart >= 0) {
+            const QString devId = text.mid(idStart + 3).remove(')').trimmed();
+            if (!devId.isEmpty()) setConfigValue("Grpc/DeviceId", devId);
+        }
+    }
+
+    // 保存多频涡流设备选择
+    if (m_multiFreqDeviceCombo && m_multiFreqDeviceCombo->count() > 0) {
+        setConfigValue("MultiFreq/DeviceIndex", m_multiFreqDeviceCombo->currentIndex());
+    }
+
     // 保存脉冲涡流设备选择
     if (m_pulseEddyDeviceCombo && m_pulseEddyDeviceCombo->count() > 0) {
         const QString text = m_pulseEddyDeviceCombo->currentText().trimmed();
@@ -1934,9 +1973,10 @@ void MainWindow::restoreSavedPlotWindowsFromConfig()
         case 9: return PlotWindowManager::ArrayHeatmapPlot;
         case 10: return PlotWindowManager::MagArrayPlot;
         case 11: return PlotWindowManager::PulseEddyPlot;
+        case 12: return PlotWindowManager::MultiFreqStageHeatmapPlot;
         default: break;
         }
-        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::PulseEddyPlot)) {
+        if (v >= 0 && v <= static_cast<int>(PlotWindowManager::MultiFreqStageHeatmapPlot)) {
             return static_cast<PlotWindowManager::PlotType>(v);
         }
         return PlotWindowManager::CombinedPlot;
@@ -2996,6 +3036,10 @@ void MainWindow::onBackendTypeChanged(int index)
     m_grpcEndpointEdit->setEnabled(isGrpcLike);
     if (m_magArrayPortGroup)
         m_magArrayPortGroup->setVisible(isMagArray);
+    if (m_grpcDeviceGroup)
+        m_grpcDeviceGroup->setVisible(isGrpc);
+    if (m_multiFreqDeviceGroup)
+        m_multiFreqDeviceGroup->setVisible(isMultiFreq);
     if (m_pulseEddyDeviceGroup)
         m_pulseEddyDeviceGroup->setVisible(isPulseEddy);
 
@@ -3449,12 +3493,11 @@ void MainWindow::onCreateWindowClicked()
     
     switch (typeIndex) {
     case 0: type = PlotWindowManager::CombinedPlot; break;
-    case 1: type = PlotWindowManager::HeatmapPlot; break;
+    case 1: type = PlotWindowManager::MultiFreqStageHeatmapPlot; break;
     case 2: type = PlotWindowManager::ArrayPlot; break;
-    case 3: type = PlotWindowManager::PulsedDecayPlot; break;
-    case 4: type = PlotWindowManager::ArrayHeatmapPlot; break;
-    case 5: type = PlotWindowManager::MagArrayPlot; break;
-    case 6: type = PlotWindowManager::PulseEddyPlot; break;
+    case 3: type = PlotWindowManager::ArrayHeatmapPlot; break;
+    case 4: type = PlotWindowManager::MagArrayPlot; break;
+    case 5: type = PlotWindowManager::PulseEddyPlot; break;
     default:
         qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
         type = PlotWindowManager::CombinedPlot;
@@ -3631,6 +3674,39 @@ void MainWindow::onMagArrayPortsDiscovered(QStringList ports)
             const int idx = m_magArrayPortCombo->findText(savedPort);
             if (idx >= 0) m_magArrayPortCombo->setCurrentIndex(idx);
         }
+    }
+}
+
+void MainWindow::onGrpcDevicesDiscovered(QStringList devices)
+{
+    if (!m_grpcDeviceCombo) return;
+    m_grpcDeviceCombo->clear();
+    m_grpcDeviceCombo->addItems(devices);
+    {
+        QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+        const QString saved = settings.value("Grpc/DeviceId").toString();
+        if (!saved.isEmpty()) {
+            // 在设备标签中查找匹配的 device_id
+            for (int i = 0; i < m_grpcDeviceCombo->count(); ++i) {
+                if (m_grpcDeviceCombo->itemText(i).contains("ID:" + saved)) {
+                    m_grpcDeviceCombo->setCurrentIndex(i);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void MainWindow::onMultiFreqDevicesDiscovered(QStringList devices)
+{
+    if (!m_multiFreqDeviceCombo) return;
+    m_multiFreqDeviceCombo->clear();
+    m_multiFreqDeviceCombo->addItems(devices);
+    {
+        QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+        const int idx = settings.value("MultiFreq/DeviceIndex", QVariant(0)).toInt();
+        if (idx >= 0 && idx < m_multiFreqDeviceCombo->count())
+            m_multiFreqDeviceCombo->setCurrentIndex(idx);
     }
 }
 

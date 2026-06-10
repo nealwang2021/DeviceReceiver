@@ -321,8 +321,9 @@ private:
             "INSERT INTO multifreq_frames(timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
             "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
             "normalized_impedance_real, normalized_impedance_imag, "
-            "voltage_magnitude, current_magnitude, valid) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
+            "voltage_magnitude, current_magnitude, valid, "
+            "has_stage_pose, stage_x_mm, stage_y_mm, stage_z_mm) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
         if (!m_insertMultiFreqFrame.prepare(sqlMf)) {
             qWarning() << "RealtimeSqlRecorder: prepare insert multifreq_frames failed" << m_insertMultiFreqFrame.lastError();
             return false;
@@ -605,6 +606,10 @@ private:
             m_insertMultiFreqFrame.bindValue(10, pt.voltageMagnitude);
             m_insertMultiFreqFrame.bindValue(11, pt.currentMagnitude);
             m_insertMultiFreqFrame.bindValue(12, pt.valid ? 1 : 0);
+            m_insertMultiFreqFrame.bindValue(13, frame.hasStagePose ? 1 : 0);
+            m_insertMultiFreqFrame.bindValue(14, frame.hasStagePose ? frame.stageXMm : QVariant());
+            m_insertMultiFreqFrame.bindValue(15, frame.hasStagePose ? frame.stageYMm : QVariant());
+            m_insertMultiFreqFrame.bindValue(16, frame.hasStagePose ? frame.stageZMm : QVariant());
             if (!m_insertMultiFreqFrame.exec()) {
                 qWarning() << "RealtimeSqlRecorder: insert multifreq frame failed" << m_insertMultiFreqFrame.lastError();
                 return false;
@@ -818,7 +823,11 @@ bool RealtimeSqlRecorder::ensureMultiFreqFramesSchema(QSqlDatabase& db, QString*
             "normalized_impedance_imag REAL,"
             "voltage_magnitude REAL,"
             "current_magnitude REAL,"
-            "valid INTEGER DEFAULT 1"
+            "valid INTEGER DEFAULT 1,"
+            "has_stage_pose INTEGER DEFAULT 0,"
+            "stage_x_mm REAL,"
+            "stage_y_mm REAL,"
+            "stage_z_mm REAL"
             ")"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_multifreq_timestamp ON multifreq_frames(timestamp_unix_ms)"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_multifreq_frame ON multifreq_frames(frame_index)"),
@@ -833,6 +842,13 @@ bool RealtimeSqlRecorder::ensureMultiFreqFramesSchema(QSqlDatabase& db, QString*
             return false;
         }
     }
+    const QStringList mfAlter{
+        QStringLiteral("ALTER TABLE multifreq_frames ADD COLUMN has_stage_pose INTEGER DEFAULT 0"),
+        QStringLiteral("ALTER TABLE multifreq_frames ADD COLUMN stage_x_mm REAL"),
+        QStringLiteral("ALTER TABLE multifreq_frames ADD COLUMN stage_y_mm REAL"),
+        QStringLiteral("ALTER TABLE multifreq_frames ADD COLUMN stage_z_mm REAL"),
+    };
+    for (const QString& sql : mfAlter) { q.exec(sql); }
     return true;
 }
 
@@ -848,7 +864,9 @@ bool RealtimeSqlRecorder::ensureMagArrayFramesSchema(QSqlDatabase& db, QString* 
             "x_mean REAL, y_mean REAL, z_mean REAL,"
             "x_latest REAL, y_latest REAL, z_latest REAL,"
             "magnitude_mean REAL, magnitude_latest REAL,"
-            "processed_value_x REAL, processed_value_y REAL, processed_value_z REAL"
+            "processed_value_x REAL, processed_value_y REAL, processed_value_z REAL,"
+            "has_stage_pose INTEGER DEFAULT 0,"
+            "stage_x_mm REAL, stage_y_mm REAL, stage_z_mm REAL"
             ")"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_magarray_ts ON mag_array_frames(timestamp_unix_ms)"),
         QStringLiteral("CREATE INDEX IF NOT EXISTS idx_magarray_sensor ON mag_array_frames(sensor_index)"),
@@ -868,6 +886,10 @@ bool RealtimeSqlRecorder::ensureMagArrayFramesSchema(QSqlDatabase& db, QString* 
         QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN processed_value_x REAL"),
         QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN processed_value_y REAL"),
         QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN processed_value_z REAL"),
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN has_stage_pose INTEGER DEFAULT 0"),
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN stage_x_mm REAL"),
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN stage_y_mm REAL"),
+        QStringLiteral("ALTER TABLE mag_array_frames ADD COLUMN stage_z_mm REAL"),
     };
     for (const QString& sql : alterCols) {
         q.exec(sql); // 列已存在时会失败，忽略错误
@@ -907,6 +929,10 @@ bool RealtimeSqlRecorder::ensurePulseEddyFramesSchema(QSqlDatabase& db, QString*
     const QStringList alterCols{
         QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN min_value REAL"),
         QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN max_value REAL"),
+        QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN has_stage_pose INTEGER DEFAULT 0"),
+        QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN stage_x_mm REAL"),
+        QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN stage_y_mm REAL"),
+        QStringLiteral("ALTER TABLE pulse_eddy_frames ADD COLUMN stage_z_mm REAL"),
     };
     for (const QString& sql : alterCols) {
         q.exec(sql);

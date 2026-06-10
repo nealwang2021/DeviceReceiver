@@ -57,6 +57,8 @@ public slots:
 signals:
     /// connectBackend 完成后发射，用于 UI 线程异步衔接后续流程
     void connectAttemptFinished(bool connected, const QString& detail);
+    /// ListDevices 完成后发射，用于 UI 填充设备下拉列表
+    void availableDevicesChanged(QStringList devices);
 
 private slots:
     void onMockTick();          ///< Mock 模式：定时生成帧
@@ -77,6 +79,8 @@ private:
 
     // -------- 配置 --------
     QString m_endpoint;
+    QStringList m_availableDevices; // ListDevices 返回的设备 display_name 列表
+    QStringList m_deviceIds;        // 对应的 device_id 列表
     int     m_acquisitionIntervalMs = 100;
     int     m_connectTimeoutMs = 6000;
     int     m_shutdownConnectTimeoutMs = 800;

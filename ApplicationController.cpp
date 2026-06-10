@@ -44,9 +44,10 @@ PlotWindowManager::PlotType normalizeStoredPlotType(int v)
     case 9: return PlotWindowManager::ArrayHeatmapPlot;
     case 10: return PlotWindowManager::MagArrayPlot;
     case 11: return PlotWindowManager::PulseEddyPlot;
+    case 12: return PlotWindowManager::MultiFreqStageHeatmapPlot;
     default: break;
     }
-    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::PulseEddyPlot)) {
+    if (v >= 0 && v <= static_cast<int>(PlotWindowManager::MultiFreqStageHeatmapPlot)) {
         return static_cast<PlotWindowManager::PlotType>(v);
     }
     qWarning() << "ApplicationController: 无效的绘图类型序号" << v << "，回退为组合图";
@@ -561,12 +562,22 @@ bool ApplicationController::initReceiverBackend()
                          if (!m_cacheManager) {
                              return;
                          }
-                         if (m_realtimeRecorder) {
-                             m_realtimeRecorder->enqueueFrame(frame);
-                         }
+                         // 先附加三轴台位再分发（DB 和缓存都需要台位信息）
                          FrameData copy = frame;
-                         // 附加最近一次三轴台位（mm + pulse）；与 DUT 时间戳可能不同，见 FrameData 注释
                          m_stagePoseLatch.applyToFrame(copy);
+                         // 诊断日志：多频涡流帧附加台位情况（每 50 帧打一次）
+                         if (copy.detectMode == FrameData::MultiFreqEddy) {
+                             static int diagCnt = 0;
+                             if (++diagCnt % 50 == 1) {
+                                 qInfo() << "[StageLatch] MultiFreq frame#" << copy.frameId
+                                         << "hasStagePose=" << copy.hasStagePose
+                                         << "stageXY=(" << copy.stageXMm << "," << copy.stageYMm << ")"
+                                         << "mfFreqPoints=" << copy.mfFreqPoints.size();
+                             }
+                         }
+                         if (m_realtimeRecorder) {
+                             m_realtimeRecorder->enqueueFrame(copy);
+                         }
                          m_cacheManager->addFrame(copy);
                      }, Qt::DirectConnection);
 
@@ -749,6 +760,18 @@ void ApplicationController::connectReceiverToMainWindow()
                          m_mainWindow.get(), &MainWindow::onMagArrayPortsDiscovered,
                          Qt::QueuedConnection);
     }
+    // 阵列涡流：ListDevices 完成后通知 UI 填充设备列表
+    if (auto* grpcB = qobject_cast<GrpcReceiverBackend*>(m_serialReceiver.get())) {
+        QObject::connect(grpcB, &GrpcReceiverBackend::availableDevicesChanged,
+                         m_mainWindow.get(), &MainWindow::onGrpcDevicesDiscovered,
+                         Qt::QueuedConnection);
+    }
+    // 多频涡流：ListDevices 完成后通知 UI 填充设备列表
+    if (auto* mfB = qobject_cast<GrpcMultiFreqBackend*>(m_serialReceiver.get())) {
+        QObject::connect(mfB, &GrpcMultiFreqBackend::availableDevicesChanged,
+                         m_mainWindow.get(), &MainWindow::onMultiFreqDevicesDiscovered,
+                         Qt::QueuedConnection);
+    }
     // 脉冲涡流：ListDevices 完成后通知 UI 填充设备列表
     if (auto* peBackend = qobject_cast<GrpcPulseEddyBackend*>(m_serialReceiver.get())) {
         QObject::connect(peBackend, &GrpcPulseEddyBackend::availableDevicesChanged,
@@ -787,7 +810,10 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
         // 漏磁检测不自动开始采集：用户需先在界面选择设备串口与预处理参数
         const bool isMagArray = (m_config.backendType.compare("magarray", Qt::CaseInsensitive) == 0);
         const bool isPulseEddy = (m_config.backendType.compare("pulseeddy", Qt::CaseInsensitive) == 0);
-        if (!isMagArray && !isPulseEddy) {
+        const bool isGrpc   = (m_config.backendType.compare("grpc", Qt::CaseInsensitive) == 0);
+        const bool isMultiFreq = (m_config.backendType.compare("multifreq-grpc", Qt::CaseInsensitive) == 0);
+        const bool skipAutoStart = isMagArray || isPulseEddy || isGrpc || isMultiFreq;
+        if (!skipAutoStart) {
             QMetaObject::invokeMethod(m_serialReceiver.get(), "startAcquisition",
                                       Qt::QueuedConnection,
                                       Q_ARG(int, 100));
@@ -799,7 +825,7 @@ void ApplicationController::handleGrpcConnectAttemptFinished(bool connected, con
         }
 
         m_isRunning = true;
-        setAcquisitionActive((isMagArray || isPulseEddy) ? false : true);
+        setAcquisitionActive(skipAutoStart ? false : true);
         m_connectInProgress = false;
         emit connectionInProgressChanged(false);
         emit started(true);

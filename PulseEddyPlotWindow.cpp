@@ -173,7 +173,7 @@ void PulseEddyPlotWindow::onDataUpdated(const QVector<FrameData>& frames)
         m_plot->graph(1)->setVisible(false);
     }
 
-    m_plot->xAxis->rescale(true);
+    m_plot->xAxis->setRange(0, 65000);
     applyYAxisMode();
     m_plot->replot(QCustomPlot::rpQueuedReplot);
 

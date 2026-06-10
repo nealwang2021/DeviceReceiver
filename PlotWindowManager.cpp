@@ -9,6 +9,7 @@
 #include "InspectionPlotWindow.h"
 #include "MagArrayWindow.h"
 #include "PulseEddyPlotWindow.h"
+#include "MultiFreqStageHeatmapWindow.h"
 #include "DataCacheManager.h"
 #include "AppConfig.h"
 #include "PlotDataHub.h"
@@ -169,6 +170,10 @@ PlotWindowBase* PlotWindowManager::createWindow(PlotType type, QWidget* parent)
     case PulseEddyPlot:
         window = new PulseEddyPlotWindow(parent);
         title = QStringLiteral("脉冲涡流");
+        break;
+    case MultiFreqStageHeatmapPlot:
+        window = new MultiFreqStageHeatmapWindow(parent);
+        title = QStringLiteral("多频台位热力图");
         break;
     default:
         qWarning() << "PlotWindowManager::createWindow 未知类型，回退组合图, type=" << static_cast<int>(type);

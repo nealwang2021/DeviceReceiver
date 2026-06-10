@@ -3,6 +3,7 @@
 #include "AppConfig.h"
 #include "FrameData.h"
 #include "GrpcEndpointUtils.h"
+#include <QSettings>
 
 #include <QAbstractSocket>
 #include <QCoreApplication>
@@ -199,6 +200,14 @@ bool GrpcMultiFreqBackend::connectBackend(const QString& endpoint)
             return false;
         }
         const int devCount = listResp.devices_size();
+        // 保存设备列表并通知 UI
+        m_availableDevices.clear();
+        for (int i = 0; i < devCount; ++i) {
+            const auto& d = listResp.devices(i);
+            m_availableDevices.append(QString::fromStdString(d.description() + " (SN:" + d.serial_number() + ")"));
+        }
+        qInfo() << "[MultiFreq] ListDevices 完成, 数量=" << devCount << "列表=" << m_availableDevices;
+        emit availableDevicesChanged(m_availableDevices);
         emitBackendStatus(QStringLiteral("多频涡流已连接"),
                           QStringLiteral("%1，设备数 %2").arg(connectedTarget).arg(devCount));
         emitDeviceStatus();
@@ -443,9 +452,15 @@ void GrpcMultiFreqBackend::streamLoop(int intervalMs)
     // 先调用 StartDetection，传入多频参数
     {
         const auto* cfg = AppConfig::instance();
+        // 从配置读取用户选择的设备索引，默认 0
+        int devIdx = 0;
+        {
+            QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+            devIdx = settings.value("MultiFreq/DeviceIndex", QVariant(0)).toInt();
+        }
         multifreqeddy::StartDetectionRequest detReq;
         detReq.set_device_serial_number("");
-        detReq.set_device_index(0);
+        detReq.set_device_index(qMax(0, devIdx));
         auto* detCfg = detReq.mutable_config();
         if (cfg) {
             detCfg->set_base_frequency(static_cast<multifreqeddy::BaseFrequency>(cfg->multiFreqBaseFrequencyHz()));

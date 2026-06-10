@@ -29,7 +29,8 @@ public:
         InspectionPlot,
         ArrayHeatmapPlot = 9,
         MagArrayPlot = 10,
-        PulseEddyPlot = 11
+        PulseEddyPlot = 11,
+        MultiFreqStageHeatmapPlot = 12
     };
 
     static PlotWindowManager* instance();

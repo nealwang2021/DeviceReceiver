@@ -84,6 +84,7 @@ set(SOURCE_FILES
     PlotWindow.cpp
     MagArrayWindow.cpp
     PulseEddyPlotWindow.cpp
+    MultiFreqStageHeatmapWindow.cpp
     PlotWindowBase.cpp
     HeatMapPlotWindow.cpp
     ArrayPlotWindow.cpp
@@ -126,6 +127,7 @@ set(HEADER_FILES
     PlotWindow.h
     MagArrayWindow.h
     PulseEddyPlotWindow.h
+    MultiFreqStageHeatmapWindow.h
     PlotWindowBase.h
     HeatMapPlotWindow.h
     ArrayPlotWindow.h

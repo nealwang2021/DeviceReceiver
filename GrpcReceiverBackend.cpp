@@ -1,8 +1,10 @@
 #include "GrpcReceiverBackend.h"
+#include "AppConfig.h"
 #include "GrpcEndpointUtils.h"
 
 #include <QDateTime>
 #include <QJsonDocument>
+#include <QSettings>
 #include <QJsonObject>
 #include <QMetaObject>
 #include <QRandomGenerator>
@@ -246,7 +248,7 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
     // 创建强类型 Stub（每次连接时重建）
     m_stub = xiaoche::device::AcquisitionDevice::NewStub(m_channel);
 
-    // 新协议通常需要先打开设备：自动选择第一个设备进行 Open
+    // ListDevices → 通知 UI 选择设备（不再自动 OpenDevice，交由 startAcquisition 处理）
     {
         google::protobuf::Empty emptyReq;
         xiaoche::device::ListDevicesReply listReply;
@@ -254,23 +256,24 @@ bool GrpcReceiverBackend::connectBackend(const QString& endpoint)
         listCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
         const grpc::Status listStatus = m_stub->ListDevices(&listCtx, emptyReq, &listReply);
 
-        if (listStatus.ok() && listReply.devices_size() > 0) {
-            xiaoche::device::OpenDeviceRequest openReq;
-            openReq.set_device_id(listReply.devices(0).device_id());
-            xiaoche::device::CommandReply openReply;
-            grpc::ClientContext openCtx;
-            openCtx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
-            const grpc::Status openStatus = m_stub->OpenDevice(&openCtx, openReq, &openReply);
-
-            if (!openStatus.ok() || !openReply.ok()) {
-                emitBackendStatus("openDeviceWarning",
-                    QString("设备打开失败（将继续尝试订阅）: %1")
-                        .arg(openStatus.ok() ? QString::fromStdString(openReply.message())
-                                             : QString::fromStdString(openStatus.error_message())));
+        m_availableDevices.clear();
+        m_deviceIds.clear();
+        if (listStatus.ok()) {
+            for (int i = 0; i < listReply.devices_size(); ++i) {
+                const auto& d = listReply.devices(i);
+                const QString label = QStringLiteral("%1 (ID:%2)")
+                    .arg(QString::fromStdString(d.display_name()),
+                         QString::fromStdString(d.device_id()));
+                m_availableDevices.append(label);
+                m_deviceIds.append(QString::fromStdString(d.device_id()));
             }
-        } else if (!listStatus.ok()) {
+        }
+        if (!m_availableDevices.isEmpty()) {
+            emit availableDevicesChanged(m_availableDevices);
+        }
+        if (!listStatus.ok()) {
             emitBackendStatus("listDevicesWarning",
-                QString("设备列表获取失败（将继续尝试订阅）: [%1] %2")
+                QString("设备列表获取失败: [%1] %2")
                     .arg(listStatus.error_code())
                     .arg(QString::fromStdString(listStatus.error_message())));
         }
@@ -728,10 +731,18 @@ void GrpcReceiverBackend::streamLoop(int intervalMs)
             }
         }
 
-        // 只要服务端给出设备列表，就始终执行一次 OpenDevice（对齐脚本，避免会话未绑定）
+        // 从配置读取用户选择的设备 ID，未选择则使用第一个
+        QString selectedDeviceId;
+        {
+            QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+            selectedDeviceId = settings.value("Grpc/DeviceId").toString();
+        }
         if (hasDevice) {
             xiaoche::device::OpenDeviceRequest openReq;
-            openReq.set_device_id(listReply.devices(0).device_id());
+            const QString devId = selectedDeviceId.isEmpty()
+                ? QString::fromStdString(listReply.devices(0).device_id())
+                : selectedDeviceId;
+            openReq.set_device_id(devId.toStdString());
             xiaoche::device::CommandReply openReply;
             const grpc::Status openStatus = runCancelableCall(1200, [this, &openReq, &openReply](grpc::ClientContext& openCtx) {
                 return m_stub->OpenDevice(&openCtx, openReq, &openReply);
