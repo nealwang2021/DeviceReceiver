@@ -63,6 +63,8 @@ ArrayRgbHeatmapWindow::ArrayRgbHeatmapWindow(QWidget* parent)
 {
     setWindowTitle(QStringLiteral("阵列热力图"));
     resize(1400, 900);
+    // 防止底部 dock（历史总览等）打开时 MDI 区域被挤压导致内容裁剪
+    setMinimumSize(500, 650);
     initUi();
 
     auto* sel = SelectionState::instance();
@@ -147,6 +149,8 @@ void ArrayRgbHeatmapWindow::initUi()
     controlLayout->addWidget(m_xAxisModeCombo);
     controlLayout->addWidget(m_clearButton);
     controlLayout->addWidget(m_exportButton);
+    auto* clearScreenBtn = new QPushButton(QStringLiteral("清屏"), this);
+    controlLayout->addWidget(clearScreenBtn);
     controlLayout->addWidget(ampLabel);
     controlLayout->addWidget(m_ampMinSpin);
     controlLayout->addWidget(m_ampMaxSpin);
@@ -160,7 +164,7 @@ void ArrayRgbHeatmapWindow::initUi()
         plot = new QCustomPlot(group);
         PlotWindowBase::applyConfiguredOpenGl(plot);
         plot->setMinimumHeight(300);
-        plot->axisRect()->setupFullAxesBox(true);
+        // 不启用全轴框：顶部/右侧轴无数据映射，白白占用 margin 空间挤压热力图
         plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
         plot->xAxis->setLabel(QStringLiteral("帧号"));
         plot->yAxis->setLabel(QStringLiteral("显示位置"));
@@ -198,6 +202,19 @@ void ArrayRgbHeatmapWindow::initUi()
             this, &ArrayRgbHeatmapWindow::onClearClicked);
     connect(m_exportButton, &QPushButton::clicked,
             this, &ArrayRgbHeatmapWindow::onExportClicked);
+    connect(clearScreenBtn, &QPushButton::clicked, this, [this]() {
+        m_frames.clear();
+        m_reviewFrames.clear();
+        m_lastSequence = -1;
+        m_lastTimestamp = -1;
+        // 恢复空白热力图（保留 pixmap 对象）
+        auto resetPixmap = [](QCustomPlot* plot, QCPItemPixmap* item) {
+            if (item) item->setPixmap(QPixmap());
+            if (plot) plot->replot(QCustomPlot::rpQueuedReplot);
+        };
+        resetPixmap(m_ampPhasePlot, m_ampPhasePixmap);
+        resetPixmap(m_realImagPlot, m_realImagPixmap);
+    });
 
     // 幅度范围控件：变更时写入 AppConfig，setter 会 emit arrayRgbHeatmapAmpRangeChanged 同步所有窗口
     auto* cfg = AppConfig::instance();

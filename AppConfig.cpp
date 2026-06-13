@@ -505,7 +505,19 @@ bool AppConfig::loadFromFile(const QString& filename)
     // 检测分析窗口
     m_inspectionChannelsPerGroup = qBound(1,
         settings.value("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup).toInt(), 256);
-    
+
+    // 漏磁检测窗口
+    m_magArrayMaxFrames = qBound(100,
+        settings.value("MagArray/MaxFrames", m_magArrayMaxFrames).toInt(), 10000);
+    m_magArrayAxisXVisible = settings.value("MagArray/AxisXVisible", m_magArrayAxisXVisible).toBool();
+    m_magArrayAxisYVisible = settings.value("MagArray/AxisYVisible", m_magArrayAxisYVisible).toBool();
+    m_magArrayAxisZVisible = settings.value("MagArray/AxisZVisible", m_magArrayAxisZVisible).toBool();
+    m_magArrayHeatmapXAxisMode = settings.value("MagArray/HeatmapXAxisMode", m_magArrayHeatmapXAxisMode).toInt();
+    m_magArrayColorDataMin = settings.value("MagArray/ColorDataMin", m_magArrayColorDataMin).toDouble();
+    m_magArrayColorDataMax = settings.value("MagArray/ColorDataMax", m_magArrayColorDataMax).toDouble();
+    m_magArrayGradientColorMin = settings.value("MagArray/GradientColorMin", m_magArrayGradientColorMin).toString();
+    m_magArrayGradientColorMax = settings.value("MagArray/GradientColorMax", m_magArrayGradientColorMax).toString();
+
     // 加载统计配置
     m_statsIntervalMs = settings.value("Stats/IntervalMs", m_statsIntervalMs).toInt();
     
@@ -579,6 +591,15 @@ bool AppConfig::writeSettingsToPath(const QString& path, QString* errorOut) cons
     settings.setValue("Plot/AmpMin", m_arrayRgbHeatmapAmpMin);
     settings.setValue("Plot/AmpMax", m_arrayRgbHeatmapAmpMax);
     settings.setValue("InspectionPlot/ChannelsPerGroup", m_inspectionChannelsPerGroup);
+    settings.setValue("MagArray/MaxFrames", m_magArrayMaxFrames);
+    settings.setValue("MagArray/AxisXVisible", m_magArrayAxisXVisible);
+    settings.setValue("MagArray/AxisYVisible", m_magArrayAxisYVisible);
+    settings.setValue("MagArray/AxisZVisible", m_magArrayAxisZVisible);
+    settings.setValue("MagArray/HeatmapXAxisMode", m_magArrayHeatmapXAxisMode);
+    settings.setValue("MagArray/ColorDataMin", m_magArrayColorDataMin);
+    settings.setValue("MagArray/ColorDataMax", m_magArrayColorDataMax);
+    settings.setValue("MagArray/GradientColorMin", m_magArrayGradientColorMin);
+    settings.setValue("MagArray/GradientColorMax", m_magArrayGradientColorMax);
     settings.setValue("Stats/IntervalMs", m_statsIntervalMs);
     settings.setValue("Alarm/TemperatureThreshold", m_temperatureAlarmThreshold);
     settings.setValue("Style/CurrentStyle", static_cast<int>(m_currentStyle));
@@ -688,6 +709,15 @@ void AppConfig::loadDefaults()
     m_arrayRgbHeatmapAmpMin = 0.05;
     m_arrayRgbHeatmapAmpMax = 0.3;
     m_inspectionChannelsPerGroup = 8;
+    m_magArrayMaxFrames = 2000;
+    m_magArrayAxisXVisible = true;
+    m_magArrayAxisYVisible = true;
+    m_magArrayAxisZVisible = true;
+    m_magArrayHeatmapXAxisMode = 0;
+    m_magArrayColorDataMin = 0.0;
+    m_magArrayColorDataMax = 100.0;
+    m_magArrayGradientColorMin = QStringLiteral("#2040c8");
+    m_magArrayGradientColorMax = QStringLiteral("#c82020");
     m_statsIntervalMs = 1000;
     m_temperatureAlarmThreshold = 80.0f;
     m_appTitle = QStringLiteral("测试软件");

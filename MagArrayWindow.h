@@ -9,6 +9,7 @@
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
+#include <QPushButton>
 #include <QElapsedTimer>
 
 class QCustomPlot;
@@ -37,6 +38,7 @@ private:
     void onThemeChanged() override;
     void onColorRangeChanged();
     void onHeatmapAxisModeChanged();
+    void updateHeatmapGradient();
 
     // Layout
     QSplitter* m_splitter = nullptr;
@@ -73,6 +75,8 @@ private:
     QRadioButton* m_timeModeBtn = nullptr;
     QDoubleSpinBox* m_colorMinSpin = nullptr;
     QDoubleSpinBox* m_colorMaxSpin = nullptr;
+    QPushButton* m_colorMinBtn = nullptr;
+    QPushButton* m_colorMaxBtn = nullptr;
     QLabel* m_stageStatusLabel = nullptr;
     QLabel* m_statsLabel = nullptr;
 
@@ -87,6 +91,8 @@ private:
     int m_lastAxisMask = 7;  // bits 0=X, 1=Y, 2=Z
     double m_colorRangeMin = 0.0;
     double m_colorRangeMax = 100.0;
+    QColor m_gradientColorMin = QColor(32, 64, 200);   // blue-ish
+    QColor m_gradientColorMax = QColor(200, 32, 32);   // red-ish
 };
 
 #endif // MAGARRAYWINDOW_H

@@ -11,6 +11,7 @@
 #include <QDebug>
 #include <QDoubleSpinBox>
 #include <QCheckBox>
+#include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
 #include <QSplitter>
@@ -53,6 +54,21 @@ PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
     m_viewTypeCombo->setVisible(false);
     ctrlLayout->addWidget(viewLabel);
     ctrlLayout->addWidget(m_viewTypeCombo);
+    auto* clearBtn = new QPushButton(QStringLiteral("清屏"), ctrlWidget);
+    connect(clearBtn, &QPushButton::clicked, this, [this]() {
+        m_clearTimeMs = QDateTime::currentMSecsSinceEpoch();
+        auto clearPlotData = [](QCustomPlot* p) {
+            if (!p) return;
+            for (int i = 0; i < p->graphCount(); ++i)
+                p->graph(i)->data()->clear();
+            p->replot(QCustomPlot::rpQueuedReplot);
+        };
+        clearPlotData(m_plot);
+        clearPlotData(m_mfTbPlot1);
+        clearPlotData(m_mfTbPlot2);
+        clearPlotData(m_mfImpedancePlot);
+    });
+    ctrlLayout->addWidget(clearBtn);
     ctrlLayout->addStretch();
 
     // 不再使用外部QListWidget控制通道显示隐藏，改用QCustomPlot图例交互
@@ -793,9 +809,9 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
     // 滑动时间窗裁剪
     const double latest = snapshot->timeMs.last();
     const double windowMs = 10000.0;
-    const double windowStart = latest - windowMs;
+    const double cutoffMs = qMax(latest - windowMs, static_cast<double>(m_clearTimeMs));
     int startIdx = 0;
-    for (; startIdx < n && snapshot->timeMs[startIdx] < windowStart; ++startIdx) {}
+    for (; startIdx < n && snapshot->timeMs[startIdx] < cutoffMs; ++startIdx) {}
     const int count = n - startIdx;
 
     // 时间值转换为秒（Unix epoch），配合 QCPAxisTickerDateTime 显示 HH:MM:SS
@@ -823,7 +839,7 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
             m_mfTbPlot1->graph(idxB)->setData(timeRel, phaseSlice, true);
         }
     }
-    m_mfTbPlot1->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
+    m_mfTbPlot1->yAxis->setRange(cutoffMs / 1000.0, latest / 1000.0);
     {
         // 时基图1 X轴：仅按可见频点 rescale（NaN 不影响 QCustomPlot range finder）
         double xMin = std::numeric_limits<double>::max();
@@ -869,7 +885,7 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
             m_mfTbPlot2->graph(idxB)->setData(timeRel, imagSlice, true);
         }
     }
-    m_mfTbPlot2->yAxis->setRange(windowStart / 1000.0, latest / 1000.0);
+    m_mfTbPlot2->yAxis->setRange(cutoffMs / 1000.0, latest / 1000.0);
     {
         // 时基图2 X轴：仅按可见频点 rescale
         double xMin = std::numeric_limits<double>::max();
@@ -909,9 +925,9 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
     }
 
     const double retentionSecs = m_mfRetentionSecs * 1000.0;
-    const double cutoffMs = latest - retentionSecs;
+    const double impCutoffMs = latest - retentionSecs;
     int impStartIdx = 0;
-    for (; impStartIdx < n && snapshot->timeMs[impStartIdx] < cutoffMs; ++impStartIdx) {}
+    for (; impStartIdx < n && snapshot->timeMs[impStartIdx] < impCutoffMs; ++impStartIdx) {}
 
     for (int i = 0; i < nPoints && i < m_mfImpedanceCurves.size(); ++i) {
         if (i >= impX.size() || i >= impY.size()) continue;

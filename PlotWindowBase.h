@@ -50,6 +50,9 @@ public slots:
     static void applyConfiguredPerformanceToTree(QWidget* root);
 
 protected:
+    /// 清屏时间截断点(ms)，>0 时只显示此时间之后的数据
+    qint64 m_clearTimeMs = 0;
+
     void changeEvent(QEvent* event) override;
     bool isDarkThemeActive() const;
     void applyThemeToPlot(QCustomPlot* plot, bool dark) const;

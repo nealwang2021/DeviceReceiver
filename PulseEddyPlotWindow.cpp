@@ -36,11 +36,13 @@ PulseEddyPlotWindow::PulseEddyPlotWindow(QWidget* parent)
 
     m_startRefBtn = new QPushButton(QStringLiteral("开始参考线"), row1);
     m_clearRefBtn = new QPushButton(QStringLiteral("清除参考线"), row1);
+    auto* clearBtn = new QPushButton(QStringLiteral("清屏"), row1);
     m_refStatusLabel = new QLabel(QStringLiteral("参考线: 未采集"), row1);
     m_refStatusLabel->setStyleSheet("color: #888;");
 
     row1Lay->addWidget(m_startRefBtn);
     row1Lay->addWidget(m_clearRefBtn);
+    row1Lay->addWidget(clearBtn);
     row1Lay->addWidget(m_refStatusLabel);
     row1Lay->addSpacing(16);
 
@@ -88,6 +90,16 @@ PulseEddyPlotWindow::PulseEddyPlotWindow(QWidget* parent)
     // ---- 信号 ----
     connect(m_startRefBtn, &QPushButton::clicked, this, &PulseEddyPlotWindow::onStartReferenceClicked);
     connect(m_clearRefBtn, &QPushButton::clicked, this, &PulseEddyPlotWindow::onClearReferenceClicked);
+    connect(clearBtn, &QPushButton::clicked, this, [this]() {
+        m_clearTimeMs = QDateTime::currentMSecsSinceEpoch();
+        m_plot->graph(0)->data()->clear();
+        m_plot->graph(1)->data()->clear();
+        m_plot->graph(1)->setVisible(false);
+        m_hasReference = false;
+        m_lastFrameId = 0;
+        updateReferenceStatus();
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+    });
     connect(yGroup, QOverload<QAbstractButton*>::of(&QButtonGroup::buttonClicked),
             this, [this](QAbstractButton* btn) {
                 const bool manual = (btn == m_yManualRadio);
@@ -243,5 +255,24 @@ void PulseEddyPlotWindow::applyYAxisMode()
             return;
         }
     }
-    m_plot->yAxis->rescale(true);
+    // 自适应：手动计算可见数据的非对称范围 (rescale 会产生对称范围)
+    double yMin = std::numeric_limits<double>::max();
+    double yMax = std::numeric_limits<double>::lowest();
+    bool any = false;
+    for (int i = 0; i < m_plot->graphCount(); ++i) {
+        QCPGraph* g = m_plot->graph(i);
+        if (!g || !g->visible()) continue;
+        auto dataPtr = g->data();
+        if (!dataPtr || dataPtr->isEmpty()) continue;
+        for (auto it = dataPtr->constBegin(); it != dataPtr->constEnd(); ++it) {
+            const double v = it->value;
+            if (std::isfinite(v)) { yMin = qMin(yMin, v); yMax = qMax(yMax, v); any = true; }
+        }
+    }
+    if (any && yMax > yMin) {
+        const double margin = qMax((yMax - yMin) * 0.05, 0.001);
+        m_plot->yAxis->setRange(yMin - margin, yMax + margin);
+    } else {
+        m_plot->yAxis->rescale(true);
+    }
 }

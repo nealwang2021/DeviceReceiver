@@ -107,7 +107,7 @@ void MultiFreqStageHeatmapWindow::initPlot()
     const int w = static_cast<int>((m_xMax - m_xMin) / m_step) + 1;
     const int h = static_cast<int>((m_yMax - m_yMin) / m_step) + 1;
     QImage img(w, h, QImage::Format_ARGB32);
-    img.fill(QColor(60, 62, 68));
+    img.fill(QColor(24, 24, 24));
     m_pixmapItem->setPixmap(QPixmap::fromImage(img));
 
     m_plot->xAxis->setLabel(QStringLiteral("台位 X (mm)"));
@@ -155,7 +155,7 @@ void MultiFreqStageHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames
         m_freqImages.resize(nPoints);
         for (int i = 0; i < nPoints; ++i) {
             m_freqImages[i] = QImage(w, h, QImage::Format_ARGB32);
-            m_freqImages[i].fill(QColor(60, 62, 68));
+            m_freqImages[i].fill(QColor(24, 24, 24));
         }
         if (!m_freqImages.isEmpty())
             m_pixmapItem->setPixmap(QPixmap::fromImage(m_freqImages[0]));
@@ -206,7 +206,7 @@ void MultiFreqStageHeatmapWindow::onDataUpdated(const QVector<FrameData>& frames
         int filled = 0;
         for (int xi = 0; xi < iw; ++xi)
             for (int yi = 0; yi < ih; ++yi)
-                if (img.pixelColor(xi, yi) != QColor(40, 42, 48))
+                if (img.pixelColor(xi, yi) != QColor(24, 24, 24))
                     ++filled;
         m_pointCountLabel->setText(QStringLiteral("已扫: %1 / %2").arg(filled).arg(iw * ih));
     }
@@ -223,7 +223,7 @@ void MultiFreqStageHeatmapWindow::rebuildHeatmap()
 QColor MultiFreqStageHeatmapWindow::colorFromAmpPhase(double amp, double phaseDeg) const
 {
     if (!std::isfinite(amp) || !std::isfinite(phaseDeg))
-        return QColor(40, 42, 48);
+        return QColor(24, 24, 24);
     double phaseNorm = std::fmod(phaseDeg, 360.0);
     if (phaseNorm < 0.0) phaseNorm += 360.0;
     const double minLogAmp = std::log10(m_ampMin);

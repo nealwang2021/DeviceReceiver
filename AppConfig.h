@@ -134,6 +134,34 @@ public:
     // ========== 检测分析窗口配置 ==========
     int inspectionChannelsPerGroup() const { return m_inspectionChannelsPerGroup; }
     void setInspectionChannelsPerGroup(int n) { m_inspectionChannelsPerGroup = qBound(1, n, 256); }
+
+    // ========== 漏磁检测窗口配置 ==========
+    int magArrayMaxFrames() const { return m_magArrayMaxFrames; }
+    void setMagArrayMaxFrames(int n) { m_magArrayMaxFrames = qBound(100, n, 10000); }
+
+    bool magArrayAxisXVisible() const { return m_magArrayAxisXVisible; }
+    void setMagArrayAxisXVisible(bool v) { m_magArrayAxisXVisible = v; }
+
+    bool magArrayAxisYVisible() const { return m_magArrayAxisYVisible; }
+    void setMagArrayAxisYVisible(bool v) { m_magArrayAxisYVisible = v; }
+
+    bool magArrayAxisZVisible() const { return m_magArrayAxisZVisible; }
+    void setMagArrayAxisZVisible(bool v) { m_magArrayAxisZVisible = v; }
+
+    int magArrayHeatmapXAxisMode() const { return m_magArrayHeatmapXAxisMode; }
+    void setMagArrayHeatmapXAxisMode(int mode) { m_magArrayHeatmapXAxisMode = mode; }  // 0=time, 1=position
+
+    double magArrayColorDataMin() const { return m_magArrayColorDataMin; }
+    void setMagArrayColorDataMin(double v) { m_magArrayColorDataMin = v; }
+
+    double magArrayColorDataMax() const { return m_magArrayColorDataMax; }
+    void setMagArrayColorDataMax(double v) { m_magArrayColorDataMax = v; }
+
+    QString magArrayGradientColorMin() const { return m_magArrayGradientColorMin; }
+    void setMagArrayGradientColorMin(const QString& c) { m_magArrayGradientColorMin = c; }
+
+    QString magArrayGradientColorMax() const { return m_magArrayGradientColorMax; }
+    void setMagArrayGradientColorMax(const QString& c) { m_magArrayGradientColorMax = c; }
     
     // ========== 数据统计配置 ==========
     int statsIntervalMs() const { return m_statsIntervalMs; }
@@ -274,7 +302,18 @@ private:
     double m_arrayRgbHeatmapAmpMin = 0.05;
     double m_arrayRgbHeatmapAmpMax = 0.3;
     int m_inspectionChannelsPerGroup = 8; // 检测分析窗口每组通道数
-    
+
+    // 漏磁检测窗口配置
+    int m_magArrayMaxFrames = 2000;
+    bool m_magArrayAxisXVisible = true;
+    bool m_magArrayAxisYVisible = true;
+    bool m_magArrayAxisZVisible = true;
+    int m_magArrayHeatmapXAxisMode = 0;   // 0=time, 1=position
+    double m_magArrayColorDataMin = 0.0;
+    double m_magArrayColorDataMax = 100.0;
+    QString m_magArrayGradientColorMin = QStringLiteral("#2040c8");
+    QString m_magArrayGradientColorMax = QStringLiteral("#c82020");
+
     // 数据统计配置
     int m_statsIntervalMs = 1000;      // 统计间隔（毫秒）
     

@@ -8,6 +8,7 @@
 #include <QRadioButton>
 #include <QDoubleSpinBox>
 #include <QPushButton>
+#include <QColorDialog>
 #include <QScrollArea>
 #include <QButtonGroup>
 #include <QFrame>
@@ -41,66 +42,137 @@ void MagArrayWindow::buildUi()
     rootLayout->setContentsMargins(4, 4, 4, 4);
     rootLayout->setSpacing(4);
 
-    // --- 顶部控制栏 ---
+    // --- 顶部控制栏（单行，分组布局，方便扩充） ---
     QHBoxLayout* controlLayout = new QHBoxLayout();
-    controlLayout->setSpacing(6);
+    controlLayout->setSpacing(4);
 
+    AppConfig* cfg = AppConfig::instance();
+
+    // 组1：最大帧数
     QLabel* framesLabel = new QLabel(QStringLiteral("最大帧:"), this);
     m_maxFramesSpin = new QSpinBox(this);
     m_maxFramesSpin->setRange(100, 10000);
-    m_maxFramesSpin->setValue(2000);
+    m_maxFramesSpin->setValue(cfg->magArrayMaxFrames());
     m_maxFramesSpin->setSingleStep(100);
     m_maxFramesSpin->setToolTip(QStringLiteral("波形图和热力图最大显示帧数"));
-
+    m_maxFramesSpin->setMaximumWidth(72);
     controlLayout->addWidget(framesLabel);
     controlLayout->addWidget(m_maxFramesSpin);
-    controlLayout->addSpacing(8);
+    connect(m_maxFramesSpin, QOverload<int>::of(&QSpinBox::valueChanged),
+            [](int v) { AppConfig::instance()->setMagArrayMaxFrames(v); });
+    controlLayout->addSpacing(10);
 
+    // 组2：显示轴选择
     QLabel* axisLabel = new QLabel(QStringLiteral("显示轴:"), this);
+    controlLayout->addWidget(axisLabel);
+    const bool axisDefaults[3] = {cfg->magArrayAxisXVisible(),
+                                  cfg->magArrayAxisYVisible(),
+                                  cfg->magArrayAxisZVisible()};
     for (int a = 0; a < 3; ++a) {
         m_axisChecks[a] = new QCheckBox(QString("XYZ"[a]), this);
-        m_axisChecks[a]->setChecked(true);
+        m_axisChecks[a]->setChecked(axisDefaults[a]);
         controlLayout->addWidget(m_axisChecks[a]);
+        connect(m_axisChecks[a], &QCheckBox::toggled, this, [a](bool v) {
+            switch (a) {
+            case 0: AppConfig::instance()->setMagArrayAxisXVisible(v); break;
+            case 1: AppConfig::instance()->setMagArrayAxisYVisible(v); break;
+            case 2: AppConfig::instance()->setMagArrayAxisZVisible(v); break;
+            }
+        });
     }
-    controlLayout->addSpacing(12);
+    controlLayout->addSpacing(10);
 
-    QLabel* modeLabel = new QLabel(QStringLiteral("热力图X轴:"), this);
+    // 组3：热力图X轴模式
+    QLabel* modeLabel = new QLabel(QStringLiteral("热图X轴:"), this);
     m_timeModeBtn = new QRadioButton(QStringLiteral("时间"), this);
     m_posModeBtn = new QRadioButton(QStringLiteral("台位"), this);
-    m_timeModeBtn->setChecked(true);
+    m_timeModeBtn->setChecked(cfg->magArrayHeatmapXAxisMode() == 0);
+    m_posModeBtn->setChecked(cfg->magArrayHeatmapXAxisMode() == 1);
     auto* modeGroup = new QButtonGroup(this);
     modeGroup->addButton(m_timeModeBtn);
     modeGroup->addButton(m_posModeBtn);
     modeGroup->setExclusive(true);
-
-    QLabel* rangeLabel = new QLabel(QStringLiteral("色标:"), this);
-    QLabel* minLabel = new QLabel(QStringLiteral("min:"), this);
-    m_colorMinSpin = new QDoubleSpinBox(this);
-    m_colorMinSpin->setRange(-10000.0, 10000.0);
-    m_colorMinSpin->setDecimals(1);
-    m_colorMinSpin->setValue(0.0);
-    m_colorMinSpin->setSingleStep(5.0);
-    QLabel* maxLabel = new QLabel(QStringLiteral("max:"), this);
-    m_colorMaxSpin = new QDoubleSpinBox(this);
-    m_colorMaxSpin->setRange(-10000.0, 10000.0);
-    m_colorMaxSpin->setDecimals(1);
-    m_colorMaxSpin->setValue(100.0);
-    m_colorMaxSpin->setSingleStep(5.0);
-
-    m_stageStatusLabel = new QLabel(QStringLiteral("三轴台: 未连接"), this);
-    m_stageStatusLabel->setStyleSheet(QStringLiteral("color: #888888;"));
-    m_statsLabel = new QLabel(QStringLiteral("就绪"), this);
-
     controlLayout->addWidget(modeLabel);
     controlLayout->addWidget(m_timeModeBtn);
     controlLayout->addWidget(m_posModeBtn);
-    controlLayout->addSpacing(12);
+    connect(m_timeModeBtn, &QRadioButton::toggled, [](bool checked) {
+        if (checked) AppConfig::instance()->setMagArrayHeatmapXAxisMode(0);
+    });
+    connect(m_posModeBtn, &QRadioButton::toggled, [](bool checked) {
+        if (checked) AppConfig::instance()->setMagArrayHeatmapXAxisMode(1);
+    });
+    controlLayout->addSpacing(10);
+
+    // 组4：色标数值范围
+    QLabel* rangeLabel = new QLabel(QStringLiteral("色标:"), this);
+    QLabel* minLabel = new QLabel(QStringLiteral("min"), this);
+    m_colorMinSpin = new QDoubleSpinBox(this);
+    m_colorMinSpin->setRange(-10000.0, 10000.0);
+    m_colorMinSpin->setDecimals(1);
+    m_colorMinSpin->setValue(cfg->magArrayColorDataMin());
+    m_colorMinSpin->setSingleStep(5.0);
+    m_colorMinSpin->setMaximumWidth(66);
+    QLabel* maxLabel = new QLabel(QStringLiteral("max"), this);
+    m_colorMaxSpin = new QDoubleSpinBox(this);
+    m_colorMaxSpin->setRange(-10000.0, 10000.0);
+    m_colorMaxSpin->setDecimals(1);
+    m_colorMaxSpin->setValue(cfg->magArrayColorDataMax());
+    m_colorMaxSpin->setSingleStep(5.0);
+    m_colorMaxSpin->setMaximumWidth(66);
     controlLayout->addWidget(rangeLabel);
     controlLayout->addWidget(minLabel);
     controlLayout->addWidget(m_colorMinSpin);
+    connect(m_colorMinSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            [](double v) { AppConfig::instance()->setMagArrayColorDataMin(v); });
+    // min: color button
+    m_colorMinBtn = new QPushButton(this);
+    m_colorMinBtn->setFixedWidth(20);
+    m_colorMinBtn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    m_colorMinBtn->setToolTip(QStringLiteral("色标最小值对应颜色"));
+    m_colorMinBtn->setCursor(Qt::PointingHandCursor);
+    controlLayout->addWidget(m_colorMinBtn);
+    // max: spinbox + 颜色按钮
     controlLayout->addWidget(maxLabel);
     controlLayout->addWidget(m_colorMaxSpin);
+    connect(m_colorMaxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            [](double v) { AppConfig::instance()->setMagArrayColorDataMax(v); });
+    m_colorMaxBtn = new QPushButton(this);
+    m_colorMaxBtn->setFixedWidth(20);
+    m_colorMaxBtn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    m_colorMaxBtn->setToolTip(QStringLiteral("色标最大值对应颜色"));
+    m_colorMaxBtn->setCursor(Qt::PointingHandCursor);
+    controlLayout->addWidget(m_colorMaxBtn);
+    controlLayout->addSpacing(10);
+
+    // Load gradient colors from config
+    m_gradientColorMin = QColor(cfg->magArrayGradientColorMin());
+    m_gradientColorMax = QColor(cfg->magArrayGradientColorMax());
+
+    // 右侧：清屏 + 拉伸 + 状态
+    auto* clearBtn = new QPushButton(QStringLiteral("清屏"), this);
+    connect(clearBtn, &QPushButton::clicked, this, [this]() {
+        m_clearTimeMs = QDateTime::currentMSecsSinceEpoch();
+        // 仅清数据，保留 graph 结构
+        if (m_waveformPlot) {
+            for (int i = 0; i < m_waveformPlot->graphCount(); ++i)
+                m_waveformPlot->graph(i)->data()->clear();
+            m_waveformPlot->replot(QCustomPlot::rpQueuedReplot);
+        }
+        // 清空热力图环形缓冲区
+        for (int a = 0; a < 3; ++a) {
+            for (int r = 0; r < kHeatmapRows; ++r)
+                for (int c = 0; c < kHeatmapCols; ++c)
+                    m_heatmapData[a][r * kHeatmapCols + c] = qQNaN();
+        }
+        m_heatmapWriteCol = 0;
+        m_liveFrameCount = 0;
+        m_lastFrameId = 0;
+    });
+    controlLayout->addWidget(clearBtn);
     controlLayout->addStretch();
+    m_stageStatusLabel = new QLabel(QStringLiteral("三轴台: 未连接"), this);
+    m_stageStatusLabel->setStyleSheet(QStringLiteral("color: #888888;"));
+    m_statsLabel = new QLabel(QStringLiteral("就绪"), this);
     controlLayout->addWidget(m_stageStatusLabel);
     controlLayout->addWidget(m_statsLabel);
 
@@ -113,6 +185,8 @@ void MagArrayWindow::buildUi()
     m_waveformPlot = new QCustomPlot(m_splitter);
     PlotWindowBase::applyConfiguredOpenGl(m_waveformPlot);
     m_waveformPlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+    m_waveformPlot->setMinimumWidth(300);
+    m_waveformPlot->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_waveformPlot->plotLayout()->setRowSpacing(10);
     m_waveformPlot->plotLayout()->setColumnSpacing(0);
 
@@ -127,6 +201,8 @@ void MagArrayWindow::buildUi()
     m_heatmapPlot = new QCustomPlot(m_splitter);
     PlotWindowBase::applyConfiguredOpenGl(m_heatmapPlot);
     m_heatmapPlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+    m_heatmapPlot->setMinimumWidth(300);
+    m_heatmapPlot->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     m_heatmapScrollArea = new QScrollArea(m_splitter);
     m_heatmapScrollArea->setWidget(m_heatmapPlot);
@@ -148,7 +224,7 @@ void MagArrayWindow::buildUi()
 
     // --- 初始化热力图 ---
     const bool dark = isDarkThemeActive();
-    m_heatmapPlot->setBackground(QBrush(dark ? QColor(24, 26, 30) : QColor(255, 255, 255)));
+    m_heatmapPlot->setBackground(QBrush(dark ? QColor(24, 24, 24) : QColor(255, 255, 255)));
     m_heatmapPlot->plotLayout()->clear();
 
     // 初始化 ring buffers
@@ -169,6 +245,7 @@ void MagArrayWindow::buildUi()
 
         axisRect->setAutoMargins(QCP::msNone);
         axisRect->setMargins(isLast ? QMargins(48, 0, 8, 18) : QMargins(48, 0, 8, 0));
+        axisRect->setBackground(QBrush(dark ? QColor(24, 24, 24) : QColor(255, 255, 255)));
 
         QCPColorMap* colorMap = new QCPColorMap(axisRect->axis(QCPAxis::atBottom),
                                                  axisRect->axis(QCPAxis::atLeft));
@@ -200,6 +277,9 @@ void MagArrayWindow::buildUi()
         axisRect->axis(QCPAxis::atLeft)->setNumberFormat("f");
         axisRect->axis(QCPAxis::atLeft)->setNumberPrecision(0);
         axisRect->axis(QCPAxis::atLeft)->setSubTicks(false);
+        // 热力图通过色块表达数据，不需网格线覆盖
+        axisRect->axis(QCPAxis::atBottom)->grid()->setVisible(false);
+        axisRect->axis(QCPAxis::atLeft)->grid()->setVisible(false);
 
         // 仅最后一个轴显示底部标签（共享X轴）
         if (!isLast) {
@@ -229,6 +309,32 @@ void MagArrayWindow::buildUi()
             this, &MagArrayWindow::onColorRangeChanged);
     connect(m_colorMaxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, &MagArrayWindow::onColorRangeChanged);
+    // 颜色选择按钮
+    auto updateBtnStyle = [](QPushButton* btn, const QColor& c) {
+        btn->setStyleSheet(QStringLiteral("background-color:%1; border:1px solid #888; border-radius:3px;").arg(c.name()));
+    };
+    updateBtnStyle(m_colorMinBtn, m_gradientColorMin);
+    updateBtnStyle(m_colorMaxBtn, m_gradientColorMax);
+    connect(m_colorMinBtn, &QPushButton::clicked, this, [this, updateBtnStyle]() {
+        const QColor c = QColorDialog::getColor(m_gradientColorMin, this, QStringLiteral("选择最小值颜色"));
+        if (c.isValid()) {
+            m_gradientColorMin = c;
+            updateBtnStyle(m_colorMinBtn, c);
+            updateHeatmapGradient();
+            AppConfig::instance()->setMagArrayGradientColorMin(c.name());
+        }
+    });
+    connect(m_colorMaxBtn, &QPushButton::clicked, this, [this, updateBtnStyle]() {
+        const QColor c = QColorDialog::getColor(m_gradientColorMax, this, QStringLiteral("选择最大值颜色"));
+        if (c.isValid()) {
+            m_gradientColorMax = c;
+            updateBtnStyle(m_colorMaxBtn, c);
+            updateHeatmapGradient();
+            AppConfig::instance()->setMagArrayGradientColorMax(c.name());
+        }
+    });
+    // 初始应用渐变色
+    updateHeatmapGradient();
 
     onThemeChanged();
     m_replotThrottle.start();
@@ -339,20 +445,29 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
     const int effectiveCh = qMin(ch, m_waveformPlot->graphCount());
     const QVector<double>& fullTime = snapshot->timeMs;
     const int totalFrames = fullTime.size();
-    const int startIdx = qMax(0, totalFrames - kMaxDisplayFrames);
+    int startIdx = qMax(0, totalFrames - kMaxDisplayFrames);
+    // 清屏截断：跳过 m_clearTimeMs 之前的数据
+    if (m_clearTimeMs > 0) {
+        while (startIdx < totalFrames && fullTime[startIdx] < static_cast<double>(m_clearTimeMs))
+            ++startIdx;
+    }
     const int displayFrames = totalFrames - startIdx;
 
     QVector<double> timeVec(displayFrames);
     for (int i = 0; i < displayFrames; ++i) timeVec[i] = fullTime[startIdx + i];
 
     for (int i = 0; i < effectiveCh; ++i) {
-        if (i >= snapshot->realAmp.size()) break;
-        const int axisIdx = i / 20;
+        // graph[i] = axisIdx * 20 + sensorIdx
+        // realAmp 排列: ch = sensorIdx * 3 + axisIdx（proto 顺序: S0_X, S0_Y, S0_Z, S1_X, ...）
+        const int sensorIdx = i % 20;
+        const int axisIdx   = i / 20;
+        const int dataIdx   = sensorIdx * 3 + axisIdx;
+        if (dataIdx >= snapshot->realAmp.size()) continue;
         if (axisIdx < 3 && m_axisChecks[axisIdx] && !m_axisChecks[axisIdx]->isChecked()) {
             m_waveformPlot->graph(i)->setData(QVector<double>(), QVector<double>(), true);
             continue;
         }
-        const QVector<double>& fullVals = snapshot->realAmp[i];
+        const QVector<double>& fullVals = snapshot->realAmp[dataIdx];
         if (fullVals.size() < displayFrames) continue;
         QVector<double> vals(displayFrames);
         for (int j = 0; j < displayFrames; ++j) vals[j] = fullVals[startIdx + j];
@@ -393,7 +508,8 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
             if (a < m_waveformAxisRects.size() && m_waveformAxisRects[a]) {
                 auto* r = m_waveformAxisRects[a];
                 r->setVisible(vis);
-                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
+                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(9999, 0));
+                r->setMinimumSize(vis ? QSize(50, 50) : QSize(0, 0));
                 r->setMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
                 r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
             }
@@ -402,16 +518,30 @@ void MagArrayWindow::updateWaveformFromSnapshot(const QSharedPointer<const PlotS
             if (m_heatmapAxisRects[a]) {
                 auto* r = m_heatmapAxisRects[a];
                 r->setVisible(vis);
-                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(0, 0));
+                r->setMaximumSize(vis ? QSize(9999, 9999) : QSize(9999, 0));
+                r->setMinimumSize(vis ? QSize(50, 50) : QSize(0, 0));
                 r->setMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
                 r->setMinimumMargins(vis ? QMargins(48, 5, 8, bottomMargin) : QMargins(0,0,0,0));
             }
             if (m_heatmapColorScales[a]) {
                 m_heatmapColorScales[a]->setVisible(vis);
-                if (!vis) m_heatmapColorScales[a]->setMinimumSize(0, 0);
+                if (!vis) {
+                    m_heatmapColorScales[a]->setMinimumSize(0, 0);
+                    m_heatmapColorScales[a]->setMaximumSize(9999, 0);
+                } else {
+                    m_heatmapColorScales[a]->setMaximumSize(9999, 9999);
+                }
             }
             hl->setRowStretchFactor(a, vis ? 1 : 0);
         }
+
+        // 动态调整最小高度：根据可见轴数缩放
+        int visCount = 0;
+        for (int a = 0; a < 3; ++a)
+            if (curMask & (1 << a)) ++visCount;
+        m_waveformPlot->setMinimumHeight(visCount * 150);
+        const int perRowH = 40;
+        m_heatmapPlot->setMinimumHeight(qMax(80, visCount * perRowH + 40));
     }
 
     // 颜色刻度显隐
@@ -507,7 +637,7 @@ void MagArrayWindow::updateHeatmapFromFrame(const FrameData& frame)
     } else {
         for (int axis = 0; axis < 3; ++axis) {
             if (m_heatmapAxisRects[axis]) {
-                m_heatmapAxisRects[axis]->axis(QCPAxis::atBottom)->setLabel(QStringLiteral("时间列 (最新→旧)"));
+                m_heatmapAxisRects[axis]->axis(QCPAxis::atBottom)->setLabel(QStringLiteral("时间列"));
             }
         }
     }
@@ -602,6 +732,24 @@ void MagArrayWindow::onColorRangeChanged()
     }
 }
 
+void MagArrayWindow::updateHeatmapGradient()
+{
+    QCPColorGradient gradient;
+    gradient.setColorStopAt(0.0, m_gradientColorMin);
+    gradient.setColorStopAt(1.0, m_gradientColorMax);
+    gradient.setNanHandling(QCPColorGradient::nhTransparent);  // NaN 单元格透明，透出 axis rect 背景色
+
+    for (int axis = 0; axis < 3; ++axis) {
+        if (m_heatmapColorMaps[axis]) {
+            m_heatmapColorMaps[axis]->setGradient(gradient);
+        }
+    }
+
+    if (m_heatmapPlot) {
+        m_heatmapPlot->replot(QCustomPlot::rpQueuedReplot);
+    }
+}
+
 void MagArrayWindow::onHeatmapAxisModeChanged()
 {
     m_usePosMode = m_posModeBtn->isChecked();
@@ -635,8 +783,16 @@ void MagArrayWindow::onThemeChanged()
     applyThemeToPlot(m_heatmapPlot, dark);
 
     if (m_heatmapPlot) {
-        m_heatmapPlot->setBackground(QBrush(dark ? QColor(24, 26, 30) : QColor(255, 255, 255)));
+        m_heatmapPlot->setBackground(QBrush(dark ? QColor(24, 24, 24) : QColor(255, 255, 255)));
+        // 热力图轴矩形背景与阵列热力图保持一致
+        const QBrush hmRectBg(dark ? QColor(24, 24, 24) : QColor(255, 255, 255));
         for (int axis = 0; axis < 3; ++axis) {
+            if (m_heatmapAxisRects[axis]) {
+                m_heatmapAxisRects[axis]->setBackground(hmRectBg);
+                // 热力图色块自表达结构，不叠加网格线
+                m_heatmapAxisRects[axis]->axis(QCPAxis::atBottom)->grid()->setVisible(false);
+                m_heatmapAxisRects[axis]->axis(QCPAxis::atLeft)->grid()->setVisible(false);
+            }
             if (m_heatmapColorScales[axis]) {
                 m_heatmapColorScales[axis]->axis()->setLabelColor(
                     dark ? QColor(222, 228, 236) : QColor(50, 58, 70));

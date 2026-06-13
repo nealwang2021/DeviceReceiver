@@ -9,6 +9,8 @@
 #include "qcustomplot.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QPushButton>
+#include <QDateTime>
 #include <QLabel>
 #include <QPushButton>
 #include <QComboBox>
@@ -166,6 +168,14 @@ ArrayPlotWindow::ArrayPlotWindow(QWidget *parent)
     controlLayout->addWidget(yAxisLabel);
     controlLayout->addWidget(m_yAxisCombo);
     controlLayout->addWidget(m_exportButton);
+    auto* clearBtn = new QPushButton(QStringLiteral("清屏"), this);
+    connect(clearBtn, &QPushButton::clicked, this, [this]() {
+        m_clearTimeMs = QDateTime::currentMSecsSinceEpoch();
+        for (int i = 0; i < m_plot->graphCount(); ++i)
+            m_plot->graph(i)->data()->clear();
+        m_plot->replot(QCustomPlot::rpQueuedReplot);
+    });
+    controlLayout->addWidget(clearBtn);
     controlLayout->addWidget(m_statsLabel);
     controlLayout->addStretch();
 
@@ -1156,7 +1166,8 @@ void ArrayPlotWindow::renderSnapshot(const QSharedPointer<const PlotSnapshot>& s
         && HistoryDataProvider::instance()->sourceMode() == HistoryDataProvider::HistorySourceMode::SessionRealtime
         && !snapshot->timeMs.isEmpty()) {
         const double lastT = snapshot->timeMs.last();
-        const double cutoff = lastT - static_cast<double>(kRealtimeLiveWindowMs);
+        double cutoff = lastT - static_cast<double>(kRealtimeLiveWindowMs);
+        if (m_clearTimeMs > 0) cutoff = qMax(cutoff, static_cast<double>(m_clearTimeMs));
         while (sliceStart < snapshot->timeMs.size() && snapshot->timeMs.at(sliceStart) < cutoff) {
             ++sliceStart;
         }

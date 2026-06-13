@@ -3,6 +3,7 @@
 #include "AppConfig.h"
 #include "FrameData.h"
 #include "GrpcEndpointUtils.h"
+#include <QSettings>
 
 #include <QAbstractSocket>
 #include <QCoreApplication>
@@ -51,9 +52,15 @@ QVector<BackendParamDescriptor> GrpcMagArrayBackend::configParameters() const
         {"MagArray/Baudrate", QStringLiteral("波特率"), ParamInt,
          QVariant(1000000), 9600, 4000000, 100, {}},
         {"MagArray/PreprocessMode", QStringLiteral("预处理模式"), ParamEnum,
-         QVariant(0), 0, 0, 1,
-         {QStringLiteral("None"), QStringLiteral("FixedMidpoint"),
+         QVariant(3), 0, 0, 1,
+         {QStringLiteral("Unspecified"), QStringLiteral("None"), QStringLiteral("FixedMidpoint"),
           QStringLiteral("AutoBaseline"), QStringLiteral("SlowTrackingBaseline")}},
+        {"MagArray/BaselineFrames", QStringLiteral("基线帧数"), ParamInt,
+         QVariant(100), 10, 2000, 10, {}},
+        {"MagArray/FixedMidpoint", QStringLiteral("固定中点"), ParamDouble,
+         QVariant(32768.0), 0.0, 65535.0, 1.0, {}},
+        {"MagArray/TrackingFactor", QStringLiteral("跟踪因子"), ParamDouble,
+         QVariant(0.001), 0.0001, 1.0, 0.0001, {}},
     };
 }
 
@@ -63,9 +70,11 @@ QVector<BackendParamDescriptor> GrpcMagArrayBackend::configParameters() const
 
 bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
 {
+    qInfo() << "[MagArray] connectBackend 开始, endpoint=" << endpoint;
     m_cancelConnect.store(false, std::memory_order_relaxed);
 
     if (m_mockMode.load(std::memory_order_relaxed)) {
+        qInfo() << "[MagArray] Mock 模式, 跳过连接";
         setConnected(true);
         emitBackendStatus(QStringLiteral("漏磁 Mock 就绪"), QString());
         emitDeviceStatus();
@@ -103,6 +112,8 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
     m_portName = portName;
     m_baudrate = baudrate;
 
+    qInfo() << "[MagArray] 解析端点: portName=" << m_portName << "baudrate=" << m_baudrate
+            << "grpcTarget=" << grpcEndpointStr;
     emitBackendStatus(QStringLiteral("正在连接漏磁设备"), grpcEndpointStr);
 
 #ifdef HAS_GRPC
@@ -193,6 +204,8 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
     }
 
     if (!connected) {
+        qWarning() << "[MagArray] connectBackend 失败, 无法连接" << target
+                   << "failures=" << failures;
         emitBackendStatus(QStringLiteral("漏磁连接失败"),
                           QStringLiteral("无法连接 %1 (%2)").arg(target, failures.join(QStringLiteral(" | "))));
         emit connectAttemptFinished(false, QStringLiteral("连接超时或服务端不可达"));
@@ -229,10 +242,24 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
             return false;
         }
         const int portCount = listResp.ports_size();
+        // 保存端口列表，发射信号给 UI 填充下拉框
+        m_availablePorts.clear();
+        for (int i = 0; i < portCount; ++i) {
+            m_availablePorts.append(QString::fromStdString(listResp.ports(i).name()));
+        }
+        qInfo() << "[MagArray] ListSerialPorts 完成, 数量=" << portCount
+                << "端口列表=" << m_availablePorts;
+        // 若未指定设备串口，默认使用列表第一个
+        if (m_portName.isEmpty() && !m_availablePorts.isEmpty()) {
+            m_portName = m_availablePorts.first();
+            qInfo() << "[MagArray] 未指定串口, 默认选择第一个:" << m_portName;
+        }
+        emit availableSerialPortsChanged(m_availablePorts);
         emitBackendStatus(QStringLiteral("漏磁已连接"),
                           QStringLiteral("%1，串口数 %2").arg(connectedTarget).arg(portCount));
         emitDeviceStatus();
         emit connectAttemptFinished(true, QStringLiteral("连接成功，串口数 %1").arg(portCount));
+        qInfo() << "[MagArray] connectBackend 成功, 已连接";
     }
 
     setConnected(true);
@@ -247,6 +274,7 @@ bool GrpcMagArrayBackend::connectBackend(const QString& endpoint)
 
 void GrpcMagArrayBackend::disconnectBackend()
 {
+    qInfo() << "[MagArray] disconnectBackend 调用";
     m_cancelConnect.store(true, std::memory_order_relaxed);
     m_disconnectInProgress.store(true, std::memory_order_relaxed);
 
@@ -271,10 +299,13 @@ bool GrpcMagArrayBackend::isBackendConnected() const
 
 void GrpcMagArrayBackend::startAcquisition(int intervalMs)
 {
+    qInfo() << "[MagArray] startAcquisition 调用, intervalMs=" << intervalMs;
     if (!m_connected.load(std::memory_order_relaxed)) {
+        qWarning() << "[MagArray] startAcquisition 失败: 未连接";
         return;
     }
     if (m_streamThread.joinable()) {
+        qWarning() << "[MagArray] startAcquisition 跳过: 流线程已在运行";
         return;
     }
 
@@ -296,6 +327,7 @@ void GrpcMagArrayBackend::startAcquisition(int intervalMs)
 
 void GrpcMagArrayBackend::stopAcquisition()
 {
+    qInfo() << "[MagArray] stopAcquisition 调用";
     m_mockTimer->stop();
     if (m_reconnectTimer) {
         m_reconnectTimer->stop();
@@ -472,25 +504,58 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
         return;
     }
 
-    // 先调用 StartDetection，传入串口参数
+    // 先调用 StartDetection，从 config.ini 读取串口与预处理配置
     {
+        QString portName = m_portName;
+        int baudrate = m_baudrate;
+        int preprocessMode = 0;
+        int baselineFrames = 100;
+        double fixedMidpoint = 32768.0;
+        double trackingFactor = 0.001;
+        {
+            QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);
+            const QString cfgPort = settings.value("MagArray/DetectionPort").toString();
+            if (!cfgPort.trimmed().isEmpty()) {
+                portName = cfgPort.trimmed();
+            } else if (portName.isEmpty() && !m_availablePorts.isEmpty()) {
+                // 回退：使用 ListSerialPorts 返回的第一个串口
+                portName = m_availablePorts.first();
+            }
+            baudrate = settings.value("MagArray/Baudrate", QVariant(1000000)).toInt();
+            preprocessMode = settings.value("MagArray/PreprocessMode", QVariant(0)).toInt();
+            baselineFrames = settings.value("MagArray/BaselineFrames", QVariant(100)).toInt();
+            fixedMidpoint = settings.value("MagArray/FixedMidpoint", QVariant(32768.0)).toDouble();
+            trackingFactor = settings.value("MagArray/TrackingFactor", QVariant(0.001)).toDouble();
+        }
+
         magarray::StartDetectionRequest detReq;
-        detReq.set_port_name(m_portName.toStdString());
-        detReq.set_baudrate(m_baudrate);
+        detReq.set_port_name(portName.toStdString());
+        detReq.set_baudrate(baudrate);
         auto* preproc = detReq.mutable_preprocess();
-        preproc->set_mode(magarray::PREPROCESS_MODE_NONE);
-        preproc->set_fixed_midpoint(32768.0);
-        preproc->set_baseline_frames(100);
-        preproc->set_tracking_factor(0.001);
+        preproc->set_mode(static_cast<magarray::PreprocessMode>(preprocessMode));
+        preproc->set_fixed_midpoint(fixedMidpoint);
+        preproc->set_baseline_frames(baselineFrames);
+        preproc->set_tracking_factor(trackingFactor);
+
+        qInfo() << "[MagArray] StartDetection 请求: Port=" << portName
+                << "Baudrate=" << baudrate
+                << "PreprocessMode=" << preprocessMode
+                << "BaselineFrames=" << baselineFrames
+                << "FixedMidpoint=" << fixedMidpoint
+                << "TrackingFactor=" << trackingFactor;
 
         grpc::ClientContext detCtx;
         magarray::OperationReply detReply;
         const auto detStatus = m_stub->StartDetection(&detCtx, detReq, &detReply);
         if (!detStatus.ok() || !detReply.ok()) {
-            emitBackendStatus(QStringLiteral("漏磁启动检测失败"),
-                              QString::fromStdString(detReply.message()));
+            const QString errDetail = detStatus.ok()
+                ? QString::fromStdString(detReply.message())
+                : QString::fromStdString(detStatus.error_message());
+            qWarning() << "[MagArray] StartDetection 失败:" << errDetail;
+            emitBackendStatus(QStringLiteral("漏磁启动检测失败"), errDetail);
             return;
         }
+        qInfo() << "[MagArray] StartDetection 成功:" << QString::fromStdString(detReply.message());
         emitBackendStatus(QStringLiteral("漏磁检测已启动"),
                           QString::fromStdString(detReply.message()));
     }
@@ -510,10 +575,12 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
 
     auto reader = m_stub->StreamFrames(m_streamCtx.get(), req);
     if (!reader) {
+        qWarning() << "[MagArray] StreamFrames 失败: 返回空 reader";
         emitBackendStatus(QStringLiteral("漏磁流错误"), QStringLiteral("StreamFrames 返回空 reader"));
         return;
     }
 
+    qInfo() << "[MagArray] StreamFrames 已启动, 开始读取数据流";
     emitBackendStatus(QStringLiteral("漏磁流已启动"),
                       QStringLiteral("间隔 %1 ms").arg(intervalMs));
     Q_UNUSED(intervalMs)
@@ -581,8 +648,11 @@ void GrpcMagArrayBackend::streamLoop(int intervalMs)
 
     // 流结束
     const grpc::Status grpcStatus = reader->Finish();
-    if (!grpcStatus.ok() && !m_stopStream.load(std::memory_order_relaxed)) {
-        qWarning() << "[GrpcMagArrayBackend] 流异常结束:" << grpcStatus.error_message().c_str();
+    if (m_stopStream.load(std::memory_order_relaxed)) {
+        qInfo() << "[MagArray] 数据流正常停止 (用户主动停止)";
+    } else {
+        qWarning() << "[MagArray] 数据流异常结束:" << grpcStatus.error_message().c_str()
+                   << "error_code=" << static_cast<int>(grpcStatus.error_code());
         emitBackendStatus(QStringLiteral("漏磁流中断"),
                           QString::fromStdString(grpcStatus.error_message()));
         setConnected(false);

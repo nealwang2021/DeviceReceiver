@@ -54,6 +54,8 @@ public slots:
 
 signals:
     void connectAttemptFinished(bool connected, const QString& detail);
+    /// ListSerialPorts 完成后发射，用于 UI 填充设备串口下拉列表
+    void availableSerialPortsChanged(QStringList ports);
 
 private slots:
     void onMockTick();
@@ -72,6 +74,7 @@ private:
     QString m_endpoint;
     QString m_portName;
     int     m_baudrate = 1000000;
+    QStringList m_availablePorts;   // ListSerialPorts 返回的设备串口列表
     int     m_acquisitionIntervalMs = 100;
     int     m_connectTimeoutMs = 6000;
 

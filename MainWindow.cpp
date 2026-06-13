@@ -1183,10 +1183,9 @@ void MainWindow::initUI()
         
         m_windowTypeCombo = new QComboBox();
         m_windowTypeCombo->addItems({QStringLiteral("多频组合图"),
-                                     QStringLiteral("多频台位热力图"),
                                      QStringLiteral("阵列图"),
                                      QStringLiteral("阵列热力图"),
-                                     QStringLiteral("漏磁检测"), 
+                                     QStringLiteral("漏磁检测"),
                                      QStringLiteral("脉冲涡流")});
         m_createWindowButton = new QPushButton("新建窗口");
         
@@ -3493,11 +3492,10 @@ void MainWindow::onCreateWindowClicked()
     
     switch (typeIndex) {
     case 0: type = PlotWindowManager::CombinedPlot; break;
-    case 1: type = PlotWindowManager::MultiFreqStageHeatmapPlot; break;
-    case 2: type = PlotWindowManager::ArrayPlot; break;
-    case 3: type = PlotWindowManager::ArrayHeatmapPlot; break;
-    case 4: type = PlotWindowManager::MagArrayPlot; break;
-    case 5: type = PlotWindowManager::PulseEddyPlot; break;
+    case 1: type = PlotWindowManager::ArrayPlot; break;
+    case 2: type = PlotWindowManager::ArrayHeatmapPlot; break;
+    case 3: type = PlotWindowManager::MagArrayPlot; break;
+    case 4: type = PlotWindowManager::PulseEddyPlot; break;
     default:
         qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
         type = PlotWindowManager::CombinedPlot;
