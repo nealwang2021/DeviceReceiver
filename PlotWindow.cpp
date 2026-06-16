@@ -45,15 +45,17 @@ PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
     QHBoxLayout* ctrlLayout = new QHBoxLayout(ctrlWidget);
     ctrlLayout->setContentsMargins(0,0,0,0);
     ctrlLayout->setSpacing(5);
-    QLabel* viewLabel = new QLabel("视图:", ctrlWidget);
-    qDebug() << "created viewLabel" << viewLabel;
+    m_viewTypeLabel = new QLabel(QStringLiteral("视图:"), ctrlWidget);
+    qDebug() << "created viewLabel" << m_viewTypeLabel;
     m_viewTypeCombo = new QComboBox(ctrlWidget);
     qDebug() << "created viewTypeCombo" << m_viewTypeCombo;
     m_viewTypeCombo->addItem("实部/虚部");
     m_viewTypeCombo->addItem("幅值/相位");
     m_viewTypeCombo->setVisible(false);
-    ctrlLayout->addWidget(viewLabel);
+    m_viewTypeLabel->setVisible(false);
+    ctrlLayout->addWidget(m_viewTypeLabel);
     ctrlLayout->addWidget(m_viewTypeCombo);
+    ctrlLayout->addSpacing(12);  // 视图选择器与操作按钮分离，避免清屏紧贴 combo
     auto* clearBtn = new QPushButton(QStringLiteral("清屏"), ctrlWidget);
     connect(clearBtn, &QPushButton::clicked, this, [this]() {
         m_clearTimeMs = QDateTime::currentMSecsSinceEpoch();
@@ -226,6 +228,7 @@ void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnaps
         }
         if (m_viewTypeCombo) {
             m_viewTypeCombo->setVisible(false);
+            m_viewTypeLabel->setVisible(false);
         }
         for (int i = 0; i < ch && i < m_plot->graphCount() && i < snapshot->realAmp.size(); ++i) {
             m_plot->graph(i)->setData(snapshot->timeMs, snapshot->realAmp[i], true);
@@ -237,6 +240,7 @@ void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnaps
         }
         if (m_viewTypeCombo) {
             m_viewTypeCombo->setVisible(true);
+            m_viewTypeLabel->setVisible(true);
         }
 
         const QVector<QVector<double>>& top =
@@ -265,7 +269,7 @@ void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnaps
                 }
                 m_plot->setVisible(false);
             }
-            if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
+            if (m_viewTypeCombo) { m_viewTypeCombo->setVisible(false); m_viewTypeLabel->setVisible(false); }
         }
         if (m_lastMode != mode || m_currentChannelCount != nPoints) {
             m_currentChannelCount = nPoints;
@@ -293,6 +297,7 @@ void PlotWindow::updatePlotDataFromSnapshot(const QSharedPointer<const PlotSnaps
         }
         if (m_viewTypeCombo && mode == FrameData::MultiChannelComplex) {
             m_viewTypeCombo->setVisible(true);
+            m_viewTypeLabel->setVisible(true);
         }
     }
 
@@ -458,7 +463,7 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
 {
     // 隐藏标准单图
     if (m_plot) m_plot->setVisible(false);
-    if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
+    if (m_viewTypeCombo) { m_viewTypeCombo->setVisible(false); m_viewTypeLabel->setVisible(false); }
 
     const bool firstTime = (m_mfSplitter == nullptr);
 
@@ -1229,7 +1234,7 @@ void PlotWindow::buildAndRenderReviewSnapshot()
             }
             m_plot->setVisible(false);
         }
-        if (m_viewTypeCombo) m_viewTypeCombo->setVisible(false);
+        if (m_viewTypeCombo) { m_viewTypeCombo->setVisible(false); m_viewTypeLabel->setVisible(false); }
     }
     if (m_lastMode != FrameData::MultiFreqEddy || m_currentChannelCount != nPoints) {
         m_currentChannelCount = nPoints;

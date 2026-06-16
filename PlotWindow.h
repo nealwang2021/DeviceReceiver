@@ -79,7 +79,8 @@ private:
     enum ComplexViewType { RealImag = 0, MagPhase = 1 };
     ComplexViewType m_complexViewType = RealImag;
 
-    QComboBox* m_viewTypeCombo;
+    QLabel* m_viewTypeLabel = nullptr;
+    QComboBox* m_viewTypeCombo = nullptr;
     QVector<QCPAxisRect*> m_axisRects;
     QCPLegend* m_complexTopLegend = nullptr;
 
