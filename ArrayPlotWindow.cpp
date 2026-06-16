@@ -404,9 +404,9 @@ void ArrayPlotWindow::initArrayPlot()
         m_plot->plotLayout()->addElement(i, 0, axisRect);
         m_channelAxisRects.append(axisRect);
 
-        // Use fixed margins for all rows so the last row (with X labels)
-        // keeps the same waveform drawing height as other rows.
-        axisRect->setAutoMargins(QCP::msNone);
+        // 左侧自动 margin：相位 (-180~180) 的刻度标签比幅值/实部宽得多，
+        // 固定 48px 会挤占通道标识 "CH1"；auto 按实际刻度文字动态计算
+        axisRect->setAutoMargins(QCP::msLeft);
         axisRect->setMargins(QMargins(48, 3, 8, 18));
         axisRect->setMinimumMargins(QMargins(48, 3, 8, 18));
         axisRect->setBackground((i % 2 == 0) ? rowBgEven : rowBgOdd);
