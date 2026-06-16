@@ -482,6 +482,37 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfTbPlot2->xAxis->setLabel(QStringLiteral("实部 / 虚部"));
         m_mfTbPlot2->yAxis->setVisible(false);  // 与时基图1共享时间轴
 
+        // 时基图1 控制栏：勾选实线(幅值) / 虚线(相位) 显隐
+        {
+            auto* bar = new QWidget(col1);
+            auto* barLayout = new QHBoxLayout(bar);
+            barLayout->setContentsMargins(0, 2, 0, 4);
+            barLayout->setSpacing(8);
+            m_mfTb1AmpCheck = new QCheckBox(QStringLiteral("幅值"), bar);
+            m_mfTb1AmpCheck->setChecked(true);
+            m_mfTb1PhaseCheck = new QCheckBox(QStringLiteral("相位"), bar);
+            m_mfTb1PhaseCheck->setChecked(true);
+            barLayout->addWidget(m_mfTb1AmpCheck);
+            barLayout->addWidget(m_mfTb1PhaseCheck);
+            barLayout->addStretch();
+            qobject_cast<QVBoxLayout*>(col1->layout())->insertWidget(0, bar);
+        }
+        // 时基图2 控制栏：勾选实线(实部) / 虚线(虚部) 显隐
+        {
+            auto* bar = new QWidget(col2);
+            auto* barLayout = new QHBoxLayout(bar);
+            barLayout->setContentsMargins(0, 2, 0, 4);
+            barLayout->setSpacing(8);
+            m_mfTb2RealCheck = new QCheckBox(QStringLiteral("实部"), bar);
+            m_mfTb2RealCheck->setChecked(true);
+            m_mfTb2ImagCheck = new QCheckBox(QStringLiteral("虚部"), bar);
+            m_mfTb2ImagCheck->setChecked(true);
+            barLayout->addWidget(m_mfTb2RealCheck);
+            barLayout->addWidget(m_mfTb2ImagCheck);
+            barLayout->addStretch();
+            qobject_cast<QVBoxLayout*>(col2->layout())->insertWidget(0, bar);
+        }
+
         // 阻抗图列
         auto* impCol = new QWidget(m_mfSplitter);
         auto* impLayout = new QVBoxLayout(impCol);
@@ -592,6 +623,17 @@ void PlotWindow::setupMultiFreqLayout(int freqPointCount)
         m_mfCircleItem->setBrush(Qt::NoBrush);
         m_mfCircleItem->setVisible(false);
         updateCircleBoundary();
+
+        // 时基线型显隐勾选框连接
+        auto tbLineToggled = [this]() {
+            applyMultiFreqLineVisibility();
+            if (m_mfTbPlot1) { m_mfTbPlot1->xAxis->rescale(true); m_mfTbPlot1->replot(QCustomPlot::rpQueuedReplot); }
+            if (m_mfTbPlot2) { m_mfTbPlot2->xAxis->rescale(true); m_mfTbPlot2->replot(QCustomPlot::rpQueuedReplot); }
+        };
+        connect(m_mfTb1AmpCheck, &QCheckBox::toggled, this, tbLineToggled);
+        connect(m_mfTb1PhaseCheck, &QCheckBox::toggled, this, tbLineToggled);
+        connect(m_mfTb2RealCheck, &QCheckBox::toggled, this, tbLineToggled);
+        connect(m_mfTb2ImagCheck, &QCheckBox::toggled, this, tbLineToggled);
 
         col1->setMinimumWidth(180);
         col2->setMinimumWidth(180);
@@ -801,6 +843,9 @@ void PlotWindow::rebuildMultiFreqGraphs(int freqPointCount)
     // 强制容器更新布局，确保 QScrollArea 内可见
     if (m_mfFreqCheckContainer)
         m_mfFreqCheckContainer->adjustSize();
+
+    // 应用线型显隐（复选框状态可能在重建之前已被用户切换）
+    applyMultiFreqLineVisibility();
 }
 
 void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& snapshot)
@@ -860,8 +905,10 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
                     if (std::isfinite(v)) { xMin = qMin(xMin, v); xMax = qMax(xMax, v); any = true; }
                 }
             };
-            scan(snapshot->mfImpedanceMag, i);
-            scan(snapshot->mfImpedancePhase, i);
+            const bool showAmp   = m_mfTb1AmpCheck   ? m_mfTb1AmpCheck->isChecked()   : true;
+            const bool showPhase = m_mfTb1PhaseCheck ? m_mfTb1PhaseCheck->isChecked() : true;
+            if (showAmp)   scan(snapshot->mfImpedanceMag, i);
+            if (showPhase) scan(snapshot->mfImpedancePhase, i);
         }
         if (any) {
             const double margin = qMax((xMax - xMin) * 0.05, 1e-9);
@@ -906,8 +953,10 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
                     if (std::isfinite(v)) { xMin = qMin(xMin, v); xMax = qMax(xMax, v); any = true; }
                 }
             };
-            scan(snapshot->mfImpedanceReal, i);
-            scan(snapshot->mfImpedanceImag, i);
+            const bool showReal = m_mfTb2RealCheck ? m_mfTb2RealCheck->isChecked() : true;
+            const bool showImag = m_mfTb2ImagCheck ? m_mfTb2ImagCheck->isChecked() : true;
+            if (showReal) scan(snapshot->mfImpedanceReal, i);
+            if (showImag) scan(snapshot->mfImpedanceImag, i);
         }
         if (any) {
             const double margin = qMax((xMax - xMin) * 0.05, 1e-9);
@@ -998,6 +1047,35 @@ void PlotWindow::applyImpedanceAxisMode()
     m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
 }
 
+void PlotWindow::applyMultiFreqLineVisibility()
+{
+    const bool showAmp   = m_mfTb1AmpCheck   ? m_mfTb1AmpCheck->isChecked()   : true;
+    const bool showPhase = m_mfTb1PhaseCheck ? m_mfTb1PhaseCheck->isChecked() : true;
+    const bool showReal  = m_mfTb2RealCheck  ? m_mfTb2RealCheck->isChecked()  : true;
+    const bool showImag  = m_mfTb2ImagCheck  ? m_mfTb2ImagCheck->isChecked()  : true;
+    const int  nFreq     = m_mfFreqChecks.size();
+
+    if (m_mfTbPlot1) {
+        for (int i = 0; i < m_mfTbPlot1->graphCount(); ++i) {
+            // 偶数索引 = 幅值(实线)，奇数索引 = 相位(虚线)
+            // 频率勾选 AND 线型勾选 同时满足才可见
+            const int  freqIdx = i / 2;
+            const bool freqVis = (freqIdx < nFreq) ? m_mfFreqChecks[freqIdx]->isChecked() : true;
+            const bool lineVis = (i % 2 == 0) ? showAmp : showPhase;
+            m_mfTbPlot1->graph(i)->setVisible(freqVis && lineVis);
+        }
+    }
+    if (m_mfTbPlot2) {
+        for (int i = 0; i < m_mfTbPlot2->graphCount(); ++i) {
+            // 偶数索引 = 实部(实线)，奇数索引 = 虚部(虚线)
+            const int  freqIdx = i / 2;
+            const bool freqVis = (freqIdx < nFreq) ? m_mfFreqChecks[freqIdx]->isChecked() : true;
+            const bool lineVis = (i % 2 == 0) ? showReal : showImag;
+            m_mfTbPlot2->graph(i)->setVisible(freqVis && lineVis);
+        }
+    }
+}
+
 void PlotWindow::updateCircleBoundary()
 {
     if (!m_mfCircleItem || !m_mfCircleRadiusSpin) return;
@@ -1016,47 +1094,23 @@ void PlotWindow::onMfFreqCheckToggled()
 {
     const int nFreq = m_mfFreqChecks.size();
 
-    // 1) 阻抗图曲线显隐
+    // 1) 阻抗图曲线显隐（仅受频率勾选控制，无独立的线型复选框）
     for (int i = 0; i < nFreq && i < m_mfImpedanceCurves.size(); ++i) {
         m_mfImpedanceCurves[i]->setVisible(m_mfFreqChecks[i]->isChecked());
     }
 
-    // 2) 时基图1（幅值/相位）— 每个频点2条graph
-    for (int i = 0; i < nFreq; ++i) {
-        const bool vis = m_mfFreqChecks[i]->isChecked();
-        const int gA = i * 2;       // 幅值
-        const int gB = i * 2 + 1;   // 相位
-        if (gA < m_mfTbPlot1->graphCount())
-            m_mfTbPlot1->graph(gA)->setVisible(vis);
-        if (gB < m_mfTbPlot1->graphCount())
-            m_mfTbPlot1->graph(gB)->setVisible(vis);
-    }
+    // 2) 时基图：统一显隐逻辑（频率勾选 AND 线型勾选）
+    applyMultiFreqLineVisibility();
 
-    // 3) 时基图2（实部/虚部）— 每个频点2条graph
-    for (int i = 0; i < nFreq; ++i) {
-        const bool vis = m_mfFreqChecks[i]->isChecked();
-        const int gA = i * 2;       // 实部
-        const int gB = i * 2 + 1;   // 虚部
-        if (gA < m_mfTbPlot2->graphCount())
-            m_mfTbPlot2->graph(gA)->setVisible(vis);
-        if (gB < m_mfTbPlot2->graphCount())
-            m_mfTbPlot2->graph(gB)->setVisible(vis);
-    }
-
-    // 4) 重绘三列
+    // 3) 重绘三列
     if (m_mfImpedancePlot) m_mfImpedancePlot->replot(QCustomPlot::rpQueuedReplot);
     if (m_mfTbPlot1)       m_mfTbPlot1->replot(QCustomPlot::rpQueuedReplot);
     if (m_mfTbPlot2)       m_mfTbPlot2->replot(QCustomPlot::rpQueuedReplot);
 
-    // 5) 自适应模式下按可见频点重新调整坐标轴
+    // 4) 自适应模式下按可见频点重新调整坐标轴
     applyImpedanceAxisMode();
-    // 时基图X轴仅根据可见频点 rescale
-    if (m_mfTbPlot1) {
-        m_mfTbPlot1->xAxis->rescale(true);
-    }
-    if (m_mfTbPlot2) {
-        m_mfTbPlot2->xAxis->rescale(true);
-    }
+    if (m_mfTbPlot1) m_mfTbPlot1->xAxis->rescale(true);
+    if (m_mfTbPlot2) m_mfTbPlot2->xAxis->rescale(true);
 }
 
 void PlotWindow::onMfCircleToggled()

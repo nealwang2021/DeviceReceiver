@@ -50,6 +50,7 @@ private:
     void updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& snapshot);
     void rebuildMultiFreqGraphs(int freqPointCount);
     void applyImpedanceAxisMode();
+    void applyMultiFreqLineVisibility();
     void updateCircleBoundary();
     void styleMultiFreqPlot(QCustomPlot* p);
 
@@ -102,6 +103,10 @@ private:
     QDoubleSpinBox* m_mfRetentionSpin = nullptr;
     QDoubleSpinBox* m_mfCircleRadiusSpin = nullptr;
     QCheckBox* m_mfCircleShowCheck = nullptr;
+    QCheckBox* m_mfTb1AmpCheck = nullptr;     // 时基图1：显示幅值(实线)
+    QCheckBox* m_mfTb1PhaseCheck = nullptr;   // 时基图1：显示相位(虚线)
+    QCheckBox* m_mfTb2RealCheck = nullptr;    // 时基图2：显示实部(实线)
+    QCheckBox* m_mfTb2ImagCheck = nullptr;    // 时基图2：显示虚部(虚线)
     QCPItemEllipse* m_mfCircleItem = nullptr;
     QVector<QCPGraph*> m_mfImpedanceCurves;
     bool m_mfUseNormalized = false;
