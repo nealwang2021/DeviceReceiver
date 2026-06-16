@@ -13,6 +13,7 @@
 #include <QFontDatabase>
 #include <QFont>
 #include <QTimer>
+#include <QStandardPaths>
 #include <iostream>
 
 static void crashHandlerLogBridge(const char* utf8Message)
@@ -58,9 +59,19 @@ int main(int argc, char *argv[])
         CrashHandlerWin::setSessionTag(startupTag);
         const QString datedDataDir = AppConfig::ensureDatedDataDirectory();
         const QString logPath = QDir(datedDataDir).filePath(QStringLiteral("realtime_data_%1.log").arg(startupTag));
-        if (AppLogger::instance()->initialize(logPath)) {
+        bool logOk = AppLogger::instance()->initialize(logPath);
+        if (!logOk) {
+            // 主路径失败（磁盘满 / 权限异常），尝试系统临时目录作为最后兜底
+            const QString tmpDir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+            const QString fallbackPath = QDir(tmpDir).filePath(QStringLiteral("DeviceReceiver_%1.log").arg(startupTag));
+            logOk = AppLogger::instance()->initialize(fallbackPath);
+            if (logOk) {
+                fprintf(stderr, "[WARN] 主日志路径不可写，已回退到: %s\n", fallbackPath.toLocal8Bit().constData());
+            }
+        }
+        if (logOk) {
             AppLogger::instance()->installQtMessageHandler();
-            qInfo() << "日志已打开:" << logPath;
+            qInfo() << "日志已打开:" << AppLogger::instance()->logFilePath();
             qInfo() << "Crash dump目录:" << CrashHandlerWin::crashDirectoryPath();
             qInfo() << "[OpenGL] Qt 启动属性: AA_UseDesktopOpenGL=1 AA_UseSoftwareOpenGL=0";
             const qint64 startupEpochMs = QDateTime::currentMSecsSinceEpoch();

@@ -1695,7 +1695,17 @@ void MainWindow::loadConfigToUI()
         switch (p.type) {
         case ParamInt: if (auto* s = qobject_cast<QSpinBox*>(w)) s->setValue(val.toInt()); break;
         case ParamDouble: if (auto* s = qobject_cast<QDoubleSpinBox*>(w)) s->setValue(val.toDouble()); break;
-        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) c->setCurrentIndex(val.toInt()); break;
+        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) {
+            // MultiFreq/BaseFrequencyHz: config.ini 存的是 Hz 数值，需 findText 映射回 combo index
+            if (p.key == "MultiFreq/BaseFrequencyHz") {
+                int idx = c->findText(val.toString());
+                if (idx >= 0) c->setCurrentIndex(idx);
+                else c->setCurrentIndex(c->findText("100")); // 迁移：旧 index 值无法匹配，回退默认 100Hz
+            } else {
+                c->setCurrentIndex(val.toInt());
+            }
+            break;
+        }
         case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) e->setText(val.toString()); break;
         }
     }
@@ -1758,7 +1768,16 @@ void MainWindow::saveConfigFromUI()
         switch (p.type) {
         case ParamInt: setConfigValue(p.key, qobject_cast<QSpinBox*>(w)->value()); break;
         case ParamDouble: setConfigValue(p.key, qobject_cast<QDoubleSpinBox*>(w)->value()); break;
-        case ParamEnum: setConfigValue(p.key, qobject_cast<QComboBox*>(w)->currentIndex()); break;
+        case ParamEnum: {
+            QComboBox* combo = qobject_cast<QComboBox*>(w);
+            // MultiFreq/BaseFrequencyHz: ComboBox text 是 Hz 数值（如 "100"），
+            // 必须传 Hz 值而非 index，否则 AppConfig 校验集合 {1,2,5,10,...} 会拒绝
+            if (p.key == "MultiFreq/BaseFrequencyHz")
+                setConfigValue(p.key, combo->currentText().toInt());
+            else
+                setConfigValue(p.key, combo->currentIndex());
+            break;
+        }
         case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) setConfigValue(p.key, e->text()); break;
         }
     }
@@ -3075,7 +3094,17 @@ void MainWindow::onBackendTypeChanged(int index)
         switch (p.type) {
         case ParamInt: if (auto* s = qobject_cast<QSpinBox*>(w)) s->setValue(val.toInt()); break;
         case ParamDouble: if (auto* s = qobject_cast<QDoubleSpinBox*>(w)) s->setValue(val.toDouble()); break;
-        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) c->setCurrentIndex(val.toInt()); break;
+        case ParamEnum: if (auto* c = qobject_cast<QComboBox*>(w)) {
+            // MultiFreq/BaseFrequencyHz: config.ini 存的是 Hz 数值，需 findText 映射回 combo index
+            if (p.key == "MultiFreq/BaseFrequencyHz") {
+                int idx = c->findText(val.toString());
+                if (idx >= 0) c->setCurrentIndex(idx);
+                else c->setCurrentIndex(c->findText("100")); // 迁移：旧 index 值无法匹配，回退默认 100Hz
+            } else {
+                c->setCurrentIndex(val.toInt());
+            }
+            break;
+        }
         case ParamIntList: if (auto* e = qobject_cast<QLineEdit*>(w)) e->setText(val.toString()); break;
         }
     }
@@ -3248,8 +3277,9 @@ void MainWindow::setConfigValue(const QString& key, const QVariant& value)
         }
         if (!factors.isEmpty()) cfg->setMultiFreqFrequencyFactors(factors);
     }
-    // 通用回退：直接写入 QSettings（支持 MagArray/* 等动态 key）
-    else {
+    // 持久化到 QSettings（含 MultiFreq 及 MagArray/* 等动态 key）
+    // 确保 streamLoop 启动前参数已落盘，避免 AppConfig 内存值与 config.ini 不一致
+    {
         const int slash = key.indexOf('/');
         if (slash >= 0) {
             QSettings settings(AppConfig::defaultConfigFilePath(), QSettings::IniFormat);

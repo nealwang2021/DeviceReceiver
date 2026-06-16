@@ -129,6 +129,7 @@ void ArrayRgbHeatmapWindow::initUi()
     m_xAxisModeCombo->setCurrentIndex(0);
 
     m_clearButton = new QPushButton(QStringLiteral("清空"), this);
+    m_clearButton->setVisible(false);  // 隐藏：与"清屏"按钮功能重叠，用户反馈不需要
     m_exportButton = new QPushButton(QStringLiteral("导出PNG"), this);
 
     auto* ampLabel = new QLabel(QStringLiteral("归一化范围:"), this);

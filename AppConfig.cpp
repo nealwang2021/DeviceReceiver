@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QApplication>
+#include <QStandardPaths>
 #include <QTextCodec>
 #include <QTemporaryFile>
 #include <cstdio>
@@ -335,7 +336,18 @@ QString AppConfig::ensureDatedDataDirectory(const QDate& date)
         QDir root(QCoreApplication::applicationDirPath());
         const QString path = root.filePath(rel);
         if (!QDir(path).exists() && !root.mkpath(rel)) {
-            qWarning() << "AppConfig: 创建按日数据目录失败:" << path;
+            // exe 所在目录无写入权限（典型：C:\Program Files 部署），回退到用户 AppData
+            const QString appDataRoot = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+            QDir fbRoot(appDataRoot);
+            const QString fbPath = fbRoot.filePath(rel);
+            if (!QDir(fbPath).exists() && !fbRoot.mkpath(rel)) {
+                qWarning() << "AppConfig: 创建按日数据目录失败（主路径和备用路径均失败）:"
+                           << "primary=" << path << "fallback=" << fbPath;
+            } else {
+                qInfo() << "AppConfig: 主数据目录不可写，已回退到:" << fbPath
+                        << "(主路径:" << path << ")";
+                return QDir(fbPath).absolutePath();
+            }
         }
         return QDir(path).absolutePath();
     }
@@ -470,7 +482,13 @@ bool AppConfig::loadFromFile(const QString& filename)
     m_grpcConnectTimeoutMs = qBound(500, m_grpcConnectTimeoutMs, 30000);
 
     // 加载多频涡流配置
-    m_multiFreqBaseFrequencyHz = settings.value("MultiFreq/BaseFrequencyHz", m_multiFreqBaseFrequencyHz).toInt();
+    {
+        const int rawHz = settings.value("MultiFreq/BaseFrequencyHz", m_multiFreqBaseFrequencyHz).toInt();
+        // 校验合法性：旧版代码可能误存 ComboBox index（0-9），合法 Hz 集合为
+        // {1, 2, 5, 10, 20, 50, 100, 200, 500, 1000}，非合法值一律回退默认 100Hz
+        static const QList<int> validHz = {1, 2, 5, 10, 20, 50, 100, 200, 500, 1000};
+        m_multiFreqBaseFrequencyHz = validHz.contains(rawHz) ? rawHz : 100;
+    }
     m_multiFreqAverageCycleCount = settings.value("MultiFreq/AverageCycleCount", m_multiFreqAverageCycleCount).toInt();
     m_multiFreqNormalizeScale = settings.value("MultiFreq/NormalizeScale", m_multiFreqNormalizeScale).toDouble();
     {
