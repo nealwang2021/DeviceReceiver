@@ -1,6 +1,9 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 #include "FrameData.h"
 #include "PlotWindowBase.h"
 #include "ApplicationController.h"
@@ -25,6 +28,11 @@ static void crashHandlerLogBridge(const char* utf8Message)
 int main(int argc, char *argv[])
 {
     try {
+#ifdef Q_OS_WIN
+        // 控制台输出编码设为 UTF-8，解决中文乱码（Windows 默认 GBK/CP936）
+        // 日志文件中 spdlog 写入 UTF-8 是正常的，但 stderr 经过控制台时需匹配编码
+        SetConsoleOutputCP(CP_UTF8);
+#endif
         CrashHandlerWin::setLogCallback(crashHandlerLogBridge);
         CrashHandlerWin::installHandlers();
         // 默认请求桌面 OpenGL。不要设置 AA_UseSoftwareOpenGL，否则 Qt 会走 llvmpipe/opengl32sw，
