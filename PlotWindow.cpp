@@ -108,6 +108,12 @@ PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
     auto* sel = SelectionState::instance();
     connect(sel, &SelectionState::selectionChanged,
             this, &PlotWindow::onSelectionChanged);
+    // 启动时同步一次（如果已处于 Review 模式则初始化）
+    if (sel->hasRange()) {
+        m_reviewStartMs = sel->startMs();
+        m_reviewEndMs = sel->endMs();
+        m_reviewMode = (sel->mode() == SelectionState::Review);
+    }
 
     // 保留定时器用于平滑动画（可选，可以移除或保留）
     m_refreshTimer = new QTimer(this);
@@ -856,12 +862,11 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
     const int n = snapshot->timeMs.size();
     if (n <= 0) return;
 
-    // 滑动时间窗裁剪
+    // 滑动时间窗裁剪：Live 模式只显示最近 10 秒；Review 模式显示完整范围
     const double latest = snapshot->timeMs.last();
-    const double windowMs = 10000.0;
-    const double cutoffMs = qMax(latest - windowMs, static_cast<double>(m_clearTimeMs));
+    const double plotStartMs = m_reviewMode ? snapshot->timeMs.first() : qMax(latest - 10000.0, static_cast<double>(m_clearTimeMs));
     int startIdx = 0;
-    for (; startIdx < n && snapshot->timeMs[startIdx] < cutoffMs; ++startIdx) {}
+    for (; startIdx < n && snapshot->timeMs[startIdx] < plotStartMs; ++startIdx) {}
     const int count = n - startIdx;
 
     // 时间值转换为秒（Unix epoch），配合 QCPAxisTickerDateTime 显示 HH:MM:SS
@@ -889,7 +894,7 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
             m_mfTbPlot1->graph(idxB)->setData(timeRel, phaseSlice, true);
         }
     }
-    m_mfTbPlot1->yAxis->setRange(cutoffMs / 1000.0, latest / 1000.0);
+    m_mfTbPlot1->yAxis->setRange(plotStartMs / 1000.0, latest / 1000.0);
     {
         // 时基图1 X轴：仅按可见频点 rescale（NaN 不影响 QCustomPlot range finder）
         double xMin = std::numeric_limits<double>::max();
@@ -937,7 +942,7 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
             m_mfTbPlot2->graph(idxB)->setData(timeRel, imagSlice, true);
         }
     }
-    m_mfTbPlot2->yAxis->setRange(cutoffMs / 1000.0, latest / 1000.0);
+    m_mfTbPlot2->yAxis->setRange(plotStartMs / 1000.0, latest / 1000.0);
     {
         // 时基图2 X轴：仅按可见频点 rescale
         double xMin = std::numeric_limits<double>::max();
@@ -978,10 +983,12 @@ void PlotWindow::updateMultiFreqPlots(const QSharedPointer<const PlotSnapshot>& 
             ? QStringLiteral("归一化阻抗虚部") : QStringLiteral("阻抗虚部 (Ω)"));
     }
 
-    const double retentionSecs = m_mfRetentionSecs * 1000.0;
+    const double retentionSecs = m_reviewMode ? 0.0 : m_mfRetentionSecs * 1000.0;
     const double impCutoffMs = latest - retentionSecs;
     int impStartIdx = 0;
-    for (; impStartIdx < n && snapshot->timeMs[impStartIdx] < impCutoffMs; ++impStartIdx) {}
+    if (!m_reviewMode) {
+        for (; impStartIdx < n && snapshot->timeMs[impStartIdx] < impCutoffMs; ++impStartIdx) {}
+    }
 
     for (int i = 0; i < nPoints && i < m_mfImpedanceCurves.size(); ++i) {
         if (i >= impX.size() || i >= impY.size()) continue;
@@ -1129,12 +1136,35 @@ void PlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
     const bool nowReview = (mode == SelectionState::Review);
 
     if (nowReview) {
-        if (m_lastMode == FrameData::MultiFreqEddy) {
+        qDebug() << "[PlotWindow] onSelectionChanged Review mode, startMs=" << startMs << "endMs=" << endMs
+                 << "m_lastMode=" << static_cast<int>(m_lastMode);
+        // 始终探测 DB 中 multifreq_frames 是否有数据
+        // 不信任 m_lastMode（可能为 Legacy 或来自其他会话的陈旧值）
+        bool hasMultiFreqData = false;
+        {
+            auto* hdp = HistoryDataProvider::instance();
+            qDebug() << "[PlotWindow] probing DB: hdp=" << (hdp ? "ok" : "null")
+                     << "isOpen=" << (hdp ? hdp->isDatabaseOpen() : false);
+            if (hdp && hdp->isDatabaseOpen()) {
+                const auto rows = hdp->fetchMultiFreqRawChunk(startMs, endMs, startMs - 1,
+                    std::numeric_limits<qint64>::min(), 1);
+                hasMultiFreqData = !rows.isEmpty();
+                qDebug() << "[PlotWindow] DB probe result: rows.size=" << rows.size()
+                         << "hasMultiFreqData=" << hasMultiFreqData;
+            }
+        }
+        if (hasMultiFreqData) {
+            qDebug() << "[PlotWindow] calling loadMultiFreqReviewFromDb";
+            m_reviewLoadCanceled.storeRelaxed(1); // 取消上一次仍在跑的异步加载
+            m_reviewMode = true;  // 必须在异步加载前设置，与 MagArray/PulseEddy 一致
             loadMultiFreqReviewFromDb();
+        } else {
+            qDebug() << "[PlotWindow] no MultiFreq data detected, skipping review load";
         }
         // For other modes, review loading not yet implemented
     } else {
         // Return to live mode
+        m_reviewLoadCanceled.storeRelaxed(1); // 取消正在运行的异步加载
         m_reviewFrames.clear();
         m_reviewMode = false;
         // Force re-render from current live snapshot
@@ -1149,13 +1179,22 @@ void PlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
 void PlotWindow::loadMultiFreqReviewFromDb()
 {
     auto* hdp = HistoryDataProvider::instance();
-    if (!hdp || !hdp->isDatabaseOpen()) return;
+    if (!hdp || !hdp->isDatabaseOpen()) {
+        qDebug() << "[PlotWindow::loadReview] hdp null or not open";
+        return;
+    }
+    qDebug() << "[PlotWindow::loadReview] start, path=" << hdp->currentDatabasePath();
 
     m_reviewFrames.clear();
+    m_reviewLoadCanceled.storeRelaxed(0); // 新加载开始，清除取消标志
 
     const qint64 startMs = m_reviewStartMs;
     const qint64 endMs = m_reviewEndMs;
     const quint64 epoch = ++m_reviewEpoch;
+
+    // 更新窗口标题提示加载中
+    m_loadingTitle = windowTitle();
+    setWindowTitle(m_loadingTitle + QStringLiteral(" — 加载中..."));
 
     // 异步加载（QPointer 防止窗口销毁后回调崩溃）
     QPointer<PlotWindow> self(this);
@@ -1163,28 +1202,63 @@ void PlotWindow::loadMultiFreqReviewFromDb()
         // 创建独立的 SqlHistoryQuery（不同的连接名，避免与主连接冲突）
         SqlHistoryQuery query;
         const QString dbPath = HistoryDataProvider::instance()->currentDatabasePath();
+        qDebug() << "[PlotWindow::loadReview] bg thread: dbPath=" << dbPath;
         if (dbPath.isEmpty()) return;
-        if (!query.open(dbPath)) return;
+        if (!query.open(dbPath)) {
+            qDebug() << "[PlotWindow::loadReview] bg thread: open failed";
+            return;
+        }
+        qDebug() << "[PlotWindow::loadReview] bg thread: DB opened, querying...";
 
         const qint64 totalRows = query.estimateMultiFreqRowCount(startMs, endMs);
+        qDebug() << "[PlotWindow::loadReview] bg: totalRows estimate=" << totalRows
+                 << "startMs=" << startMs << "endMs=" << endMs;
         const int maxFrames = 5000;
         const int stride = qMax(1, static_cast<int>(totalRows / maxFrames));
 
         QMap<qint64, QVector<SqlHistoryQuery::MultiFreqFrameRow>> frameGroups;
+        QSet<int> allFactors;  // 从全部行收集，不受 stride 采样影响，保证频率曲线数量稳定
+        QSet<qint64> seenFrames; // 跟踪已见过的 frameIndex，用于按帧采样
         qint64 lastTs = startMs - 1;
         qint64 lastRowId = std::numeric_limits<qint64>::min();
-        int rowIdx = 0;
+        // stride 应用于帧而非行：每帧含多个频率因子行，按行采样会导致帧数据不完整
+        const int avgFreqPerFrame = qMax(1, static_cast<int>(allFactors.size() > 0 ? allFactors.size() : 4));
+        const qint64 estFrameCount = totalRows / avgFreqPerFrame;
+        const int frameStride = qMax(1, static_cast<int>(estFrameCount / maxFrames));
+        int frameSeq = 0;
 
         while (true) {
+            // 检查取消标志（用户拖动了新范围或切换回 Live）
+            if (self && self->m_reviewLoadCanceled.loadRelaxed()) {
+                qDebug() << "[PlotWindow::loadReview] bg: cancelled";
+                return;
+            }
             const auto rows = query.fetchMultiFreqRawChunk(startMs, endMs, lastTs, lastRowId, 500);
             if (rows.isEmpty()) break;
 
             for (const auto& r : rows) {
-                if (rowIdx++ % stride != 0) continue;
-                frameGroups[r.frameIndex].append(r);
+                allFactors.insert(r.frequencyFactor);  // 全量收集，保证 f1-f4 完整体现
+
+                // 按帧采样：首次见到新 frameIndex 时判断是否采样该帧
+                if (!seenFrames.contains(r.frameIndex)) {
+                    seenFrames.insert(r.frameIndex);
+                    if (frameSeq++ % frameStride == 0) {
+                        frameGroups[r.frameIndex] = {}; // 标记该帧需要收集完整数据
+                    }
+                }
+                // 被选中的帧收集其所有频率因子行
+                if (frameGroups.contains(r.frameIndex)) {
+                    frameGroups[r.frameIndex].append(r);
+                }
             }
             lastTs = rows.last().timestampMs;
             lastRowId = rows.last().rowId;
+        }
+
+        // 构建完成后再次检查取消
+        if (self && self->m_reviewLoadCanceled.loadRelaxed()) {
+            qDebug() << "[PlotWindow::loadReview] bg: cancelled after build";
+            return;
         }
 
         // 按 frameIndex 排序组装
@@ -1214,25 +1288,37 @@ void PlotWindow::loadMultiFreqReviewFromDb()
         }
 
         // 回主线程
+        qDebug() << "[PlotWindow::loadReview] bg: built" << results.size() << "frames, posting to main thread";
         if (!self) return;
-        QMetaObject::invokeMethod(self, [self, epoch, results = std::move(results)]() {
-            if (!self || epoch != self->m_reviewEpoch) return;
-            self->m_reviewFrames = results;
-            self->m_reviewMode = true;
-            if (self->m_lastMode == FrameData::MultiFreqEddy) {
-                self->buildAndRenderReviewSnapshot();
+        QMetaObject::invokeMethod(self, [self, epoch, results = std::move(results), allFactors = std::move(allFactors)]() {
+            if (!self || epoch != self->m_reviewEpoch || !self->m_reviewMode) {
+                qDebug() << "[PlotWindow::loadReview] main: stale, destroyed, or no longer in review";
+                return;
             }
+            qDebug() << "[PlotWindow::loadReview] main: applying" << results.size() << "frames, m_lastMode=" << static_cast<int>(self->m_lastMode);
+            self->m_reviewFrames = results;
+            self->m_reviewAllFactors = allFactors;
+            self->m_reviewMode = true;
+            // 恢复窗口标题
+            self->setWindowTitle(self->m_loadingTitle.isEmpty() ? self->windowTitle() : self->m_loadingTitle);
+            // 不检查 m_lastMode：数据已确认是多频类型才进入此流程
+            self->buildAndRenderReviewSnapshot();
         }, Qt::QueuedConnection);
     });
 }
 
 void PlotWindow::buildAndRenderReviewSnapshot()
 {
-    // 收集所有唯一频率因子
+    // 优先使用 DB 全量扫描的频率因子集合，保证拖动范围时曲线数量稳定
+    // 回退：从采样帧中收集（re-render 路径）
     QSet<int> factors;
-    for (const auto& rec : m_reviewFrames) {
-        for (const auto& pt : rec.mfFreqPoints) {
-            factors.insert(pt.frequencyFactor);
+    if (!m_reviewAllFactors.isEmpty()) {
+        factors = m_reviewAllFactors;
+    } else {
+        for (const auto& rec : m_reviewFrames) {
+            for (const auto& pt : rec.mfFreqPoints) {
+                factors.insert(pt.frequencyFactor);
+            }
         }
     }
     QList<int> sortedFactors = factors.values();

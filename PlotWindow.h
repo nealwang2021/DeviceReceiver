@@ -118,10 +118,13 @@ private:
 
     // Review mode state
     QVector<FrameRecord> m_reviewFrames;
+    QSet<int> m_reviewAllFactors; // 全量频率因子集合，保证拖动范围时曲线数量稳定
     bool m_reviewMode = false;
     qint64 m_reviewStartMs = 0;
     qint64 m_reviewEndMs = 0;
     quint64 m_reviewEpoch = 0;
+    QAtomicInt m_reviewLoadCanceled; // 异步加载取消标志，跨线程安全
+    QString m_loadingTitle;          // 保存加载前的窗口标题，用于恢复
 };
 
 #endif // PLOTWINDOW_H

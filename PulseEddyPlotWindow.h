@@ -35,10 +35,14 @@ public slots:
     void onCriticalFrame(const FrameData& frame) override;
 
 private slots:
+    void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
+
+private slots:
     void onStartReferenceClicked();
     void onClearReferenceClicked();
 
 private:
+    void loadReviewFromDb();
     void initPlot();
     void onThemeChanged() override;
     void updateReferenceStatus();
@@ -57,6 +61,12 @@ private:
     quint64 m_lastFrameId = 0;
     bool    m_hasReference = false;
     int     m_refFrameCount = 0;
+
+    // --- Review mode ---
+    qint64 m_reviewStartMs = 0;
+    qint64 m_reviewEndMs = 0;
+    bool m_reviewMode = false;
+    quint64 m_reviewEpoch = 0;
 };
 
 #endif // PULSEEDDYPLOTWINDOW_H

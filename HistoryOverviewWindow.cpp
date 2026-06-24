@@ -28,6 +28,9 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QUuid>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -522,6 +525,13 @@ void HistoryOverviewWindow::onImportClicked()
         }
         refreshOverview(true);
         m_prevSelModeForEnvelope = static_cast<int>(SelectionState::instance()->mode());
+        // 自动切换到 Review 模式，使各绘图窗口从历史库加载数据
+        {
+            qint64 dbMinMs = 0, dbMaxMs = 0;
+            if (hdp->queryTimeBoundsFast(dbMinMs, dbMaxMs)) {
+                SelectionState::instance()->setRangeAndMode(dbMinMs, dbMaxMs, SelectionState::Review);
+            }
+        }
         updateRefreshButtonToolTip();
         return;
     }
@@ -637,6 +647,13 @@ void HistoryOverviewWindow::onImportClicked()
         }
         refreshOverview(true);
         m_prevSelModeForEnvelope = static_cast<int>(SelectionState::instance()->mode());
+        // 自动切换到 Review 模式，使各绘图窗口从历史库加载数据
+        {
+            qint64 dbMinMs = 0, dbMaxMs = 0;
+            if (hdpInner->queryTimeBoundsFast(dbMinMs, dbMaxMs)) {
+                SelectionState::instance()->setRangeAndMode(dbMinMs, dbMaxMs, SelectionState::Review);
+            }
+        }
         updateRefreshButtonToolTip();
         QMessageBox::information(this, QStringLiteral("导入完成"),
                                  QStringLiteral("已导入并打开：\n%1").arg(targetDbPath));
@@ -1553,6 +1570,69 @@ void HistoryOverviewWindow::onExportClicked()
 
     dlgLayout->addWidget(rangeBox);
 
+    // ---- 设备类型选择（探测 DB 中有哪些表含数据） ----
+    int exportDetectedType = 0; // 0=Standard 1=MultiFreq 2=MagArray 3=PulseEddy
+    QComboBox* deviceTypeCombo = nullptr;
+    {
+        // 探测 DB 中各表（不限时间范围，只看表是否非空）
+        QStringList availableTypes;
+        const QString probeConn = QStringLiteral("export_type_probe_%1")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+        {
+            QSqlDatabase probeDb = QSqlDatabase::addDatabase("QSQLITE", probeConn);
+            probeDb.setDatabaseName(hdp->currentDatabasePath());
+            if (probeDb.open()) {
+                QSqlQuery pq(probeDb);
+                auto hasData = [&](const QString& table) -> bool {
+                    return pq.exec(QStringLiteral("SELECT COUNT(*) FROM %1").arg(table))
+                           && pq.next() && pq.value(0).toLongLong() > 0;
+                };
+                if (hasData(QStringLiteral("aligned_frames"))) {
+                    availableTypes << QStringLiteral("阵列涡流 (标准)");
+                }
+                if (hasData(QStringLiteral("multifreq_frames"))) {
+                    availableTypes << QStringLiteral("多频涡流");
+                }
+                if (hasData(QStringLiteral("mag_array_frames"))) {
+                    availableTypes << QStringLiteral("漏磁检测");
+                }
+                if (hasData(QStringLiteral("pulse_eddy_frames"))) {
+                    availableTypes << QStringLiteral("脉冲涡流");
+                }
+                probeDb.close();
+            }
+        }
+        QSqlDatabase::removeDatabase(probeConn);
+
+        if (availableTypes.size() > 1) {
+            auto* typeBox = new QWidget(&dialog);
+            auto* typeLayout = new QHBoxLayout(typeBox);
+            typeLayout->setContentsMargins(0, 0, 0, 0);
+            auto* typeLabel = new QLabel(QStringLiteral("<b>设备类型:</b>"), typeBox);
+            deviceTypeCombo = new QComboBox(typeBox);
+            deviceTypeCombo->addItems(availableTypes);
+            // 默认选中与 rebuildEnvelope 优先级一致的类型
+            // rebuildEnvelope 优先级: MagArray > PulseEddy > MultiFreq > Standard
+            if (availableTypes.contains(QStringLiteral("漏磁检测")))
+                deviceTypeCombo->setCurrentText(QStringLiteral("漏磁检测"));
+            else if (availableTypes.contains(QStringLiteral("脉冲涡流")))
+                deviceTypeCombo->setCurrentText(QStringLiteral("脉冲涡流"));
+            else if (availableTypes.contains(QStringLiteral("多频涡流")))
+                deviceTypeCombo->setCurrentText(QStringLiteral("多频涡流"));
+            typeLayout->addWidget(typeLabel);
+            typeLayout->addWidget(deviceTypeCombo);
+            typeLayout->addStretch();
+            dlgLayout->addWidget(typeBox);
+        } else if (availableTypes.size() == 1) {
+            // 仅一种类型，自动确定
+            const QString& only = availableTypes.first();
+            if (only == QStringLiteral("多频涡流"))        exportDetectedType = 1;
+            else if (only == QStringLiteral("漏磁检测"))   exportDetectedType = 2;
+            else if (only == QStringLiteral("脉冲涡流"))   exportDetectedType = 3;
+            // else Standard (already 0)
+        }
+    }
+
     // 格式
     auto* formatBox = new QWidget(&dialog);
     auto* formatLayout = new QHBoxLayout(formatBox);
@@ -1582,6 +1662,15 @@ void HistoryOverviewWindow::onExportClicked()
         return;
     }
 
+    // 解析设备类型选择
+    if (deviceTypeCombo) {
+        const QString selected = deviceTypeCombo->currentText();
+        if (selected == QStringLiteral("多频涡流"))         exportDetectedType = 1;
+        else if (selected == QStringLiteral("漏磁检测"))    exportDetectedType = 2;
+        else if (selected == QStringLiteral("脉冲涡流"))    exportDetectedType = 3;
+        // else 阵列涡流 → 0
+    }
+
     // 解析选择
     qint64 startMs = dbMinMs;
     qint64 endMs = dbMaxMs;
@@ -1601,8 +1690,17 @@ void HistoryOverviewWindow::onExportClicked()
 
     const bool useHdf5 = radioHdf5->isChecked();
     const QString ext = useHdf5 ? QStringLiteral("h5") : QStringLiteral("csv");
-    const QString defaultName = QStringLiteral("db_export_%1.%2")
-        .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")), ext);
+    // 设备类型英文前缀
+    const char* devicePrefix = "aligned";
+    switch (exportDetectedType) {
+    case 1: devicePrefix = "multifreq_eddy"; break;
+    case 2: devicePrefix = "mag_array";      break;
+    case 3: devicePrefix = "pulse_eddy";     break;
+    default: break;
+    }
+    const QString defaultName = QStringLiteral("%1_db_export_%2.%3")
+        .arg(QString::fromLatin1(devicePrefix),
+             QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")), ext);
 
     const QString exportDirPath = defaultExportDirectoryPath();
     QDir exportDir(exportDirPath);
@@ -1670,6 +1768,7 @@ void HistoryOverviewWindow::onExportClicked()
         ? QStringLiteral("SessionRealtime")
         : QStringLiteral("OfflineExternal");
     req.estimatedTotal = estimatedRows;
+    req.detectedType = exportDetectedType;
     req.chunkSize = 8192;
     service->setRequest(req);
 

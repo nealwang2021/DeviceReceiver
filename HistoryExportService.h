@@ -38,6 +38,7 @@ public:
         QString sourceMode;         // "SessionRealtime" / "OfflineExternal"
         qint64 estimatedTotal = 0;  // UI 预估值，用于进度 maximum；0 表示未知
         int chunkSize = 8192;       // 每批读取行数
+        int detectedType = 0;       // 设备类型: 0=Standard, 1=MultiFreq, 2=MagArray, 3=PulseEddy
     };
 
     explicit HistoryExportService(QObject* parent = nullptr);
@@ -81,10 +82,27 @@ public:
                              HistoryDataProvider::HistorySourceMode mode =
                                  HistoryDataProvider::HistorySourceMode::SessionRealtime);
 
+    /// 漏磁检测 HDF5 导出（同步调用，返回 true/false）。
+    bool exportMagArrayHdf5(const QString& filePath, qint64 startMs, qint64 endMs,
+                            const QString& dbPath = QString(),
+                            HistoryDataProvider::HistorySourceMode mode =
+                                HistoryDataProvider::HistorySourceMode::SessionRealtime);
+
 private:
     bool exportPulseEddyHdf5Impl(const QString& filePath, qint64 startMs, qint64 endMs,
                                  const QString& dbPath,
                                  HistoryDataProvider::HistorySourceMode mode);
+    bool exportMagArrayHdf5Impl(const QString& filePath, qint64 startMs, qint64 endMs,
+                                const QString& dbPath,
+                                HistoryDataProvider::HistorySourceMode mode);
+
+    // CSV 导出（各设备类型）
+    bool exportMultiFreqCsv(const QString& filePath, qint64 startMs, qint64 endMs,
+                            const QString& dbPath, HistoryDataProvider::HistorySourceMode mode);
+    bool exportMagArrayCsv(const QString& filePath, qint64 startMs, qint64 endMs,
+                           const QString& dbPath, HistoryDataProvider::HistorySourceMode mode);
+    bool exportPulseEddyCsv(const QString& filePath, qint64 startMs, qint64 endMs,
+                            const QString& dbPath, HistoryDataProvider::HistorySourceMode mode);
 };
 
 #endif // HISTORYEXPORTSERVICE_H

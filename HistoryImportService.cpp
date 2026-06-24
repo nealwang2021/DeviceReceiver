@@ -140,15 +140,93 @@ void HistoryImportService::run()
 {
     m_canceled.storeRelaxed(0);
 
+    // ---- HDF5 自动检测：探测文件包含哪个设备类型的 group ----
+    auto detectHdf5Type = [&]() -> int {
+        // 0=Standard, 1=MultiFreq, 2=MagArray, 3=PulseEddy
+#ifdef HAS_HDF5
+        hid_t probeId = H5Fopen(m_request.sourcePath.toLocal8Bit().constData(),
+                                H5F_ACC_RDONLY, H5P_DEFAULT);
+        if (probeId < 0) return 0;
+        struct ProbeCleanup { hid_t id; ~ProbeCleanup() { if (id>=0) H5Fclose(id); } };
+        ProbeCleanup pc{probeId};
+        if (H5Lexists(probeId, "/pulse", H5P_DEFAULT) > 0)     return 3;
+        if (H5Lexists(probeId, "/magarray", H5P_DEFAULT) > 0)  return 2;
+        if (H5Lexists(probeId, "/impedance", H5P_DEFAULT) > 0) return 1;
+        return 0;
+#else
+        return 0;
+#endif
+    };
+
+    // ---- CSV 自动检测：读取文件头部 # source= 注释 ----
+    auto detectCsvType = [&]() -> int {
+        // 0=Standard, 1=MultiFreq, 2=MagArray, 3=PulseEddy
+        QFile f(m_request.sourcePath);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return 0;
+        QTextStream s(&f);
+        s.setCodec("UTF-8");
+        QString line;
+        while (s.readLineInto(&line)) {
+            if (line.startsWith(QStringLiteral("# source="))) {
+                f.close();
+                QString src = line.mid(9).trimmed();
+                if (src == QStringLiteral("multifreq_eddy")) return 1;
+                if (src == QStringLiteral("mag_array"))      return 2;
+                if (src == QStringLiteral("pulse_eddy"))     return 3;
+                return 0;
+            }
+            if (!line.startsWith('#')) break;
+        }
+        f.close();
+        return 0;
+    };
+
     QString error;
     bool ok = false;
     switch (m_request.format) {
-    case Format::Csv:
-        ok = importCsv(&error);
+    case Format::Csv: {
+        const int csvType = detectCsvType();
+        switch (csvType) {
+        case 1: // MultiFreq
+            ok = importMultiFreqCsv(m_request.sourcePath, m_request.targetDbPath);
+            if (!ok) error = QStringLiteral("多频涡流 CSV 导入失败");
+            break;
+        case 2: // MagArray
+            ok = importMagArrayCsv(m_request.sourcePath, m_request.targetDbPath);
+            if (!ok) error = QStringLiteral("漏磁检测 CSV 导入失败");
+            break;
+        case 3: // PulseEddy
+            ok = importPulseEddyCsv(m_request.sourcePath, m_request.targetDbPath);
+            if (!ok) error = QStringLiteral("脉冲涡流 CSV 导入失败");
+            break;
+        default:
+            ok = importCsv(&error);
+            break;
+        }
         break;
+    }
     case Format::Hdf5:
 #ifdef HAS_HDF5
-        ok = importHdf5(&error);
+    {
+        const int h5type = detectHdf5Type();
+        switch (h5type) {
+        case 1: // MultiFreq
+            ok = importMultiFreqHdf5(m_request.sourcePath, m_request.targetDbPath);
+            if (!ok) error = QStringLiteral("多频涡流 HDF5 导入失败");
+            break;
+        case 2: // MagArray
+            ok = importMagArrayHdf5(m_request.sourcePath, m_request.targetDbPath);
+            if (!ok) error = QStringLiteral("漏磁检测 HDF5 导入失败");
+            break;
+        case 3: // PulseEddy
+            ok = importPulseEddyHdf5(m_request.sourcePath, m_request.targetDbPath);
+            if (!ok) error = QStringLiteral("脉冲涡流 HDF5 导入失败");
+            break;
+        default:
+            ok = importHdf5(&error);
+            break;
+        }
+    }
 #else
         error = QStringLiteral("当前构建未启用 HDF5 支持，请使用 CSV 导入");
         ok = false;
@@ -524,6 +602,231 @@ bool HistoryImportService::importCsv(QString* errorMessage)
     db = QSqlDatabase();
     // defer removeDatabase: avoid removing while query handles may still be alive
     emit progress(writtenRows, writtenRows);
+    return true;
+}
+
+// ---- CSV 导入：各设备类型 ----
+
+bool HistoryImportService::importMultiFreqCsv(const QString& filePath, const QString& targetDbPath)
+{
+    if (!QFile::exists(filePath)) return false;
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+
+    QDir().mkpath(QFileInfo(targetDbPath).absolutePath());
+    const QString connectionName = buildUniqueConnectionName();
+    ScopedSqlConnectionCleanup connectionCleanup(connectionName);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(targetDbPath);
+    if (!db.open()) return false;
+
+    QString schemaError;
+    if (!initTargetDb(db, &schemaError)) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    if (!RealtimeSqlRecorder::ensureMultiFreqFramesSchema(db, &schemaError)) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+
+    QSqlQuery clearQuery(db);
+    clearQuery.exec(QStringLiteral("DELETE FROM multifreq_frames"));
+    QSqlQuery insertQuery(db);
+    if (!insertQuery.prepare(QStringLiteral(
+            "INSERT INTO multifreq_frames(timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
+            "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
+            "normalized_impedance_real, normalized_impedance_imag, "
+            "voltage_magnitude, current_magnitude, valid) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")))
+    {
+        db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+    if (!db.transaction()) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+
+    QTextStream stream(&file);
+    stream.setCodec("UTF-8");
+
+    // Skip header comments and column header line
+    QString line;
+    while (stream.readLineInto(&line)) {
+        if (line.startsWith('#')) continue;
+        if (line.startsWith(QStringLiteral("timestamp_ms_utc"))) continue;
+        break;
+    }
+    if (line.isEmpty() && stream.atEnd()) { db.commit(); db.close(); db = QSqlDatabase(); emit progress(0,0); return true; }
+
+    qint64 written = 0;
+    emit progress(0, 0);
+    auto processLine = [&](const QString& l) {
+        QStringList fields;
+        if (!parseCsvLine(l, &fields)) return;
+        if (fields.size() < 12) return;
+        insertQuery.bindValue(0,  fields[0].toLongLong());
+        insertQuery.bindValue(1,  fields[1].toLongLong());
+        insertQuery.bindValue(2,  fields[2].toInt());
+        insertQuery.bindValue(3,  fields[3].toDouble());
+        insertQuery.bindValue(4,  parseDoubleOrNull(fields[4]));
+        insertQuery.bindValue(5,  parseDoubleOrNull(fields[5]));
+        insertQuery.bindValue(6,  parseDoubleOrNull(fields[6]));
+        insertQuery.bindValue(7,  parseDoubleOrNull(fields[7]));
+        insertQuery.bindValue(8,  parseDoubleOrNull(fields[8]));
+        insertQuery.bindValue(9,  parseDoubleOrNull(fields[9]));
+        insertQuery.bindValue(10, parseDoubleOrNull(fields[10]));
+        insertQuery.bindValue(11, parseDoubleOrNull(fields[11]));
+        insertQuery.bindValue(12, 1); // valid
+        if (insertQuery.exec()) ++written;
+    };
+    processLine(line);
+    while (stream.readLineInto(&line)) {
+        if (m_canceled.loadRelaxed() == 1) { db.rollback(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+        processLine(line);
+        if ((written % 1000) == 0) emit progress(written, 0);
+    }
+    if (!db.commit()) { db.rollback(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    db.close(); db = QSqlDatabase();
+    emit progress(written, written);
+    return true;
+}
+
+bool HistoryImportService::importMagArrayCsv(const QString& filePath, const QString& targetDbPath)
+{
+    if (!QFile::exists(filePath)) return false;
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+
+    QDir().mkpath(QFileInfo(targetDbPath).absolutePath());
+    const QString connectionName = buildUniqueConnectionName();
+    ScopedSqlConnectionCleanup connectionCleanup(connectionName);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(targetDbPath);
+    if (!db.open()) return false;
+
+    QString schemaError;
+    if (!initTargetDb(db, &schemaError)) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    if (!RealtimeSqlRecorder::ensureMagArrayFramesSchema(db, &schemaError)) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+
+    QSqlQuery clearQuery(db);
+    clearQuery.exec(QStringLiteral("DELETE FROM mag_array_frames"));
+    QSqlQuery insertQuery(db);
+    if (!insertQuery.prepare(QStringLiteral(
+            "INSERT INTO mag_array_frames(timestamp_unix_ms, frame_index, sensor_index, "
+            "x_mean, y_mean, z_mean, x_latest, y_latest, z_latest, "
+            "magnitude_mean, magnitude_latest, "
+            "processed_value_x, processed_value_y, processed_value_z) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")))
+    {
+        db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+    if (!db.transaction()) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+
+    QTextStream stream(&file);
+    stream.setCodec("UTF-8");
+
+    QString line;
+    while (stream.readLineInto(&line)) {
+        if (line.startsWith('#')) continue;
+        if (line.startsWith(QStringLiteral("timestamp_ms_utc"))) continue;
+        break;
+    }
+    if (line.isEmpty() && stream.atEnd()) { db.commit(); db.close(); db = QSqlDatabase(); emit progress(0,0); return true; }
+
+    qint64 written = 0;
+    emit progress(0, 0);
+    auto processLine = [&](const QString& l) {
+        QStringList fields;
+        if (!parseCsvLine(l, &fields)) return;
+        if (fields.size() < 14) return;
+        insertQuery.bindValue(0,  fields[0].toLongLong());
+        insertQuery.bindValue(1,  fields[1].toLongLong());
+        insertQuery.bindValue(2,  fields[2].toInt());
+        insertQuery.bindValue(3,  parseDoubleOrNull(fields[3]));
+        insertQuery.bindValue(4,  parseDoubleOrNull(fields[4]));
+        insertQuery.bindValue(5,  parseDoubleOrNull(fields[5]));
+        insertQuery.bindValue(6,  parseDoubleOrNull(fields[6]));
+        insertQuery.bindValue(7,  parseDoubleOrNull(fields[7]));
+        insertQuery.bindValue(8,  parseDoubleOrNull(fields[8]));
+        insertQuery.bindValue(9,  parseDoubleOrNull(fields[9]));
+        insertQuery.bindValue(10, parseDoubleOrNull(fields[10]));
+        insertQuery.bindValue(11, parseDoubleOrNull(fields[11]));
+        insertQuery.bindValue(12, parseDoubleOrNull(fields[12]));
+        insertQuery.bindValue(13, parseDoubleOrNull(fields[13]));
+        if (insertQuery.exec()) ++written;
+    };
+    processLine(line);
+    while (stream.readLineInto(&line)) {
+        if (m_canceled.loadRelaxed() == 1) { db.rollback(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+        processLine(line);
+        if ((written % 1000) == 0) emit progress(written, 0);
+    }
+    if (!db.commit()) { db.rollback(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    db.close(); db = QSqlDatabase();
+    emit progress(written, written);
+    return true;
+}
+
+bool HistoryImportService::importPulseEddyCsv(const QString& filePath, const QString& targetDbPath)
+{
+    if (!QFile::exists(filePath)) return false;
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+
+    QDir().mkpath(QFileInfo(targetDbPath).absolutePath());
+    const QString connectionName = buildUniqueConnectionName();
+    ScopedSqlConnectionCleanup connectionCleanup(connectionName);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(targetDbPath);
+    if (!db.open()) return false;
+
+    QString schemaError;
+    if (!initTargetDb(db, &schemaError)) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    if (!RealtimeSqlRecorder::ensurePulseEddyFramesSchema(db, &schemaError)) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+
+    QSqlQuery clearQuery(db);
+    clearQuery.exec(QStringLiteral("DELETE FROM pulse_eddy_frames"));
+    QSqlQuery insertQuery(db);
+    if (!insertQuery.prepare(QStringLiteral(
+            "INSERT INTO pulse_eddy_frames(timestamp_unix_ms, frame_index, "
+            "sample_count, sample_rate_hz, raw_values, has_reference, reference_values, min_value, max_value) "
+            "VALUES(?,?,?,?,?,?,?,?,?)")))
+    {
+        db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+    if (!db.transaction()) { db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+
+    QTextStream stream(&file);
+    stream.setCodec("UTF-8");
+
+    QString line;
+    while (stream.readLineInto(&line)) {
+        if (line.startsWith('#')) continue;
+        if (line.startsWith(QStringLiteral("timestamp_ms_utc"))) continue;
+        break;
+    }
+    if (line.isEmpty() && stream.atEnd()) { db.commit(); db.close(); db = QSqlDatabase(); emit progress(0,0); return true; }
+
+    qint64 written = 0;
+    emit progress(0, 0);
+    auto processLine = [&](const QString& l) {
+        QStringList fields;
+        if (!parseCsvLine(l, &fields)) return;
+        if (fields.size() < 9) return;
+        insertQuery.bindValue(0, fields[0].toLongLong());
+        insertQuery.bindValue(1, fields[1].toLongLong());
+        insertQuery.bindValue(2, fields[2].toInt());
+        insertQuery.bindValue(3, parseDoubleOrNull(fields[3]));
+        // raw_values: decode from Base64
+        insertQuery.bindValue(4, QByteArray::fromBase64(fields[4].toLatin1()));
+        insertQuery.bindValue(5, fields[5].toInt());
+        // reference_values: decode from Base64
+        insertQuery.bindValue(6, fields[6].isEmpty() ? QByteArray() : QByteArray::fromBase64(fields[6].toLatin1()));
+        insertQuery.bindValue(7, parseDoubleOrNull(fields[7]));
+        insertQuery.bindValue(8, parseDoubleOrNull(fields[8]));
+        if (insertQuery.exec()) ++written;
+    };
+    processLine(line);
+    while (stream.readLineInto(&line)) {
+        if (m_canceled.loadRelaxed() == 1) { db.rollback(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+        processLine(line);
+        if ((written % 100) == 0) emit progress(written, 0);
+    }
+    if (!db.commit()) { db.rollback(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    db.close(); db = QSqlDatabase();
+    emit progress(written, written);
     return true;
 }
 
@@ -1147,6 +1450,288 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
     emit progress(written, written);
     return true;
 }
+
+bool HistoryImportService::importPulseEddyHdf5(const QString& filePath, const QString& targetDbPath)
+{
+    if (!QFile::exists(filePath)) return false;
+
+    hid_t fileId = H5Fopen(filePath.toLocal8Bit().constData(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (fileId < 0) return false;
+    auto closeH5 = [&]() { if (fileId >= 0) { H5Fclose(fileId); fileId = -1; } };
+
+    auto openDs = [&](const char* name) -> hid_t {
+        if (H5Lexists(fileId, name, H5P_DEFAULT) <= 0) return -1;
+        return H5Dopen2(fileId, name, H5P_DEFAULT);
+    };
+
+    hid_t dsTs   = openDs("/frames/timestamp_ms_utc");
+    hid_t dsFi   = openDs("/frames/frame_index");
+    hid_t dsSc   = openDs("/frames/sample_count");
+    hid_t dsSr   = openDs("/frames/sample_rate_hz");
+    hid_t dsMin  = openDs("/frames/min_value");
+    hid_t dsMax  = openDs("/frames/max_value");
+    hid_t dsRef  = openDs("/frames/has_reference");
+    hid_t dsRaw  = openDs("/pulse/raw_values");
+    hid_t dsRefV = openDs("/pulse/reference_values");
+    const hid_t allDs[] = { dsTs, dsFi, dsSc, dsSr, dsMin, dsMax, dsRef, dsRaw, dsRefV };
+    constexpr int nAllDs = sizeof(allDs) / sizeof(allDs[0]);
+    for (int i = 0; i < nAllDs; ++i) {
+        if (allDs[i] < 0) {
+            for (int j = 0; j < nAllDs; ++j) if (allDs[j] >= 0) H5Dclose(allDs[j]);
+            closeH5(); return false;
+        }
+    }
+
+    hid_t tsSpace = H5Dget_space(dsTs);
+    hsize_t dims[1] = {0};
+    H5Sget_simple_extent_dims(tsSpace, dims, nullptr);
+    H5Sclose(tsSpace);
+    const qint64 totalRows = static_cast<qint64>(dims[0]);
+
+    hid_t rawSpace = H5Dget_space(dsRaw);
+    hsize_t rawDims[2] = {0, 0};
+    H5Sget_simple_extent_dims(rawSpace, rawDims, nullptr);
+    H5Sclose(rawSpace);
+    const int nSamp = static_cast<int>(rawDims[1]);
+
+    emit progress(0, totalRows);
+
+    QDir().mkpath(QFileInfo(targetDbPath).absolutePath());
+    const QString connectionName = buildUniqueConnectionName();
+    ScopedSqlConnectionCleanup connectionCleanup(connectionName);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(targetDbPath);
+    if (!db.open()) { for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); return false; }
+
+    QString schemaError;
+    if (!initTargetDb(db, &schemaError)) { for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    if (!RealtimeSqlRecorder::ensurePulseEddyFramesSchema(db, &schemaError)) {
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+
+    QSqlQuery clearQuery(db);
+    clearQuery.exec(QStringLiteral("DELETE FROM pulse_eddy_frames"));
+    QSqlQuery insertQuery(db);
+    if (!insertQuery.prepare(QStringLiteral(
+            "INSERT INTO pulse_eddy_frames(timestamp_unix_ms, frame_index, "
+            "sample_count, sample_rate_hz, raw_values, has_reference, reference_values, min_value, max_value) "
+            "VALUES(?,?,?,?,?,?,?,?,?)")))
+    {
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+    if (!db.transaction()) {
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+
+    const qint64 chunkSize = qMax(64, m_request.chunkSize);
+    QVector<qint64>  bTs, bFi;
+    QVector<qint32>  bSc;
+    QVector<double>  bSr, bMn, bMx;
+    QVector<quint8>  bRef;
+    QVector<double>  bRaw, bRefV;
+
+    qint64 written = 0;
+    for (qint64 offset = 0; offset < totalRows; offset += chunkSize) {
+        if (m_canceled.loadRelaxed() == 1) {
+            db.rollback();
+            for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+        }
+        const qint64 n = qMin(chunkSize, totalRows - offset);
+        bTs.resize(n); bFi.resize(n); bSc.resize(n); bSr.resize(n); bMn.resize(n); bMx.resize(n); bRef.resize(n);
+        bRaw.resize(n * nSamp); bRefV.resize(n * nSamp);
+
+        if (!readHyperslab1D(dsTs,  H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bTs.data()) ||
+            !readHyperslab1D(dsFi,  H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bFi.data()) ||
+            !readHyperslab1D(dsSc,  H5T_NATIVE_INT32,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bSc.data()) ||
+            !readHyperslab1D(dsSr,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bSr.data()) ||
+            !readHyperslab1D(dsMin, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bMn.data()) ||
+            !readHyperslab1D(dsMax, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bMx.data()) ||
+            !readHyperslab1D(dsRef, H5T_NATIVE_UINT8,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bRef.data()) ||
+            !readHyperslab2D(dsRaw,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), static_cast<hsize_t>(nSamp), bRaw.data()) ||
+            !readHyperslab2D(dsRefV, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), static_cast<hsize_t>(nSamp), bRefV.data()))
+        {
+            db.rollback();
+            for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+        }
+
+        for (qint64 r = 0; r < n; ++r) {
+            QByteArray rawBa(reinterpret_cast<const char*>(bRaw.data() + r * nSamp), nSamp * static_cast<int>(sizeof(double)));
+            QByteArray refBa(reinterpret_cast<const char*>(bRefV.data() + r * nSamp), nSamp * static_cast<int>(sizeof(double)));
+            insertQuery.bindValue(0, bTs[r]);
+            insertQuery.bindValue(1, bFi[r]);
+            insertQuery.bindValue(2, static_cast<int>(bSc[r]));
+            insertQuery.bindValue(3, bSr[r]);
+            insertQuery.bindValue(4, rawBa);
+            insertQuery.bindValue(5, static_cast<int>(bRef[r]));
+            insertQuery.bindValue(6, static_cast<int>(bRef[r]) ? QVariant(refBa) : QVariant(QByteArray()));
+            insertQuery.bindValue(7, std::isfinite(bMn[r]) ? QVariant(bMn[r]) : QVariant());
+            insertQuery.bindValue(8, std::isfinite(bMx[r]) ? QVariant(bMx[r]) : QVariant());
+            if (!insertQuery.exec()) {
+                db.rollback();
+                for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+            }
+            ++written;
+        }
+        emit progress(written, totalRows);
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+
+    for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]);
+    closeH5();
+    db.close();
+    db = QSqlDatabase();
+    emit progress(written, written);
+    return true;
+}
+
+bool HistoryImportService::importMagArrayHdf5(const QString& filePath, const QString& targetDbPath)
+{
+    if (!QFile::exists(filePath)) return false;
+
+    hid_t fileId = H5Fopen(filePath.toLocal8Bit().constData(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (fileId < 0) return false;
+    auto closeH5 = [&]() { if (fileId >= 0) { H5Fclose(fileId); fileId = -1; } };
+
+    auto openDs = [&](const char* name) -> hid_t {
+        if (H5Lexists(fileId, name, H5P_DEFAULT) <= 0) return -1;
+        return H5Dopen2(fileId, name, H5P_DEFAULT);
+    };
+
+    hid_t dsTs   = openDs("/frames/timestamp_ms_utc");
+    hid_t dsFi   = openDs("/frames/frame_index");
+    hid_t dsSi   = openDs("/magarray/sensor_index");
+    hid_t dsXM   = openDs("/magarray/x_mean");
+    hid_t dsYM   = openDs("/magarray/y_mean");
+    hid_t dsZM   = openDs("/magarray/z_mean");
+    hid_t dsXL   = openDs("/magarray/x_latest");
+    hid_t dsYL   = openDs("/magarray/y_latest");
+    hid_t dsZL   = openDs("/magarray/z_latest");
+    hid_t dsMagM = openDs("/magarray/magnitude_mean");
+    hid_t dsMagL = openDs("/magarray/magnitude_latest");
+    hid_t dsPvX  = openDs("/magarray/processed_value_x");
+    hid_t dsPvY  = openDs("/magarray/processed_value_y");
+    hid_t dsPvZ  = openDs("/magarray/processed_value_z");
+    const hid_t allDs[] = { dsTs, dsFi, dsSi, dsXM, dsYM, dsZM, dsXL, dsYL, dsZL,
+                            dsMagM, dsMagL, dsPvX, dsPvY, dsPvZ };
+    constexpr int nAllDs = sizeof(allDs) / sizeof(allDs[0]);
+    for (int i = 0; i < nAllDs; ++i) {
+        if (allDs[i] < 0) {
+            for (int j = 0; j < nAllDs; ++j) if (allDs[j] >= 0) H5Dclose(allDs[j]);
+            closeH5(); return false;
+        }
+    }
+
+    hid_t tsSpace = H5Dget_space(dsTs);
+    hsize_t dims[1] = {0};
+    H5Sget_simple_extent_dims(tsSpace, dims, nullptr);
+    H5Sclose(tsSpace);
+    const qint64 totalRows = static_cast<qint64>(dims[0]);
+    emit progress(0, totalRows);
+
+    QDir().mkpath(QFileInfo(targetDbPath).absolutePath());
+    const QString connectionName = buildUniqueConnectionName();
+    ScopedSqlConnectionCleanup connectionCleanup(connectionName);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connectionName);
+    db.setDatabaseName(targetDbPath);
+    if (!db.open()) { for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); return false; }
+
+    QString schemaError;
+    if (!initTargetDb(db, &schemaError)) { for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false; }
+    if (!RealtimeSqlRecorder::ensureMagArrayFramesSchema(db, &schemaError)) {
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+
+    QSqlQuery clearQuery(db);
+    clearQuery.exec(QStringLiteral("DELETE FROM mag_array_frames"));
+    QSqlQuery insertQuery(db);
+    if (!insertQuery.prepare(QStringLiteral(
+            "INSERT INTO mag_array_frames(timestamp_unix_ms, frame_index, sensor_index, "
+            "x_mean, y_mean, z_mean, x_latest, y_latest, z_latest, "
+            "magnitude_mean, magnitude_latest, "
+            "processed_value_x, processed_value_y, processed_value_z) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")))
+    {
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+    if (!db.transaction()) {
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+
+    const qint64 chunkSize = qMax(256, m_request.chunkSize);
+    QVector<qint64>  bTs, bFi;
+    QVector<qint32>  bSi;
+    QVector<double>  bXM, bYM, bZM, bXL, bYL, bZL, bMM, bML, bPX, bPY, bPZ;
+
+    qint64 written = 0;
+    for (qint64 offset = 0; offset < totalRows; offset += chunkSize) {
+        if (m_canceled.loadRelaxed() == 1) {
+            db.rollback();
+            for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+        }
+        const qint64 n = qMin(chunkSize, totalRows - offset);
+        bTs.resize(n); bFi.resize(n); bSi.resize(n);
+        bXM.resize(n); bYM.resize(n); bZM.resize(n); bXL.resize(n); bYL.resize(n); bZL.resize(n);
+        bMM.resize(n); bML.resize(n); bPX.resize(n); bPY.resize(n); bPZ.resize(n);
+
+        if (!readHyperslab1D(dsTs,   H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bTs.data()) ||
+            !readHyperslab1D(dsFi,   H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bFi.data()) ||
+            !readHyperslab1D(dsSi,   H5T_NATIVE_INT32,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bSi.data()) ||
+            !readHyperslab1D(dsXM,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bXM.data()) ||
+            !readHyperslab1D(dsYM,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bYM.data()) ||
+            !readHyperslab1D(dsZM,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bZM.data()) ||
+            !readHyperslab1D(dsXL,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bXL.data()) ||
+            !readHyperslab1D(dsYL,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bYL.data()) ||
+            !readHyperslab1D(dsZL,   H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bZL.data()) ||
+            !readHyperslab1D(dsMagM, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bMM.data()) ||
+            !readHyperslab1D(dsMagL, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bML.data()) ||
+            !readHyperslab1D(dsPvX,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bPX.data()) ||
+            !readHyperslab1D(dsPvY,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bPY.data()) ||
+            !readHyperslab1D(dsPvZ,  H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bPZ.data()))
+        {
+            db.rollback();
+            for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+        }
+
+        for (qint64 r = 0; r < n; ++r) {
+            insertQuery.bindValue(0,  bTs[r]);
+            insertQuery.bindValue(1,  bFi[r]);
+            insertQuery.bindValue(2,  static_cast<int>(bSi[r]));
+            insertQuery.bindValue(3,  std::isfinite(bXM[r])   ? QVariant(bXM[r])   : QVariant());
+            insertQuery.bindValue(4,  std::isfinite(bYM[r])   ? QVariant(bYM[r])   : QVariant());
+            insertQuery.bindValue(5,  std::isfinite(bZM[r])   ? QVariant(bZM[r])   : QVariant());
+            insertQuery.bindValue(6,  std::isfinite(bXL[r])   ? QVariant(bXL[r])   : QVariant());
+            insertQuery.bindValue(7,  std::isfinite(bYL[r])   ? QVariant(bYL[r])   : QVariant());
+            insertQuery.bindValue(8,  std::isfinite(bZL[r])   ? QVariant(bZL[r])   : QVariant());
+            insertQuery.bindValue(9,  std::isfinite(bMM[r])   ? QVariant(bMM[r])   : QVariant());
+            insertQuery.bindValue(10, std::isfinite(bML[r])   ? QVariant(bML[r])   : QVariant());
+            insertQuery.bindValue(11, std::isfinite(bPX[r])   ? QVariant(bPX[r])   : QVariant());
+            insertQuery.bindValue(12, std::isfinite(bPY[r])   ? QVariant(bPY[r])   : QVariant());
+            insertQuery.bindValue(13, std::isfinite(bPZ[r])   ? QVariant(bPZ[r])   : QVariant());
+            if (!insertQuery.exec()) {
+                db.rollback();
+                for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+            }
+            ++written;
+        }
+        emit progress(written, totalRows);
+    }
+
+    if (!db.commit()) {
+        db.rollback();
+        for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]); closeH5(); db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
+    }
+
+    for (int j=0;j<nAllDs;++j) H5Dclose(allDs[j]);
+    closeH5();
+    db.close();
+    db = QSqlDatabase();
+    emit progress(written, written);
+    return true;
+}
 #else
 bool HistoryImportService::importHdf5(QString* errorMessage)
 {
@@ -1157,6 +1742,18 @@ bool HistoryImportService::importHdf5(QString* errorMessage)
 }
 
 bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QString& targetDbPath)
+{
+    Q_UNUSED(filePath); Q_UNUSED(targetDbPath);
+    return false;
+}
+
+bool HistoryImportService::importPulseEddyHdf5(const QString& filePath, const QString& targetDbPath)
+{
+    Q_UNUSED(filePath); Q_UNUSED(targetDbPath);
+    return false;
+}
+
+bool HistoryImportService::importMagArrayHdf5(const QString& filePath, const QString& targetDbPath)
 {
     Q_UNUSED(filePath); Q_UNUSED(targetDbPath);
     return false;

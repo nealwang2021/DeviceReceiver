@@ -1,5 +1,8 @@
 #include "MagArrayWindow.h"
 #include "AppConfig.h"
+#include "HistoryDataProvider.h"
+#include "SelectionState.h"
+#include "SqlHistoryQuery.h"
 #include "qcustomplot.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -13,6 +16,10 @@
 #include <QButtonGroup>
 #include <QFrame>
 #include <QDebug>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QtConcurrent>
+#include <QPointer>
 #include <QtGlobal>
 #include <cmath>
 #include <algorithm>
@@ -27,6 +34,17 @@ MagArrayWindow::MagArrayWindow(QWidget* parent)
     setWindowTitle(QStringLiteral("漏磁检测"));
     resize(1600, 900);
     buildUi();
+
+    // 监听 SelectionState 以支持 Review 模式
+    auto* sel = SelectionState::instance();
+    connect(sel, &SelectionState::selectionChanged,
+            this, &MagArrayWindow::onSelectionChanged);
+    // 启动时同步一次
+    if (sel->hasRange()) {
+        m_reviewStartMs = sel->startMs();
+        m_reviewEndMs = sel->endMs();
+        m_reviewMode = (sel->mode() == SelectionState::Review);
+    }
 }
 
 MagArrayWindow::~MagArrayWindow() = default;
@@ -657,6 +675,7 @@ void MagArrayWindow::updateHeatmapFromFrame(const FrameData& frame)
 void MagArrayWindow::onDataUpdated(const QVector<FrameData>& frames)
 {
     if (frames.isEmpty()) return;
+    if (m_reviewMode) return; // Review 模式下不处理实时数据
 
     // For heatmap, use only the last frame (or the latest MagArray frame)
     bool updated = false;
@@ -680,6 +699,7 @@ void MagArrayWindow::onDataUpdated(const QVector<FrameData>& frames)
 void MagArrayWindow::onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot)
 {
     if (!snapshot) return;
+    if (m_reviewMode) return; // Review 模式下不处理实时数据
 
     // Only handle MagArray and MultiChannelReal modes (both use realAmp)
     if (snapshot->mode == FrameData::MagArray
@@ -703,6 +723,193 @@ void MagArrayWindow::onCriticalFrame(const FrameData& frame)
         }
         m_statsLabel->setText(alarmMsg);
     }
+}
+
+// ============================================================================
+// Review / History 模式
+// ============================================================================
+
+void MagArrayWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
+{
+    m_reviewStartMs = startMs;
+    m_reviewEndMs = endMs;
+    const bool nowReview = (mode == static_cast<int>(SelectionState::Review));
+
+    if (nowReview) {
+        m_reviewMode = true;
+        loadReviewFromDb();
+    } else {
+        // 回到 Live 模式
+        m_reviewMode = false;
+        m_reviewFrames.clear();
+    }
+}
+
+void MagArrayWindow::loadReviewFromDb()
+{
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isDatabaseOpen()) return;
+
+    m_reviewFrames.clear();
+    const qint64 startMs = m_reviewStartMs;
+    const qint64 endMs = m_reviewEndMs;
+    const quint64 epoch = ++m_reviewEpoch;
+
+    QPointer<MagArrayWindow> self(this);
+    QtConcurrent::run([self, startMs, endMs, epoch]() {
+        // Build synthetic PlotSnapshot + heatmap data from mag_array_frames
+        auto snap = QSharedPointer<PlotSnapshot>::create();
+        snap->mode = FrameData::MagArray;
+        snap->channelCount = 60;
+
+        // Heatmap data (3 axes × kHeatmapRows × kHeatmapCols)
+        QVector<double> hmData[3];
+        QVector<double> hmTimeCol(kHeatmapCols);
+        int hmFrameCount = 0;
+
+        const QString connName = QStringLiteral("ma_review_%1").arg(epoch);
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+            auto* h = HistoryDataProvider::instance();
+            if (!h || !h->isDatabaseOpen()) return;
+            db.setDatabaseName(h->currentDatabasePath());
+            if (!db.open()) return;
+
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral(
+                "SELECT timestamp_unix_ms, frame_index, sensor_index, "
+                "x_mean, y_mean, z_mean, magnitude_mean "
+                "FROM mag_array_frames "
+                "WHERE timestamp_unix_ms BETWEEN :s AND :e "
+                "ORDER BY timestamp_unix_ms ASC, sensor_index ASC"));
+            q.bindValue(":s", startMs);
+            q.bindValue(":e", endMs);
+            if (!q.exec()) { db.close(); return; }
+
+            QMap<qint64, int> frameIdxToSlot;
+            QVector<double> timeMs;
+            struct SensorRow { int sensorIdx; double xm, ym, zm, mag; };
+            QMap<qint64, QVector<SensorRow>> frameData;
+
+            while (q.next()) {
+                const qint64 ts = q.value(0).toLongLong();
+                const qint64 fi = q.value(1).toLongLong();
+                SensorRow sr;
+                sr.sensorIdx = q.value(2).toInt();
+                sr.xm = q.value(3).isNull() ? qQNaN() : q.value(3).toDouble();
+                sr.ym = q.value(4).isNull() ? qQNaN() : q.value(4).toDouble();
+                sr.zm = q.value(5).isNull() ? qQNaN() : q.value(5).toDouble();
+                sr.mag = q.value(6).isNull() ? qQNaN() : q.value(6).toDouble();
+                if (!frameData.contains(fi)) {
+                    frameIdxToSlot[fi] = timeMs.size();
+                    timeMs.append(static_cast<double>(ts));
+                }
+                frameData[fi].append(sr);
+            }
+            db.close();
+
+            const int nFrames = timeMs.size();
+            if (nFrames == 0) return;
+
+            // ---- Waveform: realAmp (60 channels × nFrames) ----
+            constexpr int kCh = 60;
+            QVector<QVector<double>> realAmp(kCh);
+            for (int ch = 0; ch < kCh; ++ch)
+                realAmp[ch].resize(nFrames);
+
+            // ---- Heatmap: init data buffers ----
+            for (int a = 0; a < 3; ++a) {
+                hmData[a].resize(kHeatmapRows * kHeatmapCols);
+                hmData[a].fill(qQNaN());
+            }
+
+            // Stride for heatmap if more frames than columns
+            const int hmStride = qMax(1, nFrames / kHeatmapCols);
+
+            for (auto it = frameData.begin(); it != frameData.end(); ++it) {
+                const int slot = frameIdxToSlot.value(it.key(), -1);
+                if (slot < 0) continue;
+
+                for (const auto& sr : it.value()) {
+                    const int si = sr.sensorIdx;
+                    // Waveform
+                    if (si >= 0 && si < 20) {
+                        const int chX = si * 3 + 0;
+                        const int chY = si * 3 + 1;
+                        const int chZ = si * 3 + 2;
+                        if (chX < kCh) realAmp[chX][slot] = sr.xm;
+                        if (chY < kCh) realAmp[chY][slot] = sr.ym;
+                        if (chZ < kCh) realAmp[chZ][slot] = sr.zm;
+                    }
+                    // Heatmap (x_mean/y_mean/z_mean by sensor index)
+                    if (hmFrameCount < kHeatmapCols && (slot % hmStride == 0 || slot == 0)) {
+                        const int col = hmFrameCount;
+                        if (si >= 0 && si < kHeatmapRows) {
+                            hmData[0][si * kHeatmapCols + col] = sr.xm;
+                            hmData[1][si * kHeatmapCols + col] = sr.ym;
+                            hmData[2][si * kHeatmapCols + col] = sr.zm;
+                        }
+                    }
+                }
+                // Heatmap time column
+                if (hmFrameCount < kHeatmapCols && (slot % hmStride == 0 || slot == 0)) {
+                    hmTimeCol[hmFrameCount] = timeMs[slot];
+                    ++hmFrameCount;
+                }
+            }
+
+            snap->timeMs = std::move(timeMs);
+            snap->realAmp = std::move(realAmp);
+        }
+        QSqlDatabase::removeDatabase(connName);
+
+        // Back on main thread: render waveform + heatmap
+        if (!self || self->m_reviewEpoch != epoch || !self->m_reviewMode) return;
+        QMetaObject::invokeMethod(self, [self, snap, hmData0 = std::move(hmData[0]),
+                                         hmData1 = std::move(hmData[1]),
+                                         hmData2 = std::move(hmData[2]),
+                                         hmTimeCol = std::move(hmTimeCol),
+                                         hmCount = hmFrameCount]() {
+            if (!self || !self->m_reviewMode) return;
+
+            // Waveform
+            self->updateWaveformFromSnapshot(snap);
+
+            // Heatmap
+            if (hmCount > 0 && self->m_heatmapPlot) {
+                self->m_heatmapData[0] = hmData0;
+                self->m_heatmapData[1] = hmData1;
+                self->m_heatmapData[2] = hmData2;
+                self->m_heatmapTimeCol = hmTimeCol;
+                self->m_heatmapWriteCol = hmCount % kHeatmapCols;
+                self->m_liveFrameCount = hmCount;
+
+                // Update QCPColorMaps from ring buffer
+                for (int axis = 0; axis < 3; ++axis) {
+                    QCPColorMap* cmap = self->m_heatmapColorMaps[axis];
+                    if (!cmap) continue;
+                    for (int c = 0; c < kHeatmapCols; ++c) {
+                        for (int r = 0; r < kHeatmapRows; ++r) {
+                            cmap->data()->setCell(c, r, self->m_heatmapData[axis][r * kHeatmapCols + c]);
+                        }
+                    }
+                    // Set axis range: time mode
+                    if (self->m_heatmapAxisRects[axis]) {
+                        QCPAxis* xAxis = self->m_heatmapAxisRects[axis]->axis(QCPAxis::atBottom);
+                        xAxis->setLabel(QStringLiteral("时间列"));
+                        xAxis->setRange(0, kHeatmapCols - 1);
+                    }
+                }
+                self->m_heatmapPlot->replot(QCustomPlot::rpQueuedReplot);
+            }
+
+            // Update stats label
+            if (self->m_statsLabel) {
+                self->m_statsLabel->setText(QStringLiteral("Review | 帧数: %1 | 热力图: %2")
+                    .arg(snap->timeMs.size()).arg(hmCount));
+            }
+        }, Qt::QueuedConnection);
+    });
 }
 
 // ============================================================================

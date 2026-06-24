@@ -30,7 +30,11 @@ public slots:
     void onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot) override;
     void onCriticalFrame(const FrameData& frame) override;
 
+private slots:
+    void onSelectionChanged(qint64 startMs, qint64 endMs, int mode);
+
 private:
+    void loadReviewFromDb();
     void buildUi();
     void rebuildWaveformGraphs(int channelCount);
     void updateWaveformFromSnapshot(const QSharedPointer<const PlotSnapshot>& snapshot);
@@ -93,6 +97,13 @@ private:
     double m_colorRangeMax = 100.0;
     QColor m_gradientColorMin = QColor(32, 64, 200);   // blue-ish
     QColor m_gradientColorMax = QColor(200, 32, 32);   // red-ish
+
+    // --- Review mode ---
+    qint64 m_reviewStartMs = 0;
+    qint64 m_reviewEndMs = 0;
+    bool m_reviewMode = false;
+    quint64 m_reviewEpoch = 0;
+    QVector<FrameData> m_reviewFrames;
 };
 
 #endif // MAGARRAYWINDOW_H

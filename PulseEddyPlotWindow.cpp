@@ -1,6 +1,8 @@
 #include "PulseEddyPlotWindow.h"
+#include "HistoryDataProvider.h"
 #include "MainWindow.h"
 #include "ApplicationController.h"
+#include "SelectionState.h"
 #include "qcustomplot.h"
 
 #include <QVBoxLayout>
@@ -11,6 +13,10 @@
 #include <QRadioButton>
 #include <QButtonGroup>
 #include <QDebug>
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include <QtConcurrent>
+#include <QPointer>
 
 PulseEddyPlotWindow::PulseEddyPlotWindow(QWidget* parent)
     : PlotWindowBase(parent)
@@ -112,6 +118,16 @@ PulseEddyPlotWindow::PulseEddyPlotWindow(QWidget* parent)
             this, [this](double) { if (m_yManualRadio->isChecked()) { applyYAxisMode(); m_plot->replot(QCustomPlot::rpQueuedReplot); } });
     connect(m_yMaxSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
             this, [this](double) { if (m_yManualRadio->isChecked()) { applyYAxisMode(); m_plot->replot(QCustomPlot::rpQueuedReplot); } });
+
+    // 监听 SelectionState 以支持 Review 模式
+    auto* sel = SelectionState::instance();
+    connect(sel, &SelectionState::selectionChanged,
+            this, &PulseEddyPlotWindow::onSelectionChanged);
+    if (sel->hasRange()) {
+        m_reviewStartMs = sel->startMs();
+        m_reviewEndMs = sel->endMs();
+        m_reviewMode = (sel->mode() == SelectionState::Review);
+    }
 }
 
 PulseEddyPlotWindow::~PulseEddyPlotWindow() = default;
@@ -150,6 +166,7 @@ void PulseEddyPlotWindow::onThemeChanged()
 void PulseEddyPlotWindow::onDataUpdated(const QVector<FrameData>& frames)
 {
     if (frames.isEmpty()) return;
+    if (m_reviewMode) return; // Review 模式下不处理实时数据
 
     // 取最后一帧 PulseEddy
     const FrameData* latest = nullptr;
@@ -275,4 +292,112 @@ void PulseEddyPlotWindow::applyYAxisMode()
     } else {
         m_plot->yAxis->rescale(true);
     }
+}
+
+// ============================================================================
+// Review / History 模式
+// ============================================================================
+
+void PulseEddyPlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
+{
+    m_reviewStartMs = startMs;
+    m_reviewEndMs = endMs;
+    const bool nowReview = (mode == static_cast<int>(SelectionState::Review));
+
+    if (nowReview) {
+        m_reviewMode = true;
+        loadReviewFromDb();
+    } else {
+        m_reviewMode = false;
+        m_lastFrameId = 0;
+    }
+}
+
+void PulseEddyPlotWindow::loadReviewFromDb()
+{
+    auto* hdp = HistoryDataProvider::instance();
+    if (!hdp || !hdp->isDatabaseOpen()) return;
+
+    const qint64 startMs = m_reviewStartMs;
+    const qint64 endMs = m_reviewEndMs;
+    const quint64 epoch = ++m_reviewEpoch;
+
+    QPointer<PulseEddyPlotWindow> self(this);
+    QtConcurrent::run([self, startMs, endMs, epoch]() {
+        // Query the latest frame in time range
+        const QString connName = QStringLiteral("pe_review_%1").arg(epoch);
+        struct { QByteArray raw; QByteArray ref; bool hasRef; quint64 frameId; } result;
+        bool found = false;
+
+        {
+            QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
+            auto* h = HistoryDataProvider::instance();
+            if (!h || !h->isDatabaseOpen()) return;
+            db.setDatabaseName(h->currentDatabasePath());
+            if (!db.open()) return;
+
+            QSqlQuery q(db);
+            q.prepare(QStringLiteral(
+                "SELECT frame_index, raw_values, has_reference, reference_values "
+                "FROM pulse_eddy_frames "
+                "WHERE timestamp_unix_ms BETWEEN :s AND :e "
+                "ORDER BY timestamp_unix_ms DESC LIMIT 1"));
+            q.bindValue(":s", startMs);
+            q.bindValue(":e", endMs);
+            if (q.exec() && q.next()) {
+                result.frameId = static_cast<quint64>(q.value(0).toLongLong());
+                result.raw = q.value(1).toByteArray();
+                result.hasRef = (q.value(2).toInt() != 0);
+                result.ref = q.value(3).toByteArray();
+                found = true;
+            }
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(connName);
+
+        if (!found) return;
+        if (!self || self->m_reviewEpoch != epoch || !self->m_reviewMode) return;
+
+        // Build data vectors from BLOBs
+        QVector<double> rawValues, refValues;
+        if (!result.raw.isEmpty()) {
+            const double* src = reinterpret_cast<const double*>(result.raw.constData());
+            const int n = result.raw.size() / static_cast<int>(sizeof(double));
+            rawValues.resize(n);
+            for (int i = 0; i < n; ++i) rawValues[i] = src[i];
+        }
+        if (result.hasRef && !result.ref.isEmpty()) {
+            const double* src = reinterpret_cast<const double*>(result.ref.constData());
+            const int n = result.ref.size() / static_cast<int>(sizeof(double));
+            refValues.resize(n);
+            for (int i = 0; i < n; ++i) refValues[i] = src[i];
+        }
+
+        QMetaObject::invokeMethod(self, [self, rawValues, refValues, frameId = result.frameId, hasRef = result.hasRef]() {
+            if (!self || !self->m_reviewMode) return;
+            // Render on main thread
+            if (!rawValues.isEmpty()) {
+                const int nRaw = rawValues.size();
+                QVector<double> x(nRaw);
+                for (int i = 0; i < nRaw; ++i) x[i] = static_cast<double>(i);
+                self->m_plot->graph(0)->setData(x, rawValues, true);
+            }
+            if (hasRef && !refValues.isEmpty()) {
+                const int nRef = refValues.size();
+                QVector<double> x(nRef);
+                for (int i = 0; i < nRef; ++i) x[i] = static_cast<double>(i);
+                self->m_plot->graph(1)->setData(x, refValues, true);
+                self->m_plot->graph(1)->setVisible(true);
+                self->m_hasReference = true;
+            } else {
+                self->m_plot->graph(1)->setVisible(false);
+                self->m_hasReference = false;
+            }
+            self->m_plot->xAxis->setRange(0, rawValues.isEmpty() ? 65000 : rawValues.size());
+            self->applyYAxisMode();
+            self->m_plot->replot(QCustomPlot::rpQueuedReplot);
+            self->updateReferenceStatus();
+            self->m_frameLabel->setText(QStringLiteral("Review | 帧#: %1").arg(frameId));
+        }, Qt::QueuedConnection);
+    });
 }

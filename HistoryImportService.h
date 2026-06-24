@@ -51,6 +51,13 @@ private:
     bool importCsv(QString* errorMessage);
     bool importHdf5(QString* errorMessage);
     bool importMultiFreqHdf5(const QString& filePath, const QString& targetDbPath);
+    bool importPulseEddyHdf5(const QString& filePath, const QString& targetDbPath);
+    bool importMagArrayHdf5(const QString& filePath, const QString& targetDbPath);
+
+    // CSV 导入（各设备类型）
+    bool importMultiFreqCsv(const QString& filePath, const QString& targetDbPath);
+    bool importMagArrayCsv(const QString& filePath, const QString& targetDbPath);
+    bool importPulseEddyCsv(const QString& filePath, const QString& targetDbPath);
 
     bool initTargetDb(class QSqlDatabase& db, QString* errorMessage) const;
     bool insertRow(class QSqlQuery& insertQuery,

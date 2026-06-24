@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTextStream>
+#include <QUuid>
 #include <QVariant>
 #include <QVector>
 #include <array>
@@ -212,15 +213,62 @@ void HistoryExportService::run()
         return;
     }
 
+    // 使用 UI 层传入的设备类型（0=Standard, 1=MultiFreq, 2=MagArray, 3=PulseEddy）
+    const int detected = m_request.detectedType;
+
+    // Build mode from sourceMode string
+    const HistoryDataProvider::HistorySourceMode srcMode =
+        (m_request.sourceMode == QStringLiteral("SessionRealtime"))
+            ? HistoryDataProvider::HistorySourceMode::SessionRealtime
+            : HistoryDataProvider::HistorySourceMode::OfflineExternal;
+
     QString errorMessage;
     bool ok = false;
     switch (m_request.format) {
     case Format::Csv:
-        ok = exportCsv(&errorMessage);
+        switch (detected) {
+        case 1:
+            ok = exportMultiFreqCsv(m_request.outputPath, m_request.startMs, m_request.endMs,
+                                    m_request.dbPath, srcMode);
+            if (!ok) errorMessage = QStringLiteral("多频涡流 CSV 导出失败");
+            break;
+        case 2:
+            ok = exportMagArrayCsv(m_request.outputPath, m_request.startMs, m_request.endMs,
+                                   m_request.dbPath, srcMode);
+            if (!ok) errorMessage = QStringLiteral("漏磁检测 CSV 导出失败");
+            break;
+        case 3:
+            ok = exportPulseEddyCsv(m_request.outputPath, m_request.startMs, m_request.endMs,
+                                    m_request.dbPath, srcMode);
+            if (!ok) errorMessage = QStringLiteral("脉冲涡流 CSV 导出失败");
+            break;
+        default:
+            ok = exportCsv(&errorMessage);
+            break;
+        }
         break;
     case Format::Hdf5:
 #ifdef HAS_HDF5
-        ok = exportHdf5(&errorMessage);
+        switch (detected) {
+        case 1:
+            ok = exportMultiFreqHdf5(m_request.outputPath, m_request.startMs, m_request.endMs,
+                                     m_request.dbPath, srcMode);
+            if (!ok) errorMessage = QStringLiteral("多频涡流 HDF5 导出失败");
+            break;
+        case 2:
+            ok = exportMagArrayHdf5(m_request.outputPath, m_request.startMs, m_request.endMs,
+                                    m_request.dbPath, srcMode);
+            if (!ok) errorMessage = QStringLiteral("漏磁检测 HDF5 导出失败");
+            break;
+        case 3:
+            ok = exportPulseEddyHdf5(m_request.outputPath, m_request.startMs, m_request.endMs,
+                                     m_request.dbPath, srcMode);
+            if (!ok) errorMessage = QStringLiteral("脉冲涡流 HDF5 导出失败");
+            break;
+        default:
+            ok = exportHdf5(&errorMessage);
+            break;
+        }
 #else
         errorMessage = QStringLiteral("当前构建未启用 HDF5 支持，请选择 CSV 格式");
         ok = false;
@@ -229,7 +277,6 @@ void HistoryExportService::run()
     }
 
     if (!ok && m_canceled.loadRelaxed() == 1) {
-        // 取消路径：明确返回 cancel 消息；ok=false + message="已取消"
         emit finished(false, QStringLiteral("已取消"));
         return;
     }
@@ -379,6 +426,210 @@ bool HistoryExportService::exportCsv(QString* errorMessage)
     query.close();
 
     // 精确结束值
+    emit progress(written, written);
+    return true;
+}
+
+// ---- CSV 导出：各设备类型 ----
+
+bool HistoryExportService::exportMultiFreqCsv(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    QFileInfo fi(filePath); QDir().mkpath(fi.absolutePath());
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) return false;
+
+    QTextStream stream(&file);
+    stream.setCodec("UTF-8");
+    stream.setGenerateByteOrderMark(false);
+
+    const qint64 exportAt = QDateTime::currentMSecsSinceEpoch();
+    stream << "# schema_version=" << kSchemaVersion << "\n";
+    stream << "# exported_at_ms=" << exportAt << "\n";
+    stream << "# source=multifreq_eddy\n";
+    stream << "# source_mode=" << ((mode == HistoryDataProvider::HistorySourceMode::SessionRealtime)
+                                   ? QStringLiteral("SessionRealtime") : QStringLiteral("OfflineExternal")) << "\n";
+    stream << "# range_start_ms=" << startMs << "\n";
+    stream << "# range_end_ms=" << endMs << "\n";
+
+    stream << "timestamp_ms_utc,frame_index,frequency_factor,frequency_hz,"
+              "impedance_real,impedance_imag,impedance_magnitude,impedance_phase_deg,"
+              "normalized_impedance_real,normalized_impedance_imag,"
+              "voltage_magnitude,current_magnitude\n";
+
+    QString adb = dbPath;
+    if (adb.isEmpty()) {
+        auto* h = HistoryDataProvider::instance();
+        if (!h || !h->isDatabaseOpen()) { file.close(); QFile::remove(filePath); return false; }
+        adb = h->currentDatabasePath();
+    }
+    SqlHistoryQuery query;
+    if (!query.open(adb)) { file.close(); QFile::remove(filePath); return false; }
+
+    qint64 lastTs = startMs - 1;
+    qint64 lastRowId = std::numeric_limits<qint64>::min();
+    qint64 written = 0;
+    emit progress(0, 0);
+
+    while (true) {
+        if (m_canceled.loadRelaxed() == 1) { file.close(); QFile::remove(filePath); query.close(); return false; }
+        const auto rows = query.fetchMultiFreqRawChunk(startMs, endMs, lastTs, lastRowId, m_request.chunkSize);
+        if (rows.isEmpty()) break;
+
+        for (const auto& row : rows) {
+            stream << row.timestampMs << ',' << row.frameIndex << ','
+                   << row.frequencyFactor << ','
+                   << QString::number(row.frequencyHz, 'g', 15) << ','
+                   << QString::number(row.impedanceReal, 'g', 15) << ','
+                   << QString::number(row.impedanceImag, 'g', 15) << ','
+                   << QString::number(row.impedanceMagnitude, 'g', 15) << ','
+                   << QString::number(row.impedancePhaseDeg, 'g', 15) << ','
+                   << QString::number(row.normImpedanceReal, 'g', 15) << ','
+                   << QString::number(row.normImpedanceImag, 'g', 15) << ','
+                   << QString::number(row.voltageMag, 'g', 15) << ','
+                   << QString::number(row.currentMag, 'g', 15) << '\n';
+        }
+        written += rows.size();
+        lastTs = rows.last().timestampMs;
+        lastRowId = rows.last().rowId;
+        emit progress(written, 0);
+        if (rows.size() < m_request.chunkSize) break;
+    }
+    stream.flush(); file.close(); query.close();
+    emit progress(written, written);
+    return true;
+}
+
+bool HistoryExportService::exportMagArrayCsv(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    QFileInfo fi(filePath); QDir().mkpath(fi.absolutePath());
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) return false;
+
+    QTextStream stream(&file);
+    stream.setCodec("UTF-8");
+    stream.setGenerateByteOrderMark(false);
+
+    const qint64 exportAt = QDateTime::currentMSecsSinceEpoch();
+    stream << "# schema_version=" << kSchemaVersion << "\n";
+    stream << "# exported_at_ms=" << exportAt << "\n";
+    stream << "# source=mag_array\n";
+    stream << "# source_mode=" << ((mode == HistoryDataProvider::HistorySourceMode::SessionRealtime)
+                                   ? QStringLiteral("SessionRealtime") : QStringLiteral("OfflineExternal")) << "\n";
+    stream << "# range_start_ms=" << startMs << "\n";
+    stream << "# range_end_ms=" << endMs << "\n";
+
+    stream << "timestamp_ms_utc,frame_index,sensor_index,"
+              "x_mean,y_mean,z_mean,x_latest,y_latest,z_latest,"
+              "magnitude_mean,magnitude_latest,"
+              "processed_value_x,processed_value_y,processed_value_z\n";
+
+    QString adb = dbPath;
+    if (adb.isEmpty()) {
+        auto* h = HistoryDataProvider::instance();
+        if (!h || !h->isDatabaseOpen()) { file.close(); QFile::remove(filePath); return false; }
+        adb = h->currentDatabasePath();
+    }
+    const QString connName = QStringLiteral("ma_csv_export_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase sdb = QSqlDatabase::addDatabase("QSQLITE", connName);
+    sdb.setDatabaseName(adb);
+    if (!sdb.open()) { QSqlDatabase::removeDatabase(connName); file.close(); QFile::remove(filePath); return false; }
+
+    QSqlQuery q(sdb);
+    q.prepare(QStringLiteral(
+        "SELECT timestamp_unix_ms, frame_index, sensor_index, "
+        "x_mean, y_mean, z_mean, x_latest, y_latest, z_latest, "
+        "magnitude_mean, magnitude_latest, "
+        "processed_value_x, processed_value_y, processed_value_z "
+        "FROM mag_array_frames WHERE timestamp_unix_ms BETWEEN :s AND :e "
+        "ORDER BY timestamp_unix_ms ASC, sensor_index ASC"));
+    q.bindValue(":s", startMs); q.bindValue(":e", endMs);
+    if (!q.exec()) { sdb.close(); QSqlDatabase::removeDatabase(connName); file.close(); QFile::remove(filePath); return false; }
+
+    qint64 written = 0;
+    emit progress(0, 0);
+    while (q.next()) {
+        if (m_canceled.loadRelaxed() == 1) { sdb.close(); QSqlDatabase::removeDatabase(connName); file.close(); QFile::remove(filePath); return false; }
+        auto w = [&](int col) { const QVariant v = q.value(col); return v.isNull() ? QString() : QString::number(v.toDouble(), 'g', 15); };
+        stream << q.value(0).toLongLong() << ',' << q.value(1).toLongLong() << ',' << q.value(2).toInt() << ','
+               << w(3) << ',' << w(4) << ',' << w(5) << ','
+               << w(6) << ',' << w(7) << ',' << w(8) << ','
+               << w(9) << ',' << w(10) << ','
+               << w(11) << ',' << w(12) << ',' << w(13) << '\n';
+        ++written;
+        if ((written % 1000) == 0) emit progress(written, 0);
+    }
+    sdb.close();
+    QSqlDatabase::removeDatabase(connName);
+    stream.flush(); file.close();
+    emit progress(written, written);
+    return true;
+}
+
+bool HistoryExportService::exportPulseEddyCsv(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    QFileInfo fi(filePath); QDir().mkpath(fi.absolutePath());
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) return false;
+
+    QTextStream stream(&file);
+    stream.setCodec("UTF-8");
+    stream.setGenerateByteOrderMark(false);
+
+    const qint64 exportAt = QDateTime::currentMSecsSinceEpoch();
+    stream << "# schema_version=" << kSchemaVersion << "\n";
+    stream << "# exported_at_ms=" << exportAt << "\n";
+    stream << "# source=pulse_eddy\n";
+    stream << "# source_mode=" << ((mode == HistoryDataProvider::HistorySourceMode::SessionRealtime)
+                                   ? QStringLiteral("SessionRealtime") : QStringLiteral("OfflineExternal")) << "\n";
+    stream << "# range_start_ms=" << startMs << "\n";
+    stream << "# range_end_ms=" << endMs << "\n";
+
+    stream << "timestamp_ms_utc,frame_index,sample_count,sample_rate_hz,"
+              "raw_values_base64,has_reference,reference_values_base64,min_value,max_value\n";
+
+    QString adb = dbPath;
+    if (adb.isEmpty()) {
+        auto* h = HistoryDataProvider::instance();
+        if (!h || !h->isDatabaseOpen()) { file.close(); QFile::remove(filePath); return false; }
+        adb = h->currentDatabasePath();
+    }
+    const QString connName = QStringLiteral("pe_csv_export_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase sdb = QSqlDatabase::addDatabase("QSQLITE", connName);
+    sdb.setDatabaseName(adb);
+    if (!sdb.open()) { QSqlDatabase::removeDatabase(connName); file.close(); QFile::remove(filePath); return false; }
+
+    QSqlQuery q(sdb);
+    q.prepare(QStringLiteral(
+        "SELECT timestamp_unix_ms, frame_index, sample_count, sample_rate_hz, "
+        "raw_values, has_reference, reference_values, min_value, max_value "
+        "FROM pulse_eddy_frames WHERE timestamp_unix_ms BETWEEN :s AND :e "
+        "ORDER BY timestamp_unix_ms ASC"));
+    q.bindValue(":s", startMs); q.bindValue(":e", endMs);
+    if (!q.exec()) { sdb.close(); QSqlDatabase::removeDatabase(connName); file.close(); QFile::remove(filePath); return false; }
+
+    qint64 written = 0;
+    emit progress(0, 0);
+    while (q.next()) {
+        if (m_canceled.loadRelaxed() == 1) { sdb.close(); QSqlDatabase::removeDatabase(connName); file.close(); QFile::remove(filePath); return false; }
+        stream << q.value(0).toLongLong() << ',' << q.value(1).toLongLong() << ','
+               << q.value(2).toInt() << ',' << QString::number(q.value(3).toDouble(), 'g', 15) << ','
+               << q.value(4).toByteArray().toBase64() << ','
+               << q.value(5).toInt() << ','
+               << q.value(6).toByteArray().toBase64() << ','
+               << (q.value(7).isNull() ? QString() : QString::number(q.value(7).toDouble(), 'g', 15)) << ','
+               << (q.value(8).isNull() ? QString() : QString::number(q.value(8).toDouble(), 'g', 15)) << '\n';
+        ++written;
+        if ((written % 100) == 0) emit progress(written, 0);
+    }
+    sdb.close();
+    QSqlDatabase::removeDatabase(connName);
+    stream.flush(); file.close();
     emit progress(written, written);
     return true;
 }
@@ -874,9 +1125,10 @@ bool HistoryExportService::exportPulseEddyHdf5Impl(  // non-static, uses m_cance
         if (!h || !h->isDatabaseOpen()) { for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
         adb = h->currentDatabasePath();
     }
-    QSqlDatabase sdb = QSqlDatabase::addDatabase("QSQLITE", "pe_h5_export");
+    const QString connName = QStringLiteral("pe_h5_export_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase sdb = QSqlDatabase::addDatabase("QSQLITE", connName);
     sdb.setDatabaseName(adb);
-    if (!sdb.open()) { for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
+    if (!sdb.open()) { QSqlDatabase::removeDatabase(connName); for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
 
     QSqlQuery q(sdb);
     q.prepare(QStringLiteral(
@@ -886,7 +1138,7 @@ bool HistoryExportService::exportPulseEddyHdf5Impl(  // non-static, uses m_cance
         "ORDER BY timestamp_unix_ms ASC"));
     q.bindValue(":s", startMs);
     q.bindValue(":e", endMs);
-    if (!q.exec()) { for (hid_t d:mds) H5Dclose(d); sdb.close(); cleanup(); return false; }
+    if (!q.exec()) { sdb.close(); QSqlDatabase::removeDatabase(connName); for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
 
     struct Row { qint64 ts,fi; int sc; double sr; QByteArray raw; int hr; QByteArray ref; double mn,mx; };
     QVector<Row> rows;
@@ -906,6 +1158,7 @@ bool HistoryExportService::exportPulseEddyHdf5Impl(  // non-static, uses m_cance
         if (nSamp == 64000 && r.sc > 0) nSamp = r.sc;
     }
     sdb.close();
+    QSqlDatabase::removeDatabase(connName);
 
     const qint64 total = rows.size();
     if (total == 0) { for (hid_t d:mds) H5Dclose(d); cleanup(); return false; }
@@ -986,6 +1239,155 @@ bool HistoryExportService::exportPulseEddyHdf5(
 {
     return exportPulseEddyHdf5Impl(filePath, startMs, endMs, dbPath, mode);
 }
+
+bool HistoryExportService::exportMagArrayHdf5Impl(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    QFileInfo fi(filePath); QDir().mkpath(fi.absolutePath());
+    const int chunkRows = qMax(64, m_request.chunkSize);
+
+    hid_t fileId = H5Fcreate(filePath.toLocal8Bit().constData(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+    if (fileId < 0) return false;
+    auto cleanup = [&]() { if (fileId >= 0) H5Fclose(fileId); };
+
+    hid_t fg = H5Gcreate2(fileId, "/frames",   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    hid_t mg = H5Gcreate2(fileId, "/magarray", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (fg < 0 || mg < 0) { if (fg>=0) H5Gclose(fg); if (mg>=0) H5Gclose(mg); cleanup(); return false; }
+
+    hid_t dsTs     = createChunkedDataset1D(fg, "timestamp_ms_utc", H5T_STD_I64LE,  chunkRows);
+    hid_t dsFi     = createChunkedDataset1D(fg, "frame_index",      H5T_STD_I64LE,  chunkRows);
+    hid_t dsSi     = createChunkedDataset1D(mg, "sensor_index",     H5T_STD_I32LE,  chunkRows);
+    hid_t dsXM     = createChunkedDataset1D(mg, "x_mean",           H5T_IEEE_F64LE, chunkRows);
+    hid_t dsYM     = createChunkedDataset1D(mg, "y_mean",           H5T_IEEE_F64LE, chunkRows);
+    hid_t dsZM     = createChunkedDataset1D(mg, "z_mean",           H5T_IEEE_F64LE, chunkRows);
+    hid_t dsXL     = createChunkedDataset1D(mg, "x_latest",         H5T_IEEE_F64LE, chunkRows);
+    hid_t dsYL     = createChunkedDataset1D(mg, "y_latest",         H5T_IEEE_F64LE, chunkRows);
+    hid_t dsZL     = createChunkedDataset1D(mg, "z_latest",         H5T_IEEE_F64LE, chunkRows);
+    hid_t dsMagM   = createChunkedDataset1D(mg, "magnitude_mean",   H5T_IEEE_F64LE, chunkRows);
+    hid_t dsMagL   = createChunkedDataset1D(mg, "magnitude_latest", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsPvX    = createChunkedDataset1D(mg, "processed_value_x", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsPvY    = createChunkedDataset1D(mg, "processed_value_y", H5T_IEEE_F64LE, chunkRows);
+    hid_t dsPvZ    = createChunkedDataset1D(mg, "processed_value_z", H5T_IEEE_F64LE, chunkRows);
+    H5Gclose(fg); H5Gclose(mg);
+    const hid_t mds[] = { dsTs, dsFi, dsSi, dsXM, dsYM, dsZM, dsXL, dsYL, dsZL,
+                          dsMagM, dsMagL, dsPvX, dsPvY, dsPvZ };
+    constexpr int nMds = sizeof(mds) / sizeof(mds[0]);
+    for (int i = 0; i < nMds; ++i) {
+        if (mds[i] < 0) { for (int j = 0; j < nMds; ++j) if (mds[j]>=0) H5Dclose(mds[j]); cleanup(); return false; }
+    }
+
+    writeInt32Attr(fileId, "schema_version", kSchemaVersion);
+    writeInt64Attr(fileId, "exported_at_ms", QDateTime::currentMSecsSinceEpoch());
+    writeInt64Attr(fileId, "range_start_ms", startMs);
+    writeInt64Attr(fileId, "range_end_ms",   endMs);
+    writeStringAttr(fileId, "source", QStringLiteral("mag_array"));
+    writeStringAttr(fileId, "source_mode",
+        (mode == HistoryDataProvider::HistorySourceMode::SessionRealtime) ? QStringLiteral("SessionRealtime") : QStringLiteral("OfflineExternal"));
+
+    // Open database
+    QString adb = dbPath;
+    if (adb.isEmpty()) {
+        auto* h = HistoryDataProvider::instance();
+        if (!h || !h->isDatabaseOpen()) { for (int j=0;j<nMds;++j) H5Dclose(mds[j]); cleanup(); return false; }
+        adb = h->currentDatabasePath();
+    }
+    const QString connName = QStringLiteral("ma_h5_export_%1").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    QSqlDatabase sdb = QSqlDatabase::addDatabase("QSQLITE", connName);
+    sdb.setDatabaseName(adb);
+    if (!sdb.open()) { QSqlDatabase::removeDatabase(connName); for (int j=0;j<nMds;++j) H5Dclose(mds[j]); cleanup(); return false; }
+
+    QSqlQuery q(sdb);
+    q.prepare(QStringLiteral(
+        "SELECT timestamp_unix_ms, frame_index, sensor_index, "
+        "x_mean, y_mean, z_mean, x_latest, y_latest, z_latest, "
+        "magnitude_mean, magnitude_latest, "
+        "processed_value_x, processed_value_y, processed_value_z "
+        "FROM mag_array_frames WHERE timestamp_unix_ms BETWEEN :s AND :e "
+        "ORDER BY timestamp_unix_ms ASC, sensor_index ASC"));
+    q.bindValue(":s", startMs);
+    q.bindValue(":e", endMs);
+    if (!q.exec()) { sdb.close(); QSqlDatabase::removeDatabase(connName); for (int j=0;j<nMds;++j) H5Dclose(mds[j]); cleanup(); return false; }
+
+    struct Row { qint64 ts,fi; int si; double xm,ym,zm,xl,yl,zl,mm,ml,px,py,pz; };
+    QVector<Row> rows;
+    while (q.next()) {
+        Row r;
+        r.ts = q.value(0).toLongLong();  r.fi = q.value(1).toLongLong();
+        r.si = q.value(2).toInt();
+        r.xm = q.value(3).isNull() ? qQNaN() : q.value(3).toDouble();
+        r.ym = q.value(4).isNull() ? qQNaN() : q.value(4).toDouble();
+        r.zm = q.value(5).isNull() ? qQNaN() : q.value(5).toDouble();
+        r.xl = q.value(6).isNull() ? qQNaN() : q.value(6).toDouble();
+        r.yl = q.value(7).isNull() ? qQNaN() : q.value(7).toDouble();
+        r.zl = q.value(8).isNull() ? qQNaN() : q.value(8).toDouble();
+        r.mm = q.value(9).isNull() ? qQNaN() : q.value(9).toDouble();
+        r.ml = q.value(10).isNull() ? qQNaN() : q.value(10).toDouble();
+        r.px = q.value(11).isNull() ? qQNaN() : q.value(11).toDouble();
+        r.py = q.value(12).isNull() ? qQNaN() : q.value(12).toDouble();
+        r.pz = q.value(13).isNull() ? qQNaN() : q.value(13).toDouble();
+        rows.append(r);
+    }
+    sdb.close();
+    QSqlDatabase::removeDatabase(connName);
+
+    const qint64 total = rows.size();
+    if (total == 0) { for (int j=0;j<nMds;++j) H5Dclose(mds[j]); cleanup(); return false; }
+
+    emit progress(0, total);
+    qint64 off = 0;
+    while (off < total) {
+        if (m_canceled.loadRelaxed() == 1) {
+            for (int j=0;j<nMds;++j) H5Dclose(mds[j]);
+            cleanup(); return false;
+        }
+        const qint64 n = qMin((qint64)chunkRows, total - off);
+        QVector<qint64>  bTs(n), bFi(n);
+        QVector<qint32>  bSi(n);
+        QVector<double>  bXM(n,qQNaN()), bYM(n,qQNaN()), bZM(n,qQNaN());
+        QVector<double>  bXL(n,qQNaN()), bYL(n,qQNaN()), bZL(n,qQNaN());
+        QVector<double>  bMM(n,qQNaN()), bML(n,qQNaN());
+        QVector<double>  bPX(n,qQNaN()), bPY(n,qQNaN()), bPZ(n,qQNaN());
+
+        for (qint64 i = 0; i < n; ++i) {
+            const Row& r = rows[off + i];
+            bTs[i] = r.ts; bFi[i] = r.fi; bSi[i] = r.si;
+            bXM[i] = r.xm; bYM[i] = r.ym; bZM[i] = r.zm;
+            bXL[i] = r.xl; bYL[i] = r.yl; bZL[i] = r.zl;
+            bMM[i] = r.mm; bML[i] = r.ml;
+            bPX[i] = r.px; bPY[i] = r.py; bPZ[i] = r.pz;
+        }
+
+        appendDataset1D(dsTs,   H5T_NATIVE_INT64,  off, n, bTs.constData());
+        appendDataset1D(dsFi,   H5T_NATIVE_INT64,  off, n, bFi.constData());
+        appendDataset1D(dsSi,   H5T_NATIVE_INT32,  off, n, bSi.constData());
+        appendDataset1D(dsXM,   H5T_NATIVE_DOUBLE, off, n, bXM.constData());
+        appendDataset1D(dsYM,   H5T_NATIVE_DOUBLE, off, n, bYM.constData());
+        appendDataset1D(dsZM,   H5T_NATIVE_DOUBLE, off, n, bZM.constData());
+        appendDataset1D(dsXL,   H5T_NATIVE_DOUBLE, off, n, bXL.constData());
+        appendDataset1D(dsYL,   H5T_NATIVE_DOUBLE, off, n, bYL.constData());
+        appendDataset1D(dsZL,   H5T_NATIVE_DOUBLE, off, n, bZL.constData());
+        appendDataset1D(dsMagM, H5T_NATIVE_DOUBLE, off, n, bMM.constData());
+        appendDataset1D(dsMagL, H5T_NATIVE_DOUBLE, off, n, bML.constData());
+        appendDataset1D(dsPvX,  H5T_NATIVE_DOUBLE, off, n, bPX.constData());
+        appendDataset1D(dsPvY,  H5T_NATIVE_DOUBLE, off, n, bPY.constData());
+        appendDataset1D(dsPvZ,  H5T_NATIVE_DOUBLE, off, n, bPZ.constData());
+
+        off += n;
+        emit progress(off, total);
+    }
+    for (int j=0;j<nMds;++j) H5Dclose(mds[j]);
+    cleanup();
+    emit progress(total, total);
+    return true;
+}
+
+bool HistoryExportService::exportMagArrayHdf5(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    return exportMagArrayHdf5Impl(filePath, startMs, endMs, dbPath, mode);
+}
 #else
 bool HistoryExportService::exportHdf5(QString* errorMessage)
 {
@@ -1003,6 +1405,15 @@ bool HistoryExportService::exportMultiFreqHdf5(
 }
 
 bool HistoryExportService::exportPulseEddyHdf5(
+    const QString& filePath, qint64 startMs, qint64 endMs,
+    const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
+{
+    Q_UNUSED(filePath); Q_UNUSED(startMs); Q_UNUSED(endMs);
+    Q_UNUSED(dbPath); Q_UNUSED(mode);
+    return false;
+}
+
+bool HistoryExportService::exportMagArrayHdf5(
     const QString& filePath, qint64 startMs, qint64 endMs,
     const QString& dbPath, HistoryDataProvider::HistorySourceMode mode)
 {

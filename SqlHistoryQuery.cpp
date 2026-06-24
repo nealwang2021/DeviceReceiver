@@ -580,12 +580,49 @@ qint64 SqlHistoryQuery::estimateMultiFreqRowCount(qint64 startMs, qint64 endMs)
     if (!db.isValid() || !db.isOpen()) return 0;
 
     const qint64 spanSec = (endMs - startMs) / 1000;
+    if (spanSec <= 0) return 0;
+
+    // 短范围（≤1小时）：直接用 COUNT(*) 得到精确值
     if (spanSec <= 3600) {
         QSqlQuery q(db);
         q.prepare("SELECT COUNT(*) FROM multifreq_frames WHERE timestamp_unix_ms BETWEEN :start AND :end");
         q.bindValue(":start", startMs);
         q.bindValue(":end", endMs);
         if (q.exec() && q.next()) return q.value(0).toLongLong();
+        return 0;
     }
-    return spanSec * 40; // ~10fps * 4 freqs = 40 rows/sec estimate
+
+    // 长范围（>1小时）：采样前 1000 行测量实际数据密度，替代固定 40行/秒启发式
+    // 避免密度高估 20 倍时 stride 过小导致采样帧数爆炸、内存耗尽
+    {
+        QSqlQuery q(db);
+        q.prepare(QStringLiteral(
+            "SELECT timestamp_unix_ms FROM multifreq_frames "
+            "WHERE timestamp_unix_ms BETWEEN :start AND :end "
+            "ORDER BY timestamp_unix_ms ASC LIMIT 1000"));
+        q.bindValue(":start", startMs);
+        q.bindValue(":end", endMs);
+        if (q.exec()) {
+            qint64 firstTs = 0, lastTs = 0;
+            int sampleCount = 0;
+            while (q.next()) {
+                if (sampleCount == 0) firstTs = q.value(0).toLongLong();
+                lastTs = q.value(0).toLongLong();
+                ++sampleCount;
+            }
+            if (sampleCount >= 2 && lastTs > firstTs) {
+                const double sampleSpanSec = (lastTs - firstTs) / 1000.0;
+                if (sampleSpanSec > 0.0) {
+                    const double rowsPerSec = static_cast<double>(sampleCount) / sampleSpanSec;
+                    const qint64 estimate = static_cast<qint64>(static_cast<double>(spanSec) * rowsPerSec);
+                    return qMax(estimate, static_cast<qint64>(sampleCount));
+                }
+            }
+            // 数据极稀疏（<2行或全部同一时刻）→ 返回实际采样数
+            if (sampleCount <= 1) return sampleCount;
+        }
+    }
+
+    // 采样查询失败等异常情况：回退到保守估算
+    return spanSec * 40;
 }
