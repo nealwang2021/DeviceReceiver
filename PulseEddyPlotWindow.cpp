@@ -15,6 +15,7 @@
 #include <QDebug>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QUuid>
 #include <QtConcurrent>
 #include <QPointer>
 
@@ -305,9 +306,11 @@ void PulseEddyPlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int m
     const bool nowReview = (mode == static_cast<int>(SelectionState::Review));
 
     if (nowReview) {
+        m_reviewLoadCanceled.storeRelaxed(1); // 取消上一次仍在跑的异步加载
         m_reviewMode = true;
         loadReviewFromDb();
     } else {
+        m_reviewLoadCanceled.storeRelaxed(1); // 取消正在运行的异步加载
         m_reviewMode = false;
         m_lastFrameId = 0;
     }
@@ -321,11 +324,23 @@ void PulseEddyPlotWindow::loadReviewFromDb()
     const qint64 startMs = m_reviewStartMs;
     const qint64 endMs = m_reviewEndMs;
     const quint64 epoch = ++m_reviewEpoch;
+    m_reviewLoadCanceled.storeRelaxed(0); // 新加载开始，清除取消标志
 
     QPointer<PulseEddyPlotWindow> self(this);
     QtConcurrent::run([self, startMs, endMs, epoch]() {
-        // Query the latest frame in time range
-        const QString connName = QStringLiteral("pe_review_%1").arg(epoch);
+        // UUID 全局唯一连接名，多实例下不碰撞（修复 epoch 计数器非全局唯一的 bug）
+        const QString connName = QStringLiteral("pe_review_%1")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+        // RAII：任何 return 路径自动调用 removeDatabase，防止连接名泄漏
+        struct DbGuard {
+            QString name;
+            ~DbGuard() { if (!name.isEmpty()) QSqlDatabase::removeDatabase(name); }
+        } guard{connName};
+
+        // 检查取消标志
+        if (self && self->m_reviewLoadCanceled.loadRelaxed()) return;
+
         struct { QByteArray raw; QByteArray ref; bool hasRef; quint64 frameId; } result;
         bool found = false;
 
@@ -352,8 +367,7 @@ void PulseEddyPlotWindow::loadReviewFromDb()
                 found = true;
             }
             db.close();
-        }
-        QSqlDatabase::removeDatabase(connName);
+        } // db、q 析构，guard 析构自动 removeDatabase
 
         if (!found) return;
         if (!self || self->m_reviewEpoch != epoch || !self->m_reviewMode) return;

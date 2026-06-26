@@ -104,6 +104,7 @@ private:
     bool m_reviewMode = false;
     quint64 m_reviewEpoch = 0;
     QVector<FrameData> m_reviewFrames;
+    QAtomicInt m_reviewLoadCanceled; // 异步加载取消标志，跨线程安全
 };
 
 #endif // MAGARRAYWINDOW_H

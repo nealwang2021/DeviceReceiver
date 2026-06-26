@@ -67,6 +67,7 @@ private:
     qint64 m_reviewEndMs = 0;
     bool m_reviewMode = false;
     quint64 m_reviewEpoch = 0;
+    QAtomicInt m_reviewLoadCanceled; // 异步加载取消标志，跨线程安全
 };
 
 #endif // PULSEEDDYPLOTWINDOW_H

@@ -18,6 +18,7 @@
 #include <QDebug>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QUuid>
 #include <QtConcurrent>
 #include <QPointer>
 #include <QtGlobal>
@@ -736,10 +737,12 @@ void MagArrayWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
     const bool nowReview = (mode == static_cast<int>(SelectionState::Review));
 
     if (nowReview) {
+        m_reviewLoadCanceled.storeRelaxed(1); // 取消上一次仍在跑的异步加载
         m_reviewMode = true;
         loadReviewFromDb();
     } else {
         // 回到 Live 模式
+        m_reviewLoadCanceled.storeRelaxed(1); // 取消正在运行的异步加载
         m_reviewMode = false;
         m_reviewFrames.clear();
     }
@@ -754,9 +757,23 @@ void MagArrayWindow::loadReviewFromDb()
     const qint64 startMs = m_reviewStartMs;
     const qint64 endMs = m_reviewEndMs;
     const quint64 epoch = ++m_reviewEpoch;
+    m_reviewLoadCanceled.storeRelaxed(0); // 新加载开始，清除取消标志
 
     QPointer<MagArrayWindow> self(this);
     QtConcurrent::run([self, startMs, endMs, epoch]() {
+        // UUID 全局唯一连接名，多实例下不碰撞（修复 epoch 计数器非全局唯一的 bug）
+        const QString connName = QStringLiteral("ma_review_%1")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+        // RAII：任何 return 路径自动调用 removeDatabase，防止连接名泄漏
+        struct DbGuard {
+            QString name;
+            ~DbGuard() { if (!name.isEmpty()) QSqlDatabase::removeDatabase(name); }
+        } guard{connName};
+
+        // 检查取消标志
+        if (self && self->m_reviewLoadCanceled.loadRelaxed()) return;
+
         // Build synthetic PlotSnapshot + heatmap data from mag_array_frames
         auto snap = QSharedPointer<PlotSnapshot>::create();
         snap->mode = FrameData::MagArray;
@@ -767,7 +784,6 @@ void MagArrayWindow::loadReviewFromDb()
         QVector<double> hmTimeCol(kHeatmapCols);
         int hmFrameCount = 0;
 
-        const QString connName = QStringLiteral("ma_review_%1").arg(epoch);
         {
             QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", connName);
             auto* h = HistoryDataProvider::instance();
@@ -860,8 +876,7 @@ void MagArrayWindow::loadReviewFromDb()
 
             snap->timeMs = std::move(timeMs);
             snap->realAmp = std::move(realAmp);
-        }
-        QSqlDatabase::removeDatabase(connName);
+        } // db、q 析构，guard 析构自动 removeDatabase
 
         // Back on main thread: render waveform + heatmap
         if (!self || self->m_reviewEpoch != epoch || !self->m_reviewMode) return;
