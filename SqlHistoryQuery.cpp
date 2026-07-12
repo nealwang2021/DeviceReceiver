@@ -432,7 +432,8 @@ QVector<SqlHistoryQuery::MultiFreqFrameRow> SqlHistoryQuery::fetchMultiFreqRawCh
         "SELECT id, timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
         "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
         "normalized_impedance_real, normalized_impedance_imag, "
-        "voltage_magnitude, current_magnitude, valid "
+        "voltage_magnitude, current_magnitude, valid, "
+        "has_stage_pose, stage_x_mm, stage_y_mm, stage_z_mm "
         "FROM multifreq_frames "
         "WHERE timestamp_unix_ms BETWEEN :start AND :end "
         "AND (timestamp_unix_ms > :lastTs "
@@ -464,6 +465,10 @@ QVector<SqlHistoryQuery::MultiFreqFrameRow> SqlHistoryQuery::fetchMultiFreqRawCh
         r.voltageMag = q.value(11).toDouble();
         r.currentMag = q.value(12).toDouble();
         r.valid = q.value(13).toBool();
+        r.hasStagePose = q.value(14).toBool();
+        r.stageXMm = q.value(15).toDouble();
+        r.stageYMm = q.value(16).toDouble();
+        r.stageZMm = q.value(17).toDouble();
         rows.append(r);
     }
     return rows;

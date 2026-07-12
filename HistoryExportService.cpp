@@ -456,7 +456,8 @@ bool HistoryExportService::exportMultiFreqCsv(
     stream << "timestamp_ms_utc,frame_index,frequency_factor,frequency_hz,"
               "impedance_real,impedance_imag,impedance_magnitude,impedance_phase_deg,"
               "normalized_impedance_real,normalized_impedance_imag,"
-              "voltage_magnitude,current_magnitude\n";
+              "voltage_magnitude,current_magnitude,"
+              "has_stage_pose,stage_x_mm,stage_y_mm,stage_z_mm\n";
 
     QString adb = dbPath;
     if (adb.isEmpty()) {
@@ -488,7 +489,11 @@ bool HistoryExportService::exportMultiFreqCsv(
                    << QString::number(row.normImpedanceReal, 'g', 15) << ','
                    << QString::number(row.normImpedanceImag, 'g', 15) << ','
                    << QString::number(row.voltageMag, 'g', 15) << ','
-                   << QString::number(row.currentMag, 'g', 15) << '\n';
+                   << QString::number(row.currentMag, 'g', 15) << ','
+                   << (row.hasStagePose ? 1 : 0) << ','
+                   << (row.hasStagePose ? QString::number(row.stageXMm, 'g', 15) : QString()) << ','
+                   << (row.hasStagePose ? QString::number(row.stageYMm, 'g', 15) : QString()) << ','
+                   << (row.hasStagePose ? QString::number(row.stageZMm, 'g', 15) : QString()) << '\n';
         }
         written += rows.size();
         lastTs = rows.last().timestampMs;
@@ -900,11 +905,13 @@ bool HistoryExportService::exportMultiFreqHdf5(
     hid_t impedanceGroup = H5Gcreate2(fileId, "/impedance", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     hid_t voltageGroup   = H5Gcreate2(fileId, "/voltage",   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
     hid_t currentGroup   = H5Gcreate2(fileId, "/current",   H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
-    if (framesGroup < 0 || impedanceGroup < 0 || voltageGroup < 0 || currentGroup < 0) {
+    hid_t stagePoseGroup = H5Gcreate2(fileId, "/stage_pose",H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    if (framesGroup < 0 || impedanceGroup < 0 || voltageGroup < 0 || currentGroup < 0 || stagePoseGroup < 0) {
         if (framesGroup    >= 0) H5Gclose(framesGroup);
         if (impedanceGroup >= 0) H5Gclose(impedanceGroup);
         if (voltageGroup   >= 0) H5Gclose(voltageGroup);
         if (currentGroup   >= 0) H5Gclose(currentGroup);
+        if (stagePoseGroup >= 0) H5Gclose(stagePoseGroup);
         cleanupAndRemove();
         return false;
     }
@@ -927,15 +934,23 @@ bool HistoryExportService::exportMultiFreqHdf5(
     hid_t dsVoltMag  = createChunkedDataset1D(voltageGroup, "magnitude", H5T_IEEE_F64LE, chunkRows);
     hid_t dsCurrMag  = createChunkedDataset1D(currentGroup, "magnitude", H5T_IEEE_F64LE, chunkRows);
 
+    // /stage_pose 数据集
+    hid_t dsHasStage   = createChunkedDataset1D(stagePoseGroup, "has_stage", H5T_STD_I32LE,  chunkRows);
+    hid_t dsStageXMm   = createChunkedDataset1D(stagePoseGroup, "x_mm",      H5T_IEEE_F64LE, chunkRows);
+    hid_t dsStageYMm   = createChunkedDataset1D(stagePoseGroup, "y_mm",      H5T_IEEE_F64LE, chunkRows);
+    hid_t dsStageZMm   = createChunkedDataset1D(stagePoseGroup, "z_mm",      H5T_IEEE_F64LE, chunkRows);
+
     H5Gclose(framesGroup);
     H5Gclose(impedanceGroup);
     H5Gclose(voltageGroup);
     H5Gclose(currentGroup);
+    H5Gclose(stagePoseGroup);
 
     const hid_t datasets[] = { dsTs, dsFrameIdx, dsFreqFac, dsFreqHz,
                                dsImpReal, dsImpImag, dsImpMag, dsImpPhase,
                                dsNormReal, dsNormImag,
-                               dsVoltMag, dsCurrMag };
+                               dsVoltMag, dsCurrMag,
+                               dsHasStage, dsStageXMm, dsStageYMm, dsStageZMm };
     for (hid_t d : datasets) {
         if (d < 0) {
             for (hid_t dd : datasets) if (dd >= 0) H5Dclose(dd);
@@ -995,6 +1010,10 @@ bool HistoryExportService::exportMultiFreqHdf5(
     QVector<double>  bufNormImag;
     QVector<double>  bufVoltMag;
     QVector<double>  bufCurrMag;
+    QVector<qint32>  bufHasStage;
+    QVector<double>  bufStageXMm;
+    QVector<double>  bufStageYMm;
+    QVector<double>  bufStageZMm;
 
     bool success = true;
 
@@ -1022,6 +1041,10 @@ bool HistoryExportService::exportMultiFreqHdf5(
         bufNormImag.resize(n);
         bufVoltMag.resize(n);
         bufCurrMag.resize(n);
+        bufHasStage.resize(n);
+        bufStageXMm.resize(n);
+        bufStageYMm.resize(n);
+        bufStageZMm.resize(n);
 
         for (int r = 0; r < n; ++r) {
             const auto& row = rows[r];
@@ -1037,6 +1060,10 @@ bool HistoryExportService::exportMultiFreqHdf5(
             bufNormImag[r] = row.normImpedanceImag;
             bufVoltMag[r]  = row.voltageMag;
             bufCurrMag[r]  = row.currentMag;
+            bufHasStage[r] = row.hasStagePose ? 1 : 0;
+            bufStageXMm[r] = row.hasStagePose ? row.stageXMm : 0.0;
+            bufStageYMm[r] = row.hasStagePose ? row.stageYMm : 0.0;
+            bufStageZMm[r] = row.hasStagePose ? row.stageZMm : 0.0;
         }
 
         if (!appendDataset1D(dsTs,       H5T_NATIVE_INT64,  offset, n, bufTs.constData()) ||
@@ -1050,7 +1077,11 @@ bool HistoryExportService::exportMultiFreqHdf5(
             !appendDataset1D(dsNormReal, H5T_NATIVE_DOUBLE, offset, n, bufNormReal.constData()) ||
             !appendDataset1D(dsNormImag, H5T_NATIVE_DOUBLE, offset, n, bufNormImag.constData()) ||
             !appendDataset1D(dsVoltMag,  H5T_NATIVE_DOUBLE, offset, n, bufVoltMag.constData()) ||
-            !appendDataset1D(dsCurrMag,  H5T_NATIVE_DOUBLE, offset, n, bufCurrMag.constData()))
+            !appendDataset1D(dsCurrMag,  H5T_NATIVE_DOUBLE, offset, n, bufCurrMag.constData()) ||
+            !appendDataset1D(dsHasStage, H5T_NATIVE_INT32,  offset, n, bufHasStage.constData()) ||
+            !appendDataset1D(dsStageXMm, H5T_NATIVE_DOUBLE, offset, n, bufStageXMm.constData()) ||
+            !appendDataset1D(dsStageYMm, H5T_NATIVE_DOUBLE, offset, n, bufStageYMm.constData()) ||
+            !appendDataset1D(dsStageZMm, H5T_NATIVE_DOUBLE, offset, n, bufStageZMm.constData()))
         {
             success = false;
             break;

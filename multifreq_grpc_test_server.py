@@ -30,6 +30,7 @@
 #
 
 import argparse
+import csv
 import logging
 import math
 import os
@@ -38,6 +39,7 @@ import signal
 import sys
 import threading
 import time
+from collections import OrderedDict
 from concurrent import futures
 from dataclasses import dataclass, field
 
@@ -77,6 +79,52 @@ def _base_freq_enum(hz: int):
         return mf_pb2.BaseFrequency.Value(name)
     except ValueError:
         return mf_pb2.BASE_FREQUENCY_HZ_100
+
+
+# ---------------------------------------------------------------------------
+# CSV 数据加载器
+# ---------------------------------------------------------------------------
+
+def load_multifreq_csv(path: str) -> list:
+    """从 CSV 文件加载多频涡流帧数据，按 frame_index 分组。
+    返回 list[dict]: frame_index → {frequency_factor: {col: value}, ...}
+    """
+    csv.field_size_limit(10 * 1024 * 1024)
+    frames = OrderedDict()
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            # 跳过元数据头
+            if row[0].startswith("#"):
+                continue
+            # 跳过列标题行
+            if row[0].startswith("timestamp_ms_utc"):
+                continue
+            if len(row) < 12:
+                continue
+            try:
+                fi = int(row[1])
+                factor = int(row[2])
+                pt = {
+                    "frequency_factor": factor,
+                    "frequency_hz": float(row[3]),
+                    "impedance_real": float(row[4]),
+                    "impedance_imag": float(row[5]),
+                    "impedance_magnitude": float(row[6]),
+                    "impedance_phase_deg": float(row[7]),
+                    "normalized_impedance_real": float(row[8]),
+                    "normalized_impedance_imag": float(row[9]),
+                    "voltage_magnitude": float(row[10]),
+                    "current_magnitude": float(row[11]),
+                }
+            except (ValueError, IndexError):
+                continue
+            if fi not in frames:
+                frames[fi] = []
+            frames[fi].append(pt)
+    return list(frames.values())  # list of list-of-points, in CSV order
 
 
 # ---------------------------------------------------------------------------
@@ -136,16 +184,22 @@ class MultiFreqConfig:
 
 
 class MultiFreqGenerator:
-    """多频涡流模拟数据生成器。"""
+    """多频涡流模拟数据生成器（支持 CSV 回放和纯模拟）。"""
 
-    def __init__(self, config: MultiFreqConfig):
+    def __init__(self, config: MultiFreqConfig, csv_frames: list = None):
         self.cfg = config
+        self.csv_frames = csv_frames or []  # list[list[dict]]: 每个元素是一帧的频率点列表
+        self._csv_idx = 0  # CSV 回放当前位置
         self.frame_index: int = 0
         self._lock = threading.Lock()
         self._running: bool = False
         self._selected_serial: str = ""
         self._selected_desc: str = ""
         self._start_time: float = 0.0
+        if self.csv_frames:
+            logger.info("CSV 数据已加载: %d 帧, 每帧 %d 频率点",
+                        len(self.csv_frames),
+                        len(self.csv_frames[0]) if self.csv_frames else 0)
 
     # ---- 设备管理 ----
 
@@ -200,6 +254,33 @@ class MultiFreqGenerator:
 
     # ---- 帧生成 ----
 
+    def _build_csv_frame(self, fid: int, points: list) -> "mf_pb2.DetectionFrame":
+        """用 CSV 数据构建一帧（不填充 curve/spectrum 通道）。"""
+        now_ms = int(time.time() * 1000)
+        frame = mf_pb2.DetectionFrame()
+        frame.timestamp_unix_ms = now_ms
+        frame.frame_index = fid
+        frame.base_frequency_hz = self.cfg.base_freq_hz
+        frame.sample_rate_hz = self.cfg.sample_rate_hz
+        frame.sample_count_per_frame = self.cfg.samples_per_frame
+
+        for pt_data in points:
+            pt = frame.point_results.add()
+            pt.frequency_factor = pt_data["frequency_factor"]
+            pt.frequency_hz = pt_data["frequency_hz"]
+            pt.impedance_real = pt_data["impedance_real"]
+            pt.impedance_imag = pt_data["impedance_imag"]
+            pt.impedance_magnitude = pt_data["impedance_magnitude"]
+            pt.impedance_phase_deg = pt_data["impedance_phase_deg"]
+            pt.normalized_impedance_real = pt_data["normalized_impedance_real"]
+            pt.normalized_impedance_imag = pt_data["normalized_impedance_imag"]
+            pt.voltage_magnitude = pt_data["voltage_magnitude"]
+            pt.current_magnitude = pt_data["current_magnitude"]
+            pt.valid = True
+
+        frame.status.CopyFrom(self.status())
+        return frame
+
     def next_frame(self):
         """生成下一帧 DetectionFrame。若未启动则返回 None。"""
         with self._lock:
@@ -210,9 +291,18 @@ class MultiFreqGenerator:
             bf = self.cfg.base_freq_hz
             sr = self.cfg.sample_rate_hz
             spf = self.cfg.samples_per_frame
-            factors = list(self.cfg.factors)
-            norm = self.cfg.norm_scale
-            noise = self.cfg.noise
+
+        # CSV 回放模式
+        if self.csv_frames:
+            points = self.csv_frames[self._csv_idx]
+            self._csv_idx = (self._csv_idx + 1) % len(self.csv_frames)
+            frame = self._build_csv_frame(fid, points)
+            # status 在 _build_csv_frame 内部已通过 self.status() 设置，无需重复
+            return frame
+
+        # 纯模拟模式（原有逻辑）
+        factors = list(self.cfg.factors)
+        noise = self.cfg.noise
 
         now_ms = int(time.time() * 1000)
         elapsed = time.time() - self._start_time
@@ -224,19 +314,13 @@ class MultiFreqGenerator:
         frame.sample_rate_hz = sr
         frame.sample_count_per_frame = spf
 
-        # curve_channels 和 amplitude_spectrum_channels 不填充
-        # （客户端 StreamFramesRequest.include_curve/include_spectrum 均为 false）
-
-        # 逐频点生成阻抗数据
         for factor in factors:
             freq_hz = float(bf * factor)
             pt = frame.point_results.add()
             pt.frequency_factor = factor
             pt.frequency_hz = freq_hz
 
-            # 模拟多频涡流信号特征：基频最强，谐波按 1/√factor 衰减
             base_mag = 0.03 / math.sqrt(factor)
-            # 相位：谐波固有相移 + 噪声 + 0.1Hz 慢漂移模拟材料变化
             phase_base = (factor - 1) * 25.0 + random.gauss(0, 5.0)
             noise_mag = random.gauss(0, noise)
             noise_phase = random.gauss(0, noise * 0.3)
@@ -248,18 +332,15 @@ class MultiFreqGenerator:
             z_real = mag * math.cos(phase_rad)
             z_imag = mag * math.sin(phase_rad)
 
-            # 阻抗
             pt.impedance_real = z_real
             pt.impedance_imag = z_imag
             pt.impedance_magnitude = mag
             pt.impedance_phase_deg = phase_deg
 
-            # 归一化阻抗: Z / (2πf) × 1e6
             denom = 2.0 * math.pi * freq_hz
             pt.normalized_impedance_real = (z_real / denom) * 1e6 if denom > 1e-12 else 0.0
             pt.normalized_impedance_imag = (z_imag / denom) * 1e6 if denom > 1e-12 else 0.0
 
-            # 电压 / 电流（关联的复数值）
             v_mag = 1.0 + 0.1 * math.sin(elapsed * 1.5 * math.pi)
             i_mag = v_mag / max(mag, 1e-9) if mag > 1e-9 else 10.0
             pt.voltage.real = v_mag * math.cos(phase_rad * 0.5)
@@ -282,6 +363,7 @@ class MultiFreqEddyCurrentServicer(mf_grpc.MultiFreqEddyCurrentServicer):
     def __init__(self, generator: MultiFreqGenerator, frame_interval_sec: float = 0.01):
         self.generator = generator
         self.interval_sec = max(0.001, frame_interval_sec)
+        self._stream_count = 0
 
     def ListDevices(self, request, context):
         reply = mf_pb2.ListDevicesResponse()
@@ -311,11 +393,31 @@ class MultiFreqEddyCurrentServicer(mf_grpc.MultiFreqEddyCurrentServicer):
         return mf_pb2.DetectionFrame()
 
     def StreamFrames(self, request, context):
-        while context.is_active():
-            frame = self.generator.next_frame()
-            if frame is not None:
-                yield frame
-            time.sleep(self.interval_sec)
+        self._stream_count += 1
+        stream_id = self._stream_count
+        logger.info("StreamFrames#%d 开始推流, 间隔=%.1fms", stream_id, self.interval_sec * 1000)
+        frame_count = 0
+        none_count = 0
+        try:
+            while context.is_active():
+                frame = self.generator.next_frame()
+                if frame is not None:
+                    yield frame
+                    frame_count += 1
+                    if frame_count % 100 == 1:
+                        logger.info("StreamFrames#%d 已推送 %d 帧 (frame_index=%d, pts=%d)",
+                                    stream_id, frame_count, frame.frame_index, len(frame.point_results))
+                else:
+                    none_count += 1
+                    if none_count == 1:
+                        logger.warning("StreamFrames#%d next_frame() 返回 None! (第1次)", stream_id)
+                    elif none_count % 500 == 0:
+                        logger.warning("StreamFrames#%d next_frame() 返回 None (第%d次)",
+                                       stream_id, none_count)
+                time.sleep(self.interval_sec)
+        finally:
+            logger.info("StreamFrames#%d 结束, 共推送 %d 帧, None=%d 次",
+                        stream_id, frame_count, none_count)
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +445,10 @@ def parse_args():
                    help="帧间隔 ms（默认由 --fps 推算；指定后覆盖 --fps）")
     p.add_argument("--noise", type=float, default=0.005,
                    help="阻抗噪声幅度（默认 0.005）")
+    p.add_argument("--csv", type=str,
+                   default=os.path.join(SCRIPT_DIR, "build_cmake", "20260626",
+                                        "multifreq_eddy_db_export_20260626_121550.csv"),
+                   help="CSV 数据文件路径（默认使用实际采集数据）")
     return p.parse_args()
 
 
@@ -375,7 +481,20 @@ def main():
         factors=factors,
         noise=args.noise,
     )
-    generator = MultiFreqGenerator(cfg)
+
+    # 加载 CSV 数据
+    csv_frames = None
+    csv_path = args.csv.strip().strip('"').strip("'") if args.csv else ""
+    if csv_path:
+        if not os.path.isabs(csv_path):
+            csv_path = os.path.join(os.getcwd(), csv_path)
+        if os.path.isfile(csv_path):
+            logger.info("加载 CSV: %s", csv_path)
+            csv_frames = load_multifreq_csv(csv_path)
+        else:
+            logger.warning("CSV 文件不存在，回退到纯模拟: %s", csv_path)
+
+    generator = MultiFreqGenerator(cfg, csv_frames=csv_frames)
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
     mf_grpc.add_MultiFreqEddyCurrentServicer_to_server(
@@ -387,6 +506,10 @@ def main():
     server.start()
 
     logger.info("MultiFreqEddyCurrent listening on %s", bind_addr)
+    if csv_frames:
+        logger.info("  mode           = CSV 回放 (%d 帧循环)", len(csv_frames))
+    else:
+        logger.info("  mode           = 纯模拟")
     logger.info("  base_freq      = %d Hz", cfg.base_freq_hz)
     logger.info("  avg_cycle      = %d  (采集块 %.1f ms)", cfg.avg_cycle_count, cfg.cycle_duration_ms)
     logger.info("  sample_rate    = %d Hz", cfg.sample_rate_hz)

@@ -631,8 +631,9 @@ bool HistoryImportService::importMultiFreqCsv(const QString& filePath, const QSt
             "INSERT INTO multifreq_frames(timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
             "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
             "normalized_impedance_real, normalized_impedance_imag, "
-            "voltage_magnitude, current_magnitude, valid) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")))
+            "voltage_magnitude, current_magnitude, valid, "
+            "has_stage_pose, stage_x_mm, stage_y_mm, stage_z_mm) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")))
     {
         db.close(); db = QSqlDatabase(); QFile::remove(targetDbPath); return false;
     }
@@ -669,6 +670,18 @@ bool HistoryImportService::importMultiFreqCsv(const QString& filePath, const QSt
         insertQuery.bindValue(10, parseDoubleOrNull(fields[10]));
         insertQuery.bindValue(11, parseDoubleOrNull(fields[11]));
         insertQuery.bindValue(12, 1); // valid
+        // Stage pose columns (backward compatible: old CSVs have only 12 columns)
+        if (fields.size() >= 16) {
+            insertQuery.bindValue(13, fields[12].isEmpty() ? 0 : fields[12].toInt());
+            insertQuery.bindValue(14, parseDoubleOrNull(fields[13]));
+            insertQuery.bindValue(15, parseDoubleOrNull(fields[14]));
+            insertQuery.bindValue(16, parseDoubleOrNull(fields[15]));
+        } else {
+            insertQuery.bindValue(13, 0);
+            insertQuery.bindValue(14, QVariant());
+            insertQuery.bindValue(15, QVariant());
+            insertQuery.bindValue(16, QVariant());
+        }
         if (insertQuery.exec()) ++written;
     };
     processLine(line);
@@ -1259,7 +1272,7 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
         return H5Dopen2(fileId, name, H5P_DEFAULT);
     };
 
-    // Open all 12 datasets
+    // Open all 12+ datasets
     hid_t dsTs       = openDs("/frames/timestamp_ms_utc");
     hid_t dsFrameIdx = openDs("/frames/frame_index");
     hid_t dsFreqFac  = openDs("/frames/frequency_factor");
@@ -1272,6 +1285,12 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
     hid_t dsNormImag = openDs("/impedance/norm_imag");
     hid_t dsVoltMag  = openDs("/voltage/magnitude");
     hid_t dsCurrMag  = openDs("/current/magnitude");
+    // Stage pose datasets (optional — old HDF5 files don't have them)
+    hid_t dsHasStage = openDs("/stage_pose/has_stage");
+    hid_t dsStageXMm = openDs("/stage_pose/x_mm");
+    hid_t dsStageYMm = openDs("/stage_pose/y_mm");
+    hid_t dsStageZMm = openDs("/stage_pose/z_mm");
+    const bool hasStageData = (dsHasStage >= 0 && dsStageXMm >= 0 && dsStageYMm >= 0 && dsStageZMm >= 0);
 
     const hid_t allDs[] = { dsTs, dsFrameIdx, dsFreqFac, dsFreqHz,
                             dsImpReal, dsImpImag, dsImpMag, dsImpPhase,
@@ -1322,8 +1341,9 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
             "INSERT INTO multifreq_frames(timestamp_unix_ms, frame_index, frequency_factor, frequency_hz, "
             "impedance_real, impedance_imag, impedance_magnitude, impedance_phase_deg, "
             "normalized_impedance_real, normalized_impedance_imag, "
-            "voltage_magnitude, current_magnitude, valid) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")))
+            "voltage_magnitude, current_magnitude, valid, "
+            "has_stage_pose, stage_x_mm, stage_y_mm, stage_z_mm) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")))
     {
         for (hid_t d : allDs) H5Dclose(d);
         closeH5();
@@ -1355,6 +1375,10 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
     QVector<double>  bufNormImag;
     QVector<double>  bufVoltMag;
     QVector<double>  bufCurrMag;
+    QVector<qint32>  bufHasStage;
+    QVector<double>  bufStageXMm;
+    QVector<double>  bufStageYMm;
+    QVector<double>  bufStageZMm;
 
     qint64 written = 0;
     for (qint64 offset = 0; offset < totalRows; offset += chunkSize) {
@@ -1381,6 +1405,10 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
         bufNormImag.resize(n);
         bufVoltMag.resize(n);
         bufCurrMag.resize(n);
+        bufHasStage.resize(n);
+        bufStageXMm.resize(n);
+        bufStageYMm.resize(n);
+        bufStageZMm.resize(n);
 
         if (!readHyperslab1D(dsTs,       H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufTs.data()) ||
             !readHyperslab1D(dsFrameIdx, H5T_NATIVE_INT64,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufFrameIdx.data()) ||
@@ -1404,6 +1432,32 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
             return false;
         }
 
+        // Stage pose data (optional: old HDF5 files lack these datasets; fill with defaults)
+        if (hasStageData) {
+            if (!readHyperslab1D(dsHasStage, H5T_NATIVE_INT32,  static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufHasStage.data()) ||
+                !readHyperslab1D(dsStageXMm, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufStageXMm.data()) ||
+                !readHyperslab1D(dsStageYMm, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufStageYMm.data()) ||
+                !readHyperslab1D(dsStageZMm, H5T_NATIVE_DOUBLE, static_cast<hsize_t>(offset), static_cast<hsize_t>(n), bufStageZMm.data()))
+            {
+                db.rollback();
+                for (hid_t d : allDs) H5Dclose(d);
+                if (dsHasStage >= 0) H5Dclose(dsHasStage);
+                if (dsStageXMm >= 0) H5Dclose(dsStageXMm);
+                if (dsStageYMm >= 0) H5Dclose(dsStageYMm);
+                if (dsStageZMm >= 0) H5Dclose(dsStageZMm);
+                closeH5();
+                db.close();
+                db = QSqlDatabase();
+                QFile::remove(targetDbPath);
+                return false;
+            }
+        } else {
+            std::fill(bufHasStage.begin(), bufHasStage.end(), 0);
+            std::fill(bufStageXMm.begin(), bufStageXMm.end(), 0.0);
+            std::fill(bufStageYMm.begin(), bufStageYMm.end(), 0.0);
+            std::fill(bufStageZMm.begin(), bufStageZMm.end(), 0.0);
+        }
+
         for (qint64 r = 0; r < n; ++r) {
             insertQuery.bindValue(0,  bufTs[r]);
             insertQuery.bindValue(1,  bufFrameIdx[r]);
@@ -1418,10 +1472,20 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
             insertQuery.bindValue(10, std::isfinite(bufVoltMag[r])  ? QVariant(bufVoltMag[r])  : QVariant());
             insertQuery.bindValue(11, std::isfinite(bufCurrMag[r])  ? QVariant(bufCurrMag[r])  : QVariant());
             insertQuery.bindValue(12, 1); // valid
+            insertQuery.bindValue(13, static_cast<int>(bufHasStage[r]));
+            insertQuery.bindValue(14, bufHasStage[r] ? QVariant(bufStageXMm[r]) : QVariant());
+            insertQuery.bindValue(15, bufHasStage[r] ? QVariant(bufStageYMm[r]) : QVariant());
+            insertQuery.bindValue(16, bufHasStage[r] ? QVariant(bufStageZMm[r]) : QVariant());
 
             if (!insertQuery.exec()) {
                 db.rollback();
                 for (hid_t d : allDs) H5Dclose(d);
+                if (hasStageData) {
+                    if (dsHasStage >= 0) H5Dclose(dsHasStage);
+                    if (dsStageXMm >= 0) H5Dclose(dsStageXMm);
+                    if (dsStageYMm >= 0) H5Dclose(dsStageYMm);
+                    if (dsStageZMm >= 0) H5Dclose(dsStageZMm);
+                }
                 closeH5();
                 db.close();
                 db = QSqlDatabase();
@@ -1436,6 +1500,12 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
     if (!db.commit()) {
         db.rollback();
         for (hid_t d : allDs) H5Dclose(d);
+        if (hasStageData) {
+            if (dsHasStage >= 0) H5Dclose(dsHasStage);
+            if (dsStageXMm >= 0) H5Dclose(dsStageXMm);
+            if (dsStageYMm >= 0) H5Dclose(dsStageYMm);
+            if (dsStageZMm >= 0) H5Dclose(dsStageZMm);
+        }
         closeH5();
         db.close();
         db = QSqlDatabase();
@@ -1444,6 +1514,12 @@ bool HistoryImportService::importMultiFreqHdf5(const QString& filePath, const QS
     }
 
     for (hid_t d : allDs) H5Dclose(d);
+    if (hasStageData) {
+        if (dsHasStage >= 0) H5Dclose(dsHasStage);
+        if (dsStageXMm >= 0) H5Dclose(dsStageXMm);
+        if (dsStageYMm >= 0) H5Dclose(dsStageYMm);
+        if (dsStageZMm >= 0) H5Dclose(dsStageZMm);
+    }
     closeH5();
     db.close();
     db = QSqlDatabase();

@@ -66,6 +66,10 @@ public:
         double  voltageMag = 0.0;
         double  currentMag = 0.0;
         bool    valid = false;
+        bool    hasStagePose = false;
+        double  stageXMm = 0.0;
+        double  stageYMm = 0.0;
+        double  stageZMm = 0.0;
     };
 
     struct MultiFreqEnvelopeBucket
