@@ -840,6 +840,7 @@ void ArrayRgbHeatmapWindow::onCriticalFrame(const FrameData& frame)
 
 void ArrayRgbHeatmapWindow::onPlotSnapshotUpdated(const QSharedPointer<const PlotSnapshot>& snapshot)
 {
+    if (m_reviewMode) return; // Review 模式下不处理实时快照，防止覆盖回放视图
     if (!m_frames.isEmpty()) {
         return;
     }

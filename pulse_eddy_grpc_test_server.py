@@ -5,8 +5,9 @@
 用法: python pulse_eddy_grpc_test_server.py [--port 50055]
 """
 
-import argparse, math, os, random, signal, sys, threading, time
+import argparse, base64, csv, math, os, random, signal, struct, sys, threading, time
 from concurrent import futures
+from collections import OrderedDict
 from datetime import datetime
 
 if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -35,9 +36,57 @@ def _log(prefix, msg):
         print(f"{ts}[{prefix}]{msg}", flush=True)
 
 
+# ---- CSV 数据加载 ----
+
+def _b64_to_doubles(b64_str: str) -> list:
+    """将 base64 字符串解码为 double 列表。"""
+    if not b64_str or not b64_str.strip():
+        return []
+    raw_bytes = base64.b64decode(b64_str)
+    n = len(raw_bytes) // 8
+    return list(struct.unpack(f"<{n}d", raw_bytes)) if n > 0 else []
+
+
+def load_pulse_eddy_csv(path: str) -> list:
+    """从 CSV 文件加载脉冲涡流帧数据。
+    返回 list[dict]: [{raw_values, ref_values, has_ref, sample_count, sample_rate_hz}, ...]
+    """
+    csv.field_size_limit(10 * 1024 * 1024)  # 10MB，脉冲涡流 base64 字段约 683KB
+    frames = []
+    with open(path, "r", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if not row:
+                continue
+            if row[0].startswith("#"):
+                continue
+            if row[0].startswith("timestamp_ms_utc"):
+                continue
+            if len(row) < 9:
+                continue
+            try:
+                raw_vals = _b64_to_doubles(row[4])
+                has_ref = int(row[5]) != 0
+                ref_vals = _b64_to_doubles(row[6]) if has_ref and row[6] else []
+                frames.append({
+                    "sample_count": int(row[2]),
+                    "sample_rate_hz": float(row[3]),
+                    "raw_values": raw_vals,
+                    "has_ref": has_ref,
+                    "ref_values": ref_vals,
+                    "min_value": float(row[7]) if row[7] else 0.0,
+                    "max_value": float(row[8]) if row[8] else 0.0,
+                })
+            except (ValueError, IndexError, struct.error, base64.binascii.Error):
+                continue
+    return frames
+
+
 class PulseEddyGenerator:
-    def __init__(self, noise=0.01):
+    def __init__(self, noise=0.01, csv_frames=None):
         self.noise = noise
+        self.csv_frames = csv_frames or []
+        self._csv_idx = 0
         self.frame_index = 0
         self._lock = threading.Lock()
         self._running = False
@@ -50,6 +99,9 @@ class PulseEddyGenerator:
         self._ref_collected = 0
         self._ref_collecting = False
         self._ref_buffer = []  # 攒帧求均值
+
+        if self.csv_frames:
+            _log("CSV", f"已加载 {len(self.csv_frames)} 帧, 采样点={len(self.csv_frames[0]['raw_values']) if self.csv_frames else 0}")
 
     def list_devices(self):
         return [
@@ -120,7 +172,7 @@ class PulseEddyGenerator:
             )
 
     def next_frame(self):
-        """生成一帧脉冲曲线：衰减正弦波 + 噪声"""
+        """生成一帧脉冲曲线。CSV 模式回放实际数据，否则生成模拟衰减正弦波。"""
         with self._lock:
             if not self._running:
                 return None
@@ -132,18 +184,26 @@ class PulseEddyGenerator:
         frame = pe_pb2.PulseFrame()
         frame.frame_index = fid
         frame.timestamp_unix_ms = now_ms
-        frame.sample_rate_hz = 1000000
-        frame.sample_count = SAMPLE_COUNT
 
-        # 生成脉冲曲线：衰减正弦波
-        raw = []
-        for i in range(SAMPLE_COUNT):
-            x = i / SAMPLE_COUNT * 10.0  # 0~10
-            val = (math.sin(x * 20.0 + fid * 0.1) * math.exp(-x * 0.8) * 5.0
-                   + math.sin(x * 47.0 + fid * 0.07) * math.exp(-x * 1.5) * 2.0
-                   + random.gauss(0, self.noise))
-            raw.append(val)
-        frame.raw_values.extend(raw)
+        # CSV 回放模式
+        if self.csv_frames:
+            data = self.csv_frames[self._csv_idx]
+            self._csv_idx = (self._csv_idx + 1) % len(self.csv_frames)
+            frame.sample_rate_hz = int(data["sample_rate_hz"])
+            frame.sample_count = data["sample_count"]
+            frame.raw_values.extend(data["raw_values"])
+            raw = data["raw_values"]  # for reference
+        else:
+            frame.sample_rate_hz = 1000000
+            frame.sample_count = SAMPLE_COUNT
+            raw = []
+            for i in range(SAMPLE_COUNT):
+                x = i / SAMPLE_COUNT * 10.0
+                val = (math.sin(x * 20.0 + fid * 0.1) * math.exp(-x * 0.8) * 5.0
+                       + math.sin(x * 47.0 + fid * 0.07) * math.exp(-x * 1.5) * 2.0
+                       + random.gauss(0, self.noise))
+                raw.append(val)
+            frame.raw_values.extend(raw)
 
         # 参考线采集
         with self._lock:
@@ -258,9 +318,23 @@ def main():
     parser.add_argument("--port", type=int, default=50055)
     parser.add_argument("--interval", type=int, default=500, help="帧间隔 ms (默认 500ms ~2fps)")
     parser.add_argument("--noise", type=float, default=0.01)
+    parser.add_argument("--csv", type=str,
+                        default=os.path.join(SCRIPT_DIR, "build_cmake", "20260626",
+                                             "pulse_eddy_db_export_20260626_120324.csv"),
+                        help="CSV 数据文件路径（默认使用实际采集数据）")
     args = parser.parse_args()
 
-    gen = PulseEddyGenerator(noise=args.noise)
+    csv_frames = None
+    csv_path = args.csv.strip().strip('"').strip("'") if args.csv else ""
+    if csv_path:
+        if not os.path.isabs(csv_path):
+            csv_path = os.path.join(os.getcwd(), csv_path)
+        if os.path.isfile(csv_path):
+            csv_frames = load_pulse_eddy_csv(csv_path)
+        else:
+            _log("WARN", f"CSV 文件不存在，回退到纯模拟: {csv_path}")
+
+    gen = PulseEddyGenerator(noise=args.noise, csv_frames=csv_frames)
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=16))
     pe_grpc.add_PulseEddyServicer_to_server(
         PulseEddyServicer(gen, interval_ms=args.interval), server)

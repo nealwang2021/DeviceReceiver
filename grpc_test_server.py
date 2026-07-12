@@ -526,8 +526,12 @@ class AcquisitionDeviceServicer(device_pb2_grpc.AcquisitionDeviceServicer):
 
 def parse_args():
     # 默认仅当仓库/打包内带有该 CSV 时才回放；否则走纯模拟（无 Python 的测试机无需额外文件）
-    bundled_demo_csv = os.path.join(SCRIPT_DIR, "proto", "display_aligned_20260327_171739.csv")
-    default_csv = bundled_demo_csv if os.path.isfile(bundled_demo_csv) else ""
+    default_csv = os.path.join(SCRIPT_DIR, "build_cmake", "20260626",
+                               "aligned_db_export_20260626_104547.csv")
+    if not os.path.isfile(default_csv):
+        default_csv = os.path.join(SCRIPT_DIR, "proto", "display_aligned_20260327_171739.csv")
+    if not os.path.isfile(default_csv):
+        default_csv = ""
     epilog = """
 示例（打包后的 grpc_test_server.exe 同样适用）:
   grpc_test_server.exe --db D:\\data\\device_realtime.db
