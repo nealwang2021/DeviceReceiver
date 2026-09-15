@@ -24,6 +24,16 @@
 #include <limits>
 #include <cmath>
 
+namespace {
+QString plotWindowTitleDiag(const QString& title)
+{
+    return QStringLiteral("title=\"%1\" loadingMarks=%2 len=%3")
+        .arg(title)
+        .arg(title.count(QStringLiteral("加载中")))
+        .arg(title.size());
+}
+} // namespace
+
 PlotWindow::PlotWindow(QWidget *parent) : PlotWindowBase(parent)
 {
     qDebug() << "PlotWindow constructor begin";
@@ -1131,38 +1141,66 @@ void PlotWindow::onMfCircleToggled()
 
 void PlotWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
 {
+    const bool wasReview = m_reviewMode;
+    const QString titleBefore = windowTitle();
     m_reviewStartMs = startMs;
     m_reviewEndMs = endMs;
     const bool nowReview = (mode == SelectionState::Review);
 
+    int snapMode = -1;
+    if (const auto snap = PlotDataHub::instance()->snapshot()) {
+        snapMode = static_cast<int>(snap->mode);
+    }
+
     if (nowReview) {
-        qDebug() << "[PlotWindow] onSelectionChanged Review mode, startMs=" << startMs << "endMs=" << endMs
-                 << "m_lastMode=" << static_cast<int>(m_lastMode);
+        qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                << "selection Review wasReview=" << wasReview
+                << "lastMode=" << static_cast<int>(m_lastMode)
+                << "snapMode=" << snapMode
+                << "startMs=" << startMs << "endMs=" << endMs
+                << "spanMs=" << (endMs - startMs)
+                << plotWindowTitleDiag(titleBefore);
         // 始终探测 DB 中 multifreq_frames 是否有数据
         // 不信任 m_lastMode（可能为 Legacy 或来自其他会话的陈旧值）
         bool hasMultiFreqData = false;
         {
             auto* hdp = HistoryDataProvider::instance();
-            qDebug() << "[PlotWindow] probing DB: hdp=" << (hdp ? "ok" : "null")
-                     << "isOpen=" << (hdp ? hdp->isDatabaseOpen() : false);
+            qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                    << "probe multifreq hdp=" << (hdp ? "ok" : "null")
+                    << "isOpen=" << (hdp ? hdp->isDatabaseOpen() : false)
+                    << "db=" << (hdp ? hdp->currentDatabasePath() : QString());
             if (hdp && hdp->isDatabaseOpen()) {
+                const qint64 probeT0 = QDateTime::currentMSecsSinceEpoch();
                 const auto rows = hdp->fetchMultiFreqRawChunk(startMs, endMs, startMs - 1,
                     std::numeric_limits<qint64>::min(), 1);
                 hasMultiFreqData = !rows.isEmpty();
-                qDebug() << "[PlotWindow] DB probe result: rows.size=" << rows.size()
-                         << "hasMultiFreqData=" << hasMultiFreqData;
+                qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                        << "probe result rows=" << rows.size()
+                        << "hasMultiFreqData=" << hasMultiFreqData
+                        << "probeMs=" << (QDateTime::currentMSecsSinceEpoch() - probeT0);
             }
         }
         if (hasMultiFreqData) {
-            qDebug() << "[PlotWindow] calling loadMultiFreqReviewFromDb";
+            qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                    << "will loadMultiFreqReviewFromDb epoch(next)=" << (m_reviewEpoch + 1);
             m_reviewLoadCanceled.storeRelaxed(1); // 取消上一次仍在跑的异步加载
             m_reviewMode = true;  // 必须在异步加载前设置，与 MagArray/PulseEddy 一致
             loadMultiFreqReviewFromDb();
         } else {
-            qDebug() << "[PlotWindow] no MultiFreq data detected, skipping review load";
+            qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                    << "skip review load (no multifreq_frames in range)";
         }
         // For other modes, review loading not yet implemented
     } else {
+        const bool titleHasLoading = titleBefore.contains(QStringLiteral("加载中"));
+        if (wasReview || titleHasLoading) {
+            qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                    << "selection Live; this branch does not restore window title"
+                    << "wasReview=" << wasReview
+                    << "lastMode=" << static_cast<int>(m_lastMode)
+                    << "snapMode=" << snapMode
+                    << plotWindowTitleDiag(titleBefore);
+        }
         // Return to live mode
         m_reviewLoadCanceled.storeRelaxed(1); // 取消正在运行的异步加载
         m_reviewFrames.clear();
@@ -1180,10 +1218,12 @@ void PlotWindow::loadMultiFreqReviewFromDb()
 {
     auto* hdp = HistoryDataProvider::instance();
     if (!hdp || !hdp->isDatabaseOpen()) {
-        qDebug() << "[PlotWindow::loadReview] hdp null or not open";
+        qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+                << "loadReview abort hdp null or not open";
         return;
     }
-    qDebug() << "[PlotWindow::loadReview] start, path=" << hdp->currentDatabasePath();
+    qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+            << "loadReview start db=" << hdp->currentDatabasePath();
 
     m_reviewFrames.clear();
     m_reviewLoadCanceled.storeRelaxed(0); // 新加载开始，清除取消标志
@@ -1194,7 +1234,15 @@ void PlotWindow::loadMultiFreqReviewFromDb()
 
     // 更新窗口标题提示加载中
     m_loadingTitle = windowTitle();
+    const int marksBefore = m_loadingTitle.count(QStringLiteral("加载中"));
     setWindowTitle(m_loadingTitle + QStringLiteral(" — 加载中..."));
+    const QString titleAfter = windowTitle();
+    qInfo() << "[PlotWindow]" << static_cast<const void*>(this)
+            << "loadReview title-append epoch=" << epoch
+            << "marks" << marksBefore << "->" << titleAfter.count(QStringLiteral("加载中"))
+            << "savedLoadingTitle=" << m_loadingTitle
+            << "newTitle=" << titleAfter
+            << "startMs=" << startMs << "endMs=" << endMs;
 
     // 异步加载（QPointer 防止窗口销毁后回调崩溃）
     QPointer<PlotWindow> self(this);
@@ -1202,17 +1250,22 @@ void PlotWindow::loadMultiFreqReviewFromDb()
         // 创建独立的 SqlHistoryQuery（不同的连接名，避免与主连接冲突）
         SqlHistoryQuery query;
         const QString dbPath = HistoryDataProvider::instance()->currentDatabasePath();
-        qDebug() << "[PlotWindow::loadReview] bg thread: dbPath=" << dbPath;
-        if (dbPath.isEmpty()) return;
-        if (!query.open(dbPath)) {
-            qDebug() << "[PlotWindow::loadReview] bg thread: open failed";
+        qInfo() << "[PlotWindow] loadReview bg start epoch=" << epoch << "dbPath=" << dbPath;
+        if (dbPath.isEmpty()) {
+            qInfo() << "[PlotWindow] loadReview bg abort empty dbPath epoch=" << epoch
+                    << "(window title left unchanged by this path)";
             return;
         }
-        qDebug() << "[PlotWindow::loadReview] bg thread: DB opened, querying...";
+        if (!query.open(dbPath)) {
+            qInfo() << "[PlotWindow] loadReview bg abort open failed epoch=" << epoch
+                    << "(window title left unchanged by this path)";
+            return;
+        }
+        qInfo() << "[PlotWindow] loadReview bg DB opened epoch=" << epoch;
 
         const qint64 totalRows = query.estimateMultiFreqRowCount(startMs, endMs);
-        qDebug() << "[PlotWindow::loadReview] bg: totalRows estimate=" << totalRows
-                 << "startMs=" << startMs << "endMs=" << endMs;
+        qInfo() << "[PlotWindow] loadReview bg estimate totalRows=" << totalRows
+                << "startMs=" << startMs << "endMs=" << endMs << "epoch=" << epoch;
         const int maxFrames = 5000;
         const int stride = qMax(1, static_cast<int>(totalRows / maxFrames));
 
@@ -1230,7 +1283,8 @@ void PlotWindow::loadMultiFreqReviewFromDb()
         while (true) {
             // 检查取消标志（用户拖动了新范围或切换回 Live）
             if (self && self->m_reviewLoadCanceled.loadRelaxed()) {
-                qDebug() << "[PlotWindow::loadReview] bg: cancelled";
+                qInfo() << "[PlotWindow] loadReview bg cancelled-in-loop epoch=" << epoch
+                        << "(window title left unchanged by this path)";
                 return;
             }
             const auto rows = query.fetchMultiFreqRawChunk(startMs, endMs, lastTs, lastRowId, 500);
@@ -1257,7 +1311,8 @@ void PlotWindow::loadMultiFreqReviewFromDb()
 
         // 构建完成后再次检查取消
         if (self && self->m_reviewLoadCanceled.loadRelaxed()) {
-            qDebug() << "[PlotWindow::loadReview] bg: cancelled after build";
+            qInfo() << "[PlotWindow] loadReview bg cancelled-after-build epoch=" << epoch
+                    << "(window title left unchanged by this path)";
             return;
         }
 
@@ -1288,19 +1343,37 @@ void PlotWindow::loadMultiFreqReviewFromDb()
         }
 
         // 回主线程
-        qDebug() << "[PlotWindow::loadReview] bg: built" << results.size() << "frames, posting to main thread";
-        if (!self) return;
+        qInfo() << "[PlotWindow] loadReview bg built frames=" << results.size()
+                << "factors=" << allFactors.size() << "epoch=" << epoch;
+        if (!self) {
+            qInfo() << "[PlotWindow] loadReview bg window destroyed before post epoch=" << epoch;
+            return;
+        }
         QMetaObject::invokeMethod(self, [self, epoch, results = std::move(results), allFactors = std::move(allFactors)]() {
             if (!self || epoch != self->m_reviewEpoch || !self->m_reviewMode) {
-                qDebug() << "[PlotWindow::loadReview] main: stale, destroyed, or no longer in review";
+                qInfo() << "[PlotWindow] loadReview main drop stale/destroyed/not-review epoch=" << epoch
+                        << "currentEpoch=" << (self ? self->m_reviewEpoch : 0)
+                        << "reviewMode=" << (self && self->m_reviewMode)
+                        << (self ? plotWindowTitleDiag(self->windowTitle())
+                                 : QStringLiteral("destroyed"))
+                        << "(window title left unchanged by this path)";
                 return;
             }
-            qDebug() << "[PlotWindow::loadReview] main: applying" << results.size() << "frames, m_lastMode=" << static_cast<int>(self->m_lastMode);
+            const QString titleBeforeRestore = self->windowTitle();
+            qInfo() << "[PlotWindow]" << static_cast<const void*>(self.data())
+                    << "loadReview main apply frames=" << results.size()
+                    << "lastMode=" << static_cast<int>(self->m_lastMode)
+                    << "epoch=" << epoch
+                    << "savedLoadingTitle=" << self->m_loadingTitle
+                    << plotWindowTitleDiag(titleBeforeRestore);
             self->m_reviewFrames = results;
             self->m_reviewAllFactors = allFactors;
             self->m_reviewMode = true;
             // 恢复窗口标题
             self->setWindowTitle(self->m_loadingTitle.isEmpty() ? self->windowTitle() : self->m_loadingTitle);
+            qInfo() << "[PlotWindow]" << static_cast<const void*>(self.data())
+                    << "loadReview main title restored"
+                    << plotWindowTitleDiag(self->windowTitle());
             // 不检查 m_lastMode：数据已确认是多频类型才进入此流程
             self->buildAndRenderReviewSnapshot();
         }, Qt::QueuedConnection);

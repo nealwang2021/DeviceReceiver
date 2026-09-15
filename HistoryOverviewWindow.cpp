@@ -529,6 +529,8 @@ void HistoryOverviewWindow::onImportClicked()
         {
             qint64 dbMinMs = 0, dbMaxMs = 0;
             if (hdp->queryTimeBoundsFast(dbMinMs, dbMaxMs)) {
+                qInfo() << "[HistoryOverview] open .db auto Review dbMinMs=" << dbMinMs
+                        << "dbMaxMs=" << dbMaxMs << "path=" << sourcePath;
                 SelectionState::instance()->setRangeAndMode(dbMinMs, dbMaxMs, SelectionState::Review);
             }
         }
@@ -651,6 +653,8 @@ void HistoryOverviewWindow::onImportClicked()
         {
             qint64 dbMinMs = 0, dbMaxMs = 0;
             if (hdpInner->queryTimeBoundsFast(dbMinMs, dbMaxMs)) {
+                qInfo() << "[HistoryOverview] import finished auto Review dbMinMs=" << dbMinMs
+                        << "dbMaxMs=" << dbMaxMs << "path=" << targetDbPath;
                 SelectionState::instance()->setRangeAndMode(dbMinMs, dbMaxMs, SelectionState::Review);
             }
         }
@@ -1459,6 +1463,12 @@ bool HistoryOverviewWindow::eventFilter(QObject* watched, QEvent* event)
         m_dragMode = DragMode::None;
         // 是否对齐到右端 → Live，否则 Review（与全局数据尾部比较，留毫秒容差）
         const bool alignedToRight = (m_selEndMs >= m_dataMaxMs - kAlignRightSlackMs);
+        qInfo() << "[HistoryOverview] brush release alignedToRight=" << alignedToRight
+                << "commitAsReview=" << !alignedToRight
+                << "selStartMs=" << m_selStartMs << "selEndMs=" << m_selEndMs
+                << "dataMaxMs=" << m_dataMaxMs
+                << "endLagMs=" << (m_dataMaxMs - m_selEndMs)
+                << "slackMs=" << kAlignRightSlackMs;
         commitRangeToSelectionState(!alignedToRight);
         applyRangeToItems();
         m_plot->replot(QCustomPlot::rpQueuedReplot);

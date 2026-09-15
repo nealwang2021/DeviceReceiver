@@ -732,9 +732,19 @@ void MagArrayWindow::onCriticalFrame(const FrameData& frame)
 
 void MagArrayWindow::onSelectionChanged(qint64 startMs, qint64 endMs, int mode)
 {
+    const bool wasReview = m_reviewMode;
     m_reviewStartMs = startMs;
     m_reviewEndMs = endMs;
     const bool nowReview = (mode == static_cast<int>(SelectionState::Review));
+
+    if (nowReview || wasReview) {
+        qInfo() << "[MagArrayWindow]" << static_cast<const void*>(this)
+                << (nowReview ? "Review" : "Live")
+                << "wasReview=" << wasReview
+                << "startMs=" << startMs << "endMs=" << endMs
+                << "spanMs=" << (endMs - startMs)
+                << "title=" << windowTitle();
+    }
 
     if (nowReview) {
         m_reviewLoadCanceled.storeRelaxed(1); // 取消上一次仍在跑的异步加载
