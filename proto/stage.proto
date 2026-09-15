@@ -86,14 +86,32 @@ enum ScanMode {
   ALTERNATE_RETURN = 1;
 }
 
+// 扫描主轴。
+// 0作为默认值，用于兼容旧版TestClient：旧客户端不发送此字段时，
+// 服务端仍执行原来的“X轴扫描、Y轴步进”。
+enum ScanMainAxis {
+  X_SCAN_Y_STEP = 0;
+  Y_SCAN_X_STEP = 1;
+}
+
 message ScanRequest {
   ScanMode mode = 1;
   double xs = 2;
   double xe = 3;
   double ys = 4;
   double ye = 5;
+
+  // 原字段编号6，不修改，用于X轴扫描时的Y步长。
   double yStep = 6;
+
+  // 原字段编号7，不修改。
   double zFix = 7;
+
+  // 新增字段。旧客户端不发送时默认等于X_SCAN_Y_STEP。
+  ScanMainAxis mainAxis = 8;
+
+  // 新增字段，仅在Y_SCAN_X_STEP时使用。
+  double xStep = 9;
 }
 
 message ScanStatusReply {

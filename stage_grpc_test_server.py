@@ -96,18 +96,40 @@ def _serpentine_grid_dims() -> tuple[int, int]:
     return max(1, nx), max(1, ny)
 
 
-def _serpentine_xy_from_cell_index(cell_index: int) -> tuple[float, float]:
-    """弓字形（往返蛇形）：按格点下标离散步进，单位 mm。每收到一次 PositionStream 周期前进一格。"""
+def _serpentine_xy_from_cell_index(cell_index: int, main_axis: int = 0) -> tuple[float, float]:
+    """弓字形（往返蛇形）：按格点下标离散步进，单位 mm。每收到一次 PositionStream 周期前进一格。
+
+    main_axis=0 (X_SCAN_Y_STEP): 沿 X 扫描行、Y 方向步进（默认，向后兼容）
+    main_axis=1 (Y_SCAN_X_STEP): 沿 Y 扫描行、X 方向步进
+    """
     nx, ny = _serpentine_grid_dims()
+    if main_axis == 1:  # Y_SCAN_X_STEP — Y 扫描、X 步进
+        # 交换轴：格点数也交换 — ny 行(沿 Y)、nx 列(沿 X)
+        nx, ny = ny, nx
+        step_scan = SERP_Y_STEP_MM   # 扫描方向的步距
+        step_cross = SERP_X_STEP_MM  # 步进方向的步距
+        min_scan = SERP_Y_MIN_MM
+        min_cross = SERP_X_MIN_MM
+        swap_axes = True
+    else:
+        step_scan = SERP_X_STEP_MM
+        step_cross = SERP_Y_STEP_MM
+        min_scan = SERP_X_MIN_MM
+        min_cross = SERP_Y_MIN_MM
+        swap_axes = False
+
     n = nx * ny
     k = cell_index % n if n > 0 else 0
     row = k // nx
     col = k % nx
     if row % 2 == 1:
         col = nx - 1 - col
-    x = SERP_X_MIN_MM + col * SERP_X_STEP_MM
-    y = SERP_Y_MIN_MM + row * SERP_Y_STEP_MM
-    return x, y
+    scan_val = min_scan + col * step_scan
+    cross_val = min_cross + row * step_cross
+    if swap_axes:
+        return cross_val, scan_val  # X=步进, Y=扫描
+    else:
+        return scan_val, cross_val  # X=扫描, Y=步进
 
 
 class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
@@ -130,6 +152,9 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
         # MoveAbs/MoveRel/开启 Jog 后置 True，避免弓字形下一拍覆盖用户设定；Connect 时清零
         self._user_xy_locked = False
         self._serp_cell_index = 0
+        # 扫描主轴与步进模式: X_SCAN_Y_STEP=0 或 Y_SCAN_X_STEP=1
+        self._scan_main_axis = stage_pb2.X_SCAN_Y_STEP
+        self._scan_x_step = SERP_X_STEP_MM
 
     def _jog_scale(self) -> float:
         if self._speed_pulse_per_sec < 1:
@@ -175,7 +200,7 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
                         self._z += self._jog_vz * dt
                     elif self._scan_running and not self._user_xy_locked:
                         # 仅在扫描模式下自动弓字形走位，默认静止
-                        sx, sy = _serpentine_xy_from_cell_index(self._serp_cell_index)
+                        sx, sy = _serpentine_xy_from_cell_index(self._serp_cell_index, self._scan_main_axis)
                         self._serp_cell_index += 1
                         self._x = sx
                         self._y = sy
@@ -185,10 +210,13 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
                     if self._scan_running and t0 - last_print >= 1.0:
                         last_print = t0
                         nx, ny = _serpentine_grid_dims()
+                        if self._scan_main_axis == stage_pb2.Y_SCAN_X_STEP:
+                            nx, ny = ny, nx
                         total = nx * ny
                         prog = self._serp_cell_index
+                        ma = stage_pb2.ScanMainAxis.Name(self._scan_main_axis)
                         print(f"[ScanPos] X={self._x:.1f} Y={self._y:.1f} Z={self._z:.1f}  "
-                              f"进度={prog}/{total} ({100.0*prog/total:.1f}%)")
+                              f"mode={ma} 进度={prog}/{total} ({100.0*prog/total:.1f}%)")
 
                 yield reply
                 elapsed = time.monotonic() - t0
@@ -254,13 +282,18 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
 
     def StartScan(self, request, context):
         mode_name = stage_pb2.ScanMode.Name(request.mode)
+        # proto3: enum/double 无 hasField，未设置时默认 0/0.0
+        main_axis = request.mainAxis
+        main_axis_name = stage_pb2.ScanMainAxis.Name(main_axis)
+        x_step = request.xStep
         detail = (
-            f"mode={mode_name} xs={request.xs} xe={request.xe} ys={request.ys} ye={request.ye} "
-            f"yStep={request.yStep} zFix={request.zFix}"
+            f"mode={mode_name} mainAxis={main_axis_name} xs={request.xs} xe={request.xe} ys={request.ys} ye={request.ye} "
+            f"yStep={request.yStep} xStep={x_step} zFix={request.zFix}"
         )
         with self._lock:
             self._scan_running = True
             self._scan_detail = detail
+            self._scan_main_axis = main_axis
             # 将扫描参数覆盖弓字形演示参数，使 PositionStream 按扫描范围走位
             global SERP_X_MIN_MM, SERP_X_MAX_MM, SERP_Y_MIN_MM, SERP_Y_MAX_MM
             global SERP_X_STEP_MM, SERP_Y_STEP_MM
@@ -268,9 +301,16 @@ class StageTestServicer(stage_pb2_grpc.StageServiceServicer):
             SERP_X_MAX_MM = request.xe
             SERP_Y_MIN_MM = request.ys
             SERP_Y_MAX_MM = request.ye
-            step = max(0.1, request.yStep)
-            SERP_X_STEP_MM = step
-            SERP_Y_STEP_MM = step
+            y_step = max(0.1, request.yStep)
+            x_step_val = max(0.1, x_step) if x_step > 0 else max(0.1, request.yStep)
+            if main_axis == stage_pb2.Y_SCAN_X_STEP:
+                # Y 扫描、X 步进：沿 Y 的扫描步距=yStep，沿 X 的步进步距=xStep
+                SERP_X_STEP_MM = x_step_val
+                SERP_Y_STEP_MM = y_step
+            else:
+                # X 扫描、Y 步进（默认）：沿 X 的扫描步距=yStep，沿 Y 的步进步距=yStep
+                SERP_X_STEP_MM = y_step
+                SERP_Y_STEP_MM = y_step
             # 重置蛇形走位起点
             self._serp_cell_index = 0
             self._user_xy_locked = False

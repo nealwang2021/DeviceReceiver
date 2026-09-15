@@ -674,7 +674,9 @@ void StageReceiverBackend::startScan(int mode,
                                      double ys,
                                      double ye,
                                      double yStep,
-                                     double zFix)
+                                     double zFix,
+                                     int mainAxis,
+                                     double xStep)
 {
     if (!m_connected.load()) {
         emit commandError(QStringLiteral("Stage 后端未连接"));
@@ -682,7 +684,9 @@ void StageReceiverBackend::startScan(int mode,
     }
 
     if (m_mockMode.load()) {
-        emitCommandResult(true, QStringLiteral("start_scan"), QStringLiteral("Mock 扫描已启动"));
+        emitCommandResult(true, QStringLiteral("start_scan"),
+                          QStringLiteral("Mock 扫描已启动 (mainAxis=%1)")
+                              .arg(mainAxis == 1 ? QStringLiteral("Y_SCAN_X_STEP") : QStringLiteral("X_SCAN_Y_STEP")));
         return;
     }
 
@@ -699,6 +703,8 @@ void StageReceiverBackend::startScan(int mode,
     req.set_ye(ye);
     req.set_ystep(yStep);
     req.set_zfix(zFix);
+    req.set_mainaxis(mainAxis == 1 ? stage::Y_SCAN_X_STEP : stage::X_SCAN_Y_STEP);
+    req.set_xstep(xStep);
 
     stage::Result reply;
     grpc::ClientContext ctx;
@@ -866,7 +872,7 @@ void StageReceiverBackend::sendCommand(const QByteArray& command)
             QStringLiteral("支持指令: get_positions, start_stream [ms], stop_stream, "
                            "jog <x|y|z> <+|-> <on|off>, move_abs <x> <y> <z> [timeoutMs], "
                            "move_rel <x|y|z> <delta> [timeoutMs], set_speed <speed> <accelMs>, "
-                           "start_scan <snake|alternate_return> <xs> <xe> <ys> <ye> <yStep> <zFix>, "
+                           "start_scan <snake|alternate_return> <xs> <xe> <ys> <ye> <yStep> <zFix> [mainAxis=0] [xStep=0.0], "
                            "stop_scan, scan_status"));
         return;
     }
@@ -1006,7 +1012,7 @@ void StageReceiverBackend::sendCommand(const QByteArray& command)
 
     if (cmd == QStringLiteral("start_scan")) {
         if (args.size() < 8) {
-            emit commandError(QStringLiteral("用法: start_scan <snake|alternate_return> <xs> <xe> <ys> <ye> <yStep> <zFix>"));
+            emit commandError(QStringLiteral("用法: start_scan <snake|alternate_return> <xs> <xe> <ys> <ye> <yStep> <zFix> [mainAxis=0] [xStep=0.0]"));
             return;
         }
 
@@ -1037,7 +1043,32 @@ void StageReceiverBackend::sendCommand(const QByteArray& command)
             return;
         }
 
-        startScan(mode, xs, xe, ys, ye, yStep, zFix);
+        // 可选参数: mainAxis (0=X_SCAN_Y_STEP, 1=Y_SCAN_X_STEP)
+        int mainAxis = 0;
+        if (args.size() >= 9) {
+            const QString axisText = args.at(8).trimmed().toLower();
+            if (axisText == QStringLiteral("1") || axisText == QStringLiteral("y_scan_x_step") ||
+                axisText == QStringLiteral("y_scan") || axisText == QStringLiteral("yx")) {
+                mainAxis = 1;
+            } else if (axisText != QStringLiteral("0") && axisText != QStringLiteral("x_scan_y_step") &&
+                       axisText != QStringLiteral("x_scan") && axisText != QStringLiteral("xy")) {
+                emit commandError(QStringLiteral("mainAxis 参数无效（0=x_scan_y_step, 1=y_scan_x_step）"));
+                return;
+            }
+        }
+
+        // 可选参数: xStep (仅在 Y_SCAN_X_STEP 时生效)
+        double xStep = 0.0;
+        if (args.size() >= 10) {
+            bool okXStep = false;
+            xStep = args.at(9).toDouble(&okXStep);
+            if (!okXStep) {
+                emit commandError(QStringLiteral("xStep 参数无效"));
+                return;
+            }
+        }
+
+        startScan(mode, xs, xe, ys, ye, yStep, zFix, mainAxis, xStep);
         return;
     }
 

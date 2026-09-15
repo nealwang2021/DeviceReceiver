@@ -265,6 +265,20 @@ void StageIntegrationTest::test_scan_flow()
     QVERIFY(waitForSignal(spyData, 1, 5000));
     stepLog(QStringLiteral("test_scan_flow: stopScan ok"));
 
+    // Test Y_SCAN_X_STEP mode (Y轴扫描, X轴步进)
+    spyData.clear();
+    stepLog(QStringLiteral("test_scan_flow: startScan(mode=SNAKE Y_SCAN_X_STEP xs=0 xe=5 ys=0 ye=5 yStep=0.5 zFix=0 mainAxis=1 xStep=0.3)"));
+    backend.startScan(0, 0.0, 5.0, 0.0, 5.0, 0.5, 0.0, 1, 0.3);
+    QVERIFY(waitForSignal(spyData, 1, 5000));
+    QJsonObject cmd2 = firstJsonPacketOfType(spyData, QStringLiteral("stageCommandResult"));
+    QVERIFY(cmd2.value(QStringLiteral("ok")).toBool());
+    stepLog(QStringLiteral("test_scan_flow: startScan Y_SCAN_X_STEP ok"));
+
+    spyData.clear();
+    backend.stopScan();
+    QVERIFY(waitForSignal(spyData, 1, 5000));
+    stepLog(QStringLiteral("test_scan_flow: stopScan Y_SCAN_X_STEP ok"));
+
     backend.disconnectBackend();
 }
 

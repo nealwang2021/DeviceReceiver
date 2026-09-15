@@ -57,6 +57,8 @@ extern const ::google::protobuf::internal::DescriptorTable descriptor_table_stag
 namespace stage {
 enum Axis : int;
 extern const uint32_t Axis_internal_data_[];
+enum ScanMainAxis : int;
+extern const uint32_t ScanMainAxis_internal_data_[];
 enum ScanMode : int;
 extern const uint32_t ScanMode_internal_data_[];
 class AxisValue;
@@ -113,6 +115,9 @@ namespace protobuf {
 template <>
 internal::EnumTraitsT<::stage::Axis_internal_data_>
     internal::EnumTraitsImpl::value<::stage::Axis>;
+template <>
+internal::EnumTraitsT<::stage::ScanMainAxis_internal_data_>
+    internal::EnumTraitsImpl::value<::stage::ScanMainAxis>;
 template <>
 internal::EnumTraitsT<::stage::ScanMode_internal_data_>
     internal::EnumTraitsImpl::value<::stage::ScanMode>;
@@ -191,6 +196,42 @@ inline const ::std::string& ScanMode_Name(ScanMode value) {
 inline bool ScanMode_Parse(
     ::absl::string_view name, ScanMode* PROTOBUF_NONNULL value) {
   return ::google::protobuf::internal::ParseNamedEnum<ScanMode>(ScanMode_descriptor(), name,
+                                           value);
+}
+enum ScanMainAxis : int {
+  X_SCAN_Y_STEP = 0,
+  Y_SCAN_X_STEP = 1,
+  ScanMainAxis_INT_MIN_SENTINEL_DO_NOT_USE_ =
+      ::std::numeric_limits<::int32_t>::min(),
+  ScanMainAxis_INT_MAX_SENTINEL_DO_NOT_USE_ =
+      ::std::numeric_limits<::int32_t>::max(),
+};
+
+extern const uint32_t ScanMainAxis_internal_data_[];
+inline constexpr ScanMainAxis ScanMainAxis_MIN =
+    static_cast<ScanMainAxis>(0);
+inline constexpr ScanMainAxis ScanMainAxis_MAX =
+    static_cast<ScanMainAxis>(1);
+inline bool ScanMainAxis_IsValid(int value) {
+  return 0 <= value && value <= 1;
+}
+inline constexpr int ScanMainAxis_ARRAYSIZE = 1 + 1;
+const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL ScanMainAxis_descriptor();
+template <typename T>
+const ::std::string& ScanMainAxis_Name(T value) {
+  static_assert(::std::is_same<T, ScanMainAxis>::value ||
+                    ::std::is_integral<T>::value,
+                "Incorrect type passed to ScanMainAxis_Name().");
+  return ScanMainAxis_Name(static_cast<ScanMainAxis>(value));
+}
+template <>
+inline const ::std::string& ScanMainAxis_Name(ScanMainAxis value) {
+  return ::google::protobuf::internal::NameOfDenseEnum<ScanMainAxis_descriptor, 0, 1>(
+      static_cast<int>(value));
+}
+inline bool ScanMainAxis_Parse(
+    ::absl::string_view name, ScanMainAxis* PROTOBUF_NONNULL value) {
+  return ::google::protobuf::internal::ParseNamedEnum<ScanMainAxis>(ScanMainAxis_descriptor(), name,
                                            value);
 }
 
@@ -753,10 +794,12 @@ class ScanRequest final : public ::google::protobuf::Message
     kXsFieldNumber = 2,
     kXeFieldNumber = 3,
     kYsFieldNumber = 4,
+    kModeFieldNumber = 1,
+    kMainAxisFieldNumber = 8,
     kYeFieldNumber = 5,
     kYStepFieldNumber = 6,
     kZFixFieldNumber = 7,
-    kModeFieldNumber = 1,
+    kXStepFieldNumber = 9,
   };
   // double xs = 2;
   void clear_xs() ;
@@ -786,6 +829,26 @@ class ScanRequest final : public ::google::protobuf::Message
   private:
   double _internal_ys() const;
   void _internal_set_ys(double value);
+
+  public:
+  // .stage.ScanMode mode = 1;
+  void clear_mode() ;
+  ::stage::ScanMode mode() const;
+  void set_mode(::stage::ScanMode value);
+
+  private:
+  ::stage::ScanMode _internal_mode() const;
+  void _internal_set_mode(::stage::ScanMode value);
+
+  public:
+  // .stage.ScanMainAxis mainAxis = 8;
+  void clear_mainaxis() ;
+  ::stage::ScanMainAxis mainaxis() const;
+  void set_mainaxis(::stage::ScanMainAxis value);
+
+  private:
+  ::stage::ScanMainAxis _internal_mainaxis() const;
+  void _internal_set_mainaxis(::stage::ScanMainAxis value);
 
   public:
   // double ye = 5;
@@ -818,21 +881,21 @@ class ScanRequest final : public ::google::protobuf::Message
   void _internal_set_zfix(double value);
 
   public:
-  // .stage.ScanMode mode = 1;
-  void clear_mode() ;
-  ::stage::ScanMode mode() const;
-  void set_mode(::stage::ScanMode value);
+  // double xStep = 9;
+  void clear_xstep() ;
+  double xstep() const;
+  void set_xstep(double value);
 
   private:
-  ::stage::ScanMode _internal_mode() const;
-  void _internal_set_mode(::stage::ScanMode value);
+  double _internal_xstep() const;
+  void _internal_set_xstep(double value);
 
   public:
   // @@protoc_insertion_point(class_scope:stage.ScanRequest)
  private:
   class _Internal;
   friend class ::google::protobuf::internal::TcParser;
-  static const ::google::protobuf::internal::TcParseTable<3, 7,
+  static const ::google::protobuf::internal::TcParseTable<4, 9,
                                    0, 0,
                                    2>
       _table_;
@@ -857,10 +920,12 @@ class ScanRequest final : public ::google::protobuf::Message
     double xs_;
     double xe_;
     double ys_;
+    int mode_;
+    int mainaxis_;
     double ye_;
     double ystep_;
     double zfix_;
-    int mode_;
+    double xstep_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -3642,7 +3707,7 @@ inline void ScanRequest::clear_mode() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.mode_ = 0;
   ClearHasBit(_impl_._has_bits_[0],
-                  0x00000040U);
+                  0x00000008U);
 }
 inline ::stage::ScanMode ScanRequest::mode() const {
   // @@protoc_insertion_point(field_get:stage.ScanRequest.mode)
@@ -3650,7 +3715,7 @@ inline ::stage::ScanMode ScanRequest::mode() const {
 }
 inline void ScanRequest::set_mode(::stage::ScanMode value) {
   _internal_set_mode(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
   // @@protoc_insertion_point(field_set:stage.ScanRequest.mode)
 }
 inline ::stage::ScanMode ScanRequest::_internal_mode() const {
@@ -3742,7 +3807,7 @@ inline void ScanRequest::clear_ye() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.ye_ = 0;
   ClearHasBit(_impl_._has_bits_[0],
-                  0x00000008U);
+                  0x00000020U);
 }
 inline double ScanRequest::ye() const {
   // @@protoc_insertion_point(field_get:stage.ScanRequest.ye)
@@ -3750,7 +3815,7 @@ inline double ScanRequest::ye() const {
 }
 inline void ScanRequest::set_ye(double value) {
   _internal_set_ye(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000008U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
   // @@protoc_insertion_point(field_set:stage.ScanRequest.ye)
 }
 inline double ScanRequest::_internal_ye() const {
@@ -3767,7 +3832,7 @@ inline void ScanRequest::clear_ystep() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.ystep_ = 0;
   ClearHasBit(_impl_._has_bits_[0],
-                  0x00000010U);
+                  0x00000040U);
 }
 inline double ScanRequest::ystep() const {
   // @@protoc_insertion_point(field_get:stage.ScanRequest.yStep)
@@ -3775,7 +3840,7 @@ inline double ScanRequest::ystep() const {
 }
 inline void ScanRequest::set_ystep(double value) {
   _internal_set_ystep(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
   // @@protoc_insertion_point(field_set:stage.ScanRequest.yStep)
 }
 inline double ScanRequest::_internal_ystep() const {
@@ -3792,7 +3857,7 @@ inline void ScanRequest::clear_zfix() {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.zfix_ = 0;
   ClearHasBit(_impl_._has_bits_[0],
-                  0x00000020U);
+                  0x00000080U);
 }
 inline double ScanRequest::zfix() const {
   // @@protoc_insertion_point(field_get:stage.ScanRequest.zFix)
@@ -3800,7 +3865,7 @@ inline double ScanRequest::zfix() const {
 }
 inline void ScanRequest::set_zfix(double value) {
   _internal_set_zfix(value);
-  SetHasBit(_impl_._has_bits_[0], 0x00000020U);
+  SetHasBit(_impl_._has_bits_[0], 0x00000080U);
   // @@protoc_insertion_point(field_set:stage.ScanRequest.zFix)
 }
 inline double ScanRequest::_internal_zfix() const {
@@ -3810,6 +3875,56 @@ inline double ScanRequest::_internal_zfix() const {
 inline void ScanRequest::_internal_set_zfix(double value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.zfix_ = value;
+}
+
+// .stage.ScanMainAxis mainAxis = 8;
+inline void ScanRequest::clear_mainaxis() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.mainaxis_ = 0;
+  ClearHasBit(_impl_._has_bits_[0],
+                  0x00000010U);
+}
+inline ::stage::ScanMainAxis ScanRequest::mainaxis() const {
+  // @@protoc_insertion_point(field_get:stage.ScanRequest.mainAxis)
+  return _internal_mainaxis();
+}
+inline void ScanRequest::set_mainaxis(::stage::ScanMainAxis value) {
+  _internal_set_mainaxis(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000010U);
+  // @@protoc_insertion_point(field_set:stage.ScanRequest.mainAxis)
+}
+inline ::stage::ScanMainAxis ScanRequest::_internal_mainaxis() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return static_cast<::stage::ScanMainAxis>(_impl_.mainaxis_);
+}
+inline void ScanRequest::_internal_set_mainaxis(::stage::ScanMainAxis value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.mainaxis_ = value;
+}
+
+// double xStep = 9;
+inline void ScanRequest::clear_xstep() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.xstep_ = 0;
+  ClearHasBit(_impl_._has_bits_[0],
+                  0x00000100U);
+}
+inline double ScanRequest::xstep() const {
+  // @@protoc_insertion_point(field_get:stage.ScanRequest.xStep)
+  return _internal_xstep();
+}
+inline void ScanRequest::set_xstep(double value) {
+  _internal_set_xstep(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000100U);
+  // @@protoc_insertion_point(field_set:stage.ScanRequest.xStep)
+}
+inline double ScanRequest::_internal_xstep() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.xstep_;
+}
+inline void ScanRequest::_internal_set_xstep(double value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.xstep_ = value;
 }
 
 // -------------------------------------------------------------------
@@ -3928,6 +4043,12 @@ struct is_proto_enum<::stage::ScanMode> : std::true_type {};
 template <>
 inline const EnumDescriptor* PROTOBUF_NONNULL GetEnumDescriptor<::stage::ScanMode>() {
   return ::stage::ScanMode_descriptor();
+}
+template <>
+struct is_proto_enum<::stage::ScanMainAxis> : std::true_type {};
+template <>
+inline const EnumDescriptor* PROTOBUF_NONNULL GetEnumDescriptor<::stage::ScanMainAxis>() {
+  return ::stage::ScanMainAxis_descriptor();
 }
 
 }  // namespace protobuf

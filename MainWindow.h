@@ -461,6 +461,8 @@ private:
     QDoubleSpinBox* m_stageScanYeSpin = nullptr;
     QDoubleSpinBox* m_stageScanStepSpin = nullptr;
     QDoubleSpinBox* m_stageScanZFixSpin = nullptr;
+    QComboBox* m_stageScanMainAxisCombo = nullptr;
+    QDoubleSpinBox* m_stageScanXStepSpin = nullptr;
     QPushButton* m_stageStartScanButton = nullptr;
     QPushButton* m_stageStopScanButton = nullptr;
     QPushButton* m_stageScanStatusButton = nullptr;

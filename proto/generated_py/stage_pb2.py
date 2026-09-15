@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bstage.proto\x12\x05stage\"\x07\n\x05\x45mpty\"%\n\x06Result\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"*\n\x0e\x43onnectRequest\x12\n\n\x02ip\x18\x01 \x01(\t\x12\x0c\n\x04port\x18\x02 \x01(\x05\"&\n\tAxisValue\x12\r\n\x05pulse\x18\x01 \x01(\x05\x12\n\n\x02mm\x18\x02 \x01(\x01\"w\n\x0ePositionsReply\x12\x1b\n\x01x\x18\x01 \x01(\x0b\x32\x10.stage.AxisValue\x12\x1b\n\x01y\x18\x02 \x01(\x0b\x32\x10.stage.AxisValue\x12\x1b\n\x01z\x18\x03 \x01(\x0b\x32\x10.stage.AxisValue\x12\x0e\n\x06unixMs\x18\x04 \x01(\x03\"+\n\x15PositionStreamRequest\x12\x12\n\nintervalMs\x18\x01 \x01(\x05\"E\n\nJogRequest\x12\x19\n\x04\x61xis\x18\x01 \x01(\x0e\x32\x0b.stage.Axis\x12\x0c\n\x04plus\x18\x02 \x01(\x08\x12\x0e\n\x06\x65nable\x18\x03 \x01(\x08\"J\n\x0eMoveAbsRequest\x12\x0b\n\x03xMm\x18\x01 \x01(\x01\x12\x0b\n\x03yMm\x18\x02 \x01(\x01\x12\x0b\n\x03zMm\x18\x03 \x01(\x01\x12\x11\n\ttimeoutMs\x18\x04 \x01(\x05\"O\n\x0eMoveRelRequest\x12\x19\n\x04\x61xis\x18\x01 \x01(\x0e\x32\x0b.stage.Axis\x12\x0f\n\x07\x64\x65ltaMm\x18\x02 \x01(\x01\x12\x11\n\ttimeoutMs\x18\x03 \x01(\x05\"<\n\x0fSetSpeedRequest\x12\x18\n\x10speedPulsePerSec\x18\x01 \x01(\r\x12\x0f\n\x07\x61\x63\x63\x65lMs\x18\x02 \x01(\r\"y\n\x0bScanRequest\x12\x1d\n\x04mode\x18\x01 \x01(\x0e\x32\x0f.stage.ScanMode\x12\n\n\x02xs\x18\x02 \x01(\x01\x12\n\n\x02xe\x18\x03 \x01(\x01\x12\n\n\x02ys\x18\x04 \x01(\x01\x12\n\n\x02ye\x18\x05 \x01(\x01\x12\r\n\x05yStep\x18\x06 \x01(\x01\x12\x0c\n\x04zFix\x18\x07 \x01(\x01\"2\n\x0fScanStatusReply\x12\x0f\n\x07running\x18\x01 \x01(\x08\x12\x0e\n\x06status\x18\x02 \x01(\t*\x1b\n\x04\x41xis\x12\x05\n\x01X\x10\x00\x12\x05\n\x01Y\x10\x01\x12\x05\n\x01Z\x10\x02*+\n\x08ScanMode\x12\t\n\x05SNAKE\x10\x00\x12\x14\n\x10\x41LTERNATE_RETURN\x10\x01\x32\xb6\x04\n\x0cStageService\x12/\n\x07\x43onnect\x12\x15.stage.ConnectRequest\x1a\r.stage.Result\x12)\n\nDisconnect\x12\x0c.stage.Empty\x1a\r.stage.Result\x12\x33\n\x0cGetPositions\x12\x0c.stage.Empty\x1a\x15.stage.PositionsReply\x12G\n\x0ePositionStream\x12\x1c.stage.PositionStreamRequest\x1a\x15.stage.PositionsReply0\x01\x12\'\n\x03Jog\x12\x11.stage.JogRequest\x1a\r.stage.Result\x12/\n\x07MoveAbs\x12\x15.stage.MoveAbsRequest\x1a\r.stage.Result\x12/\n\x07MoveRel\x12\x15.stage.MoveRelRequest\x1a\r.stage.Result\x12\x31\n\x08SetSpeed\x12\x16.stage.SetSpeedRequest\x1a\r.stage.Result\x12.\n\tStartScan\x12\x12.stage.ScanRequest\x1a\r.stage.Result\x12\'\n\x08StopScan\x12\x0c.stage.Empty\x1a\r.stage.Result\x12\x35\n\rGetScanStatus\x12\x0c.stage.Empty\x1a\x16.stage.ScanStatusReplyB\x0f\xaa\x02\x0cTriAxis.Grpcb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0bstage.proto\x12\x05stage\"\x07\n\x05\x45mpty\"%\n\x06Result\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"*\n\x0e\x43onnectRequest\x12\n\n\x02ip\x18\x01 \x01(\t\x12\x0c\n\x04port\x18\x02 \x01(\x05\"&\n\tAxisValue\x12\r\n\x05pulse\x18\x01 \x01(\x05\x12\n\n\x02mm\x18\x02 \x01(\x01\"w\n\x0ePositionsReply\x12\x1b\n\x01x\x18\x01 \x01(\x0b\x32\x10.stage.AxisValue\x12\x1b\n\x01y\x18\x02 \x01(\x0b\x32\x10.stage.AxisValue\x12\x1b\n\x01z\x18\x03 \x01(\x0b\x32\x10.stage.AxisValue\x12\x0e\n\x06unixMs\x18\x04 \x01(\x03\"+\n\x15PositionStreamRequest\x12\x12\n\nintervalMs\x18\x01 \x01(\x05\"E\n\nJogRequest\x12\x19\n\x04\x61xis\x18\x01 \x01(\x0e\x32\x0b.stage.Axis\x12\x0c\n\x04plus\x18\x02 \x01(\x08\x12\x0e\n\x06\x65nable\x18\x03 \x01(\x08\"J\n\x0eMoveAbsRequest\x12\x0b\n\x03xMm\x18\x01 \x01(\x01\x12\x0b\n\x03yMm\x18\x02 \x01(\x01\x12\x0b\n\x03zMm\x18\x03 \x01(\x01\x12\x11\n\ttimeoutMs\x18\x04 \x01(\x05\"O\n\x0eMoveRelRequest\x12\x19\n\x04\x61xis\x18\x01 \x01(\x0e\x32\x0b.stage.Axis\x12\x0f\n\x07\x64\x65ltaMm\x18\x02 \x01(\x01\x12\x11\n\ttimeoutMs\x18\x03 \x01(\x05\"<\n\x0fSetSpeedRequest\x12\x18\n\x10speedPulsePerSec\x18\x01 \x01(\r\x12\x0f\n\x07\x61\x63\x63\x65lMs\x18\x02 \x01(\r\"\xaf\x01\n\x0bScanRequest\x12\x1d\n\x04mode\x18\x01 \x01(\x0e\x32\x0f.stage.ScanMode\x12\n\n\x02xs\x18\x02 \x01(\x01\x12\n\n\x02xe\x18\x03 \x01(\x01\x12\n\n\x02ys\x18\x04 \x01(\x01\x12\n\n\x02ye\x18\x05 \x01(\x01\x12\r\n\x05yStep\x18\x06 \x01(\x01\x12\x0c\n\x04zFix\x18\x07 \x01(\x01\x12%\n\x08mainAxis\x18\x08 \x01(\x0e\x32\x13.stage.ScanMainAxis\x12\r\n\x05xStep\x18\t \x01(\x01\"2\n\x0fScanStatusReply\x12\x0f\n\x07running\x18\x01 \x01(\x08\x12\x0e\n\x06status\x18\x02 \x01(\t*\x1b\n\x04\x41xis\x12\x05\n\x01X\x10\x00\x12\x05\n\x01Y\x10\x01\x12\x05\n\x01Z\x10\x02*+\n\x08ScanMode\x12\t\n\x05SNAKE\x10\x00\x12\x14\n\x10\x41LTERNATE_RETURN\x10\x01*4\n\x0cScanMainAxis\x12\x11\n\rX_SCAN_Y_STEP\x10\x00\x12\x11\n\rY_SCAN_X_STEP\x10\x01\x32\xb6\x04\n\x0cStageService\x12/\n\x07\x43onnect\x12\x15.stage.ConnectRequest\x1a\r.stage.Result\x12)\n\nDisconnect\x12\x0c.stage.Empty\x1a\r.stage.Result\x12\x33\n\x0cGetPositions\x12\x0c.stage.Empty\x1a\x15.stage.PositionsReply\x12G\n\x0ePositionStream\x12\x1c.stage.PositionStreamRequest\x1a\x15.stage.PositionsReply0\x01\x12\'\n\x03Jog\x12\x11.stage.JogRequest\x1a\r.stage.Result\x12/\n\x07MoveAbs\x12\x15.stage.MoveAbsRequest\x1a\r.stage.Result\x12/\n\x07MoveRel\x12\x15.stage.MoveRelRequest\x1a\r.stage.Result\x12\x31\n\x08SetSpeed\x12\x16.stage.SetSpeedRequest\x1a\r.stage.Result\x12.\n\tStartScan\x12\x12.stage.ScanRequest\x1a\r.stage.Result\x12\'\n\x08StopScan\x12\x0c.stage.Empty\x1a\r.stage.Result\x12\x35\n\rGetScanStatus\x12\x0c.stage.Empty\x1a\x16.stage.ScanStatusReplyB\x0f\xaa\x02\x0cTriAxis.Grpcb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,10 +32,12 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'stage_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\252\002\014TriAxis.Grpc'
-  _globals['_AXIS']._serialized_start=785
-  _globals['_AXIS']._serialized_end=812
-  _globals['_SCANMODE']._serialized_start=814
-  _globals['_SCANMODE']._serialized_end=857
+  _globals['_AXIS']._serialized_start=840
+  _globals['_AXIS']._serialized_end=867
+  _globals['_SCANMODE']._serialized_start=869
+  _globals['_SCANMODE']._serialized_end=912
+  _globals['_SCANMAINAXIS']._serialized_start=914
+  _globals['_SCANMAINAXIS']._serialized_end=966
   _globals['_EMPTY']._serialized_start=22
   _globals['_EMPTY']._serialized_end=29
   _globals['_RESULT']._serialized_start=31
@@ -56,10 +58,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_MOVERELREQUEST']._serialized_end=546
   _globals['_SETSPEEDREQUEST']._serialized_start=548
   _globals['_SETSPEEDREQUEST']._serialized_end=608
-  _globals['_SCANREQUEST']._serialized_start=610
-  _globals['_SCANREQUEST']._serialized_end=731
-  _globals['_SCANSTATUSREPLY']._serialized_start=733
-  _globals['_SCANSTATUSREPLY']._serialized_end=783
-  _globals['_STAGESERVICE']._serialized_start=860
-  _globals['_STAGESERVICE']._serialized_end=1426
+  _globals['_SCANREQUEST']._serialized_start=611
+  _globals['_SCANREQUEST']._serialized_end=786
+  _globals['_SCANSTATUSREPLY']._serialized_start=788
+  _globals['_SCANSTATUSREPLY']._serialized_end=838
+  _globals['_STAGESERVICE']._serialized_start=969
+  _globals['_STAGESERVICE']._serialized_end=1535
 # @@protoc_insertion_point(module_scope)

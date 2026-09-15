@@ -61,7 +61,9 @@ public slots:
                    double ys,
                    double ye,
                    double yStep,
-                   double zFix);
+                   double zFix,
+                   int mainAxis = 0,  // ScanMainAxis: X_SCAN_Y_STEP=0, Y_SCAN_X_STEP=1
+                   double xStep = 0.0);
     void stopScan();
     void requestScanStatus();
 

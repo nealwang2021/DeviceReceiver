@@ -86,10 +86,12 @@ inline constexpr ScanRequest::Impl_::Impl_(
         xs_{0},
         xe_{0},
         ys_{0},
+        mode_{static_cast< ::stage::ScanMode >(0)},
+        mainaxis_{static_cast< ::stage::ScanMainAxis >(0)},
         ye_{0},
         ystep_{0},
         zfix_{0},
-        mode_{static_cast< ::stage::ScanMode >(0)} {}
+        xstep_{0} {}
 
 template <typename>
 PROTOBUF_CONSTEXPR ScanRequest::ScanRequest(::_pbi::ConstantInitialized)
@@ -347,7 +349,7 @@ PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
     PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 PositionsReplyDefaultTypeInternal _PositionsReply_default_instance_;
 }  // namespace stage
 static const ::_pb::EnumDescriptor* PROTOBUF_NONNULL
-    file_level_enum_descriptors_stage_2eproto[2];
+    file_level_enum_descriptors_stage_2eproto[3];
 static constexpr const ::_pb::ServiceDescriptor* PROTOBUF_NONNULL* PROTOBUF_NULLABLE
     file_level_service_descriptors_stage_2eproto = nullptr;
 const ::uint32_t
@@ -429,7 +431,7 @@ const ::uint32_t
         1,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_._has_bits_),
-        10, // hasbit index offset
+        12, // hasbit index offset
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.mode_),
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.xs_),
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.xe_),
@@ -437,13 +439,17 @@ const ::uint32_t
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.ye_),
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.ystep_),
         PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.zfix_),
-        6,
+        PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.mainaxis_),
+        PROTOBUF_FIELD_OFFSET(::stage::ScanRequest, _impl_.xstep_),
+        3,
         0,
         1,
         2,
-        3,
-        4,
         5,
+        6,
+        7,
+        4,
+        8,
         0x081, // bitmap
         PROTOBUF_FIELD_OFFSET(::stage::ScanStatusReply, _impl_._has_bits_),
         5, // hasbit index offset
@@ -466,7 +472,7 @@ static const ::_pbi::MigrationSchema
         {58, sizeof(::stage::MoveRelRequest)},
         {67, sizeof(::stage::SetSpeedRequest)},
         {74, sizeof(::stage::ScanRequest)},
-        {91, sizeof(::stage::ScanStatusReply)},
+        {95, sizeof(::stage::ScanStatusReply)},
 };
 static const ::_pb::Message* PROTOBUF_NONNULL const file_default_instances[] = {
     &::stage::_Empty_default_instance_._instance,
@@ -499,34 +505,36 @@ const char descriptor_table_protodef_stage_2eproto[] ABSL_ATTRIBUTE_SECTION_VARI
     "est\022\031\n\004axis\030\001 \001(\0162\013.stage.Axis\022\017\n\007deltaM"
     "m\030\002 \001(\001\022\021\n\ttimeoutMs\030\003 \001(\005\"<\n\017SetSpeedRe"
     "quest\022\030\n\020speedPulsePerSec\030\001 \001(\r\022\017\n\007accel"
-    "Ms\030\002 \001(\r\"y\n\013ScanRequest\022\035\n\004mode\030\001 \001(\0162\017."
-    "stage.ScanMode\022\n\n\002xs\030\002 \001(\001\022\n\n\002xe\030\003 \001(\001\022\n"
-    "\n\002ys\030\004 \001(\001\022\n\n\002ye\030\005 \001(\001\022\r\n\005yStep\030\006 \001(\001\022\014\n"
-    "\004zFix\030\007 \001(\001\"2\n\017ScanStatusReply\022\017\n\007runnin"
-    "g\030\001 \001(\010\022\016\n\006status\030\002 \001(\t*\033\n\004Axis\022\005\n\001X\020\000\022\005"
-    "\n\001Y\020\001\022\005\n\001Z\020\002*+\n\010ScanMode\022\t\n\005SNAKE\020\000\022\024\n\020A"
-    "LTERNATE_RETURN\020\0012\266\004\n\014StageService\022/\n\007Co"
-    "nnect\022\025.stage.ConnectRequest\032\r.stage.Res"
-    "ult\022)\n\nDisconnect\022\014.stage.Empty\032\r.stage."
-    "Result\0223\n\014GetPositions\022\014.stage.Empty\032\025.s"
-    "tage.PositionsReply\022G\n\016PositionStream\022\034."
-    "stage.PositionStreamRequest\032\025.stage.Posi"
-    "tionsReply0\001\022\'\n\003Jog\022\021.stage.JogRequest\032\r"
-    ".stage.Result\022/\n\007MoveAbs\022\025.stage.MoveAbs"
-    "Request\032\r.stage.Result\022/\n\007MoveRel\022\025.stag"
-    "e.MoveRelRequest\032\r.stage.Result\0221\n\010SetSp"
-    "eed\022\026.stage.SetSpeedRequest\032\r.stage.Resu"
-    "lt\022.\n\tStartScan\022\022.stage.ScanRequest\032\r.st"
-    "age.Result\022\'\n\010StopScan\022\014.stage.Empty\032\r.s"
-    "tage.Result\0225\n\rGetScanStatus\022\014.stage.Emp"
-    "ty\032\026.stage.ScanStatusReplyB\017\252\002\014TriAxis.G"
-    "rpcb\006proto3"
+    "Ms\030\002 \001(\r\"\257\001\n\013ScanRequest\022\035\n\004mode\030\001 \001(\0162\017"
+    ".stage.ScanMode\022\n\n\002xs\030\002 \001(\001\022\n\n\002xe\030\003 \001(\001\022"
+    "\n\n\002ys\030\004 \001(\001\022\n\n\002ye\030\005 \001(\001\022\r\n\005yStep\030\006 \001(\001\022\014"
+    "\n\004zFix\030\007 \001(\001\022%\n\010mainAxis\030\010 \001(\0162\023.stage.S"
+    "canMainAxis\022\r\n\005xStep\030\t \001(\001\"2\n\017ScanStatus"
+    "Reply\022\017\n\007running\030\001 \001(\010\022\016\n\006status\030\002 \001(\t*\033"
+    "\n\004Axis\022\005\n\001X\020\000\022\005\n\001Y\020\001\022\005\n\001Z\020\002*+\n\010ScanMode\022"
+    "\t\n\005SNAKE\020\000\022\024\n\020ALTERNATE_RETURN\020\001*4\n\014Scan"
+    "MainAxis\022\021\n\rX_SCAN_Y_STEP\020\000\022\021\n\rY_SCAN_X_"
+    "STEP\020\0012\266\004\n\014StageService\022/\n\007Connect\022\025.sta"
+    "ge.ConnectRequest\032\r.stage.Result\022)\n\nDisc"
+    "onnect\022\014.stage.Empty\032\r.stage.Result\0223\n\014G"
+    "etPositions\022\014.stage.Empty\032\025.stage.Positi"
+    "onsReply\022G\n\016PositionStream\022\034.stage.Posit"
+    "ionStreamRequest\032\025.stage.PositionsReply0"
+    "\001\022\'\n\003Jog\022\021.stage.JogRequest\032\r.stage.Resu"
+    "lt\022/\n\007MoveAbs\022\025.stage.MoveAbsRequest\032\r.s"
+    "tage.Result\022/\n\007MoveRel\022\025.stage.MoveRelRe"
+    "quest\032\r.stage.Result\0221\n\010SetSpeed\022\026.stage"
+    ".SetSpeedRequest\032\r.stage.Result\022.\n\tStart"
+    "Scan\022\022.stage.ScanRequest\032\r.stage.Result\022"
+    "\'\n\010StopScan\022\014.stage.Empty\032\r.stage.Result"
+    "\0225\n\rGetScanStatus\022\014.stage.Empty\032\026.stage."
+    "ScanStatusReplyB\017\252\002\014TriAxis.Grpcb\006proto3"
 };
 static ::absl::once_flag descriptor_table_stage_2eproto_once;
 PROTOBUF_CONSTINIT const ::_pbi::DescriptorTable descriptor_table_stage_2eproto = {
     false,
     false,
-    1451,
+    1560,
     descriptor_table_protodef_stage_2eproto,
     "stage.proto",
     &descriptor_table_stage_2eproto_once,
@@ -551,6 +559,12 @@ const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL ScanMode_descriptor()
   return file_level_enum_descriptors_stage_2eproto[1];
 }
 PROTOBUF_CONSTINIT const uint32_t ScanMode_internal_data_[] = {
+    131072u, 0u, };
+const ::google::protobuf::EnumDescriptor* PROTOBUF_NONNULL ScanMainAxis_descriptor() {
+  ::google::protobuf::internal::AssignDescriptors(&descriptor_table_stage_2eproto);
+  return file_level_enum_descriptors_stage_2eproto[2];
+}
+PROTOBUF_CONSTINIT const uint32_t ScanMainAxis_internal_data_[] = {
     131072u, 0u, };
 // ===================================================================
 
@@ -3519,9 +3533,9 @@ inline void ScanRequest::SharedCtor(::_pb::Arena* PROTOBUF_NULLABLE arena) {
   ::memset(reinterpret_cast<char*>(&_impl_) +
                offsetof(Impl_, xs_),
            0,
-           offsetof(Impl_, mode_) -
+           offsetof(Impl_, xstep_) -
                offsetof(Impl_, xs_) +
-               sizeof(Impl_::mode_));
+               sizeof(Impl_::xstep_));
 }
 ScanRequest::~ScanRequest() {
   // @@protoc_insertion_point(destructor:stage.ScanRequest)
@@ -3580,16 +3594,16 @@ ScanRequest::GetClassData() const {
   return ScanRequest_class_data_.base();
 }
 PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1
-const ::_pbi::TcParseTable<3, 7, 0, 0, 2>
+const ::_pbi::TcParseTable<4, 9, 0, 0, 2>
 ScanRequest::_table_ = {
   {
     PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_._has_bits_),
     0, // no _extensions_
-    7, 56,  // max_field_number, fast_idx_mask
+    9, 120,  // max_field_number, fast_idx_mask
     offsetof(decltype(_table_), field_lookup_table),
-    4294967168,  // skipmap
+    4294966784,  // skipmap
     offsetof(decltype(_table_), field_entries),
-    7,  // num_field_entries
+    9,  // num_field_entries
     0,  // num_aux_entries
     offsetof(decltype(_table_), field_names),  // no aux_entries
     ScanRequest_class_data_.base(),
@@ -3601,8 +3615,8 @@ ScanRequest::_table_ = {
   }, {{
     {::_pbi::TcParser::MiniParse, {}},
     // .stage.ScanMode mode = 1;
-    {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ScanRequest, _impl_.mode_), 6>(),
-     {8, 6, 0,
+    {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ScanRequest, _impl_.mode_), 3>(),
+     {8, 3, 0,
       PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.mode_)}},
     // double xs = 2;
     {::_pbi::TcParser::FastF64S1,
@@ -3618,21 +3632,35 @@ ScanRequest::_table_ = {
       PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ys_)}},
     // double ye = 5;
     {::_pbi::TcParser::FastF64S1,
-     {41, 3, 0,
+     {41, 5, 0,
       PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ye_)}},
     // double yStep = 6;
     {::_pbi::TcParser::FastF64S1,
-     {49, 4, 0,
+     {49, 6, 0,
       PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ystep_)}},
     // double zFix = 7;
     {::_pbi::TcParser::FastF64S1,
-     {57, 5, 0,
+     {57, 7, 0,
       PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.zfix_)}},
+    // .stage.ScanMainAxis mainAxis = 8;
+    {::_pbi::TcParser::SingularVarintNoZag1<::uint32_t, offsetof(ScanRequest, _impl_.mainaxis_), 4>(),
+     {64, 4, 0,
+      PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.mainaxis_)}},
+    // double xStep = 9;
+    {::_pbi::TcParser::FastF64S1,
+     {73, 8, 0,
+      PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.xstep_)}},
+    {::_pbi::TcParser::MiniParse, {}},
+    {::_pbi::TcParser::MiniParse, {}},
+    {::_pbi::TcParser::MiniParse, {}},
+    {::_pbi::TcParser::MiniParse, {}},
+    {::_pbi::TcParser::MiniParse, {}},
+    {::_pbi::TcParser::MiniParse, {}},
   }}, {{
     65535, 65535
   }}, {{
     // .stage.ScanMode mode = 1;
-    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.mode_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.mode_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
     // double xs = 2;
     {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.xs_), _Internal::kHasBitsOffset + 0, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
     // double xe = 3;
@@ -3640,11 +3668,15 @@ ScanRequest::_table_ = {
     // double ys = 4;
     {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ys_), _Internal::kHasBitsOffset + 2, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
     // double ye = 5;
-    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ye_), _Internal::kHasBitsOffset + 3, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
+    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ye_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
     // double yStep = 6;
-    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ystep_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
+    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.ystep_), _Internal::kHasBitsOffset + 6, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
     // double zFix = 7;
-    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.zfix_), _Internal::kHasBitsOffset + 5, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
+    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.zfix_), _Internal::kHasBitsOffset + 7, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
+    // .stage.ScanMainAxis mainAxis = 8;
+    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.mainaxis_), _Internal::kHasBitsOffset + 4, 0, (0 | ::_fl::kFcOptional | ::_fl::kOpenEnum)},
+    // double xStep = 9;
+    {PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.xstep_), _Internal::kHasBitsOffset + 8, 0, (0 | ::_fl::kFcOptional | ::_fl::kDouble)},
   }},
   // no aux_entries
   {{
@@ -3658,11 +3690,12 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
   (void) cached_has_bits;
 
   cached_has_bits = _impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x000000ffU)) {
     ::memset(&_impl_.xs_, 0, static_cast<::size_t>(
-        reinterpret_cast<char*>(&_impl_.mode_) -
-        reinterpret_cast<char*>(&_impl_.xs_)) + sizeof(_impl_.mode_));
+        reinterpret_cast<char*>(&_impl_.zfix_) -
+        reinterpret_cast<char*>(&_impl_.xs_)) + sizeof(_impl_.zfix_));
   }
+  _impl_.xstep_ = 0;
   _impl_._has_bits_.Clear();
   _internal_metadata_.Clear<::google::protobuf::UnknownFieldSet>();
 }
@@ -3687,7 +3720,7 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
 
   cached_has_bits = this_._impl_._has_bits_[0];
   // .stage.ScanMode mode = 1;
-  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
     if (this_._internal_mode() != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteEnumToArray(
@@ -3723,7 +3756,7 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
   }
 
   // double ye = 5;
-  if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
     if (::absl::bit_cast<::uint64_t>(this_._internal_ye()) != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteDoubleToArray(
@@ -3732,7 +3765,7 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
   }
 
   // double yStep = 6;
-  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000040U)) {
     if (::absl::bit_cast<::uint64_t>(this_._internal_ystep()) != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteDoubleToArray(
@@ -3741,11 +3774,29 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
   }
 
   // double zFix = 7;
-  if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+  if (CheckHasBit(cached_has_bits, 0x00000080U)) {
     if (::absl::bit_cast<::uint64_t>(this_._internal_zfix()) != 0) {
       target = stream->EnsureSpace(target);
       target = ::_pbi::WireFormatLite::WriteDoubleToArray(
           7, this_._internal_zfix(), target);
+    }
+  }
+
+  // .stage.ScanMainAxis mainAxis = 8;
+  if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (this_._internal_mainaxis() != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteEnumToArray(
+          8, this_._internal_mainaxis(), target);
+    }
+  }
+
+  // double xStep = 9;
+  if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+    if (::absl::bit_cast<::uint64_t>(this_._internal_xstep()) != 0) {
+      target = stream->EnsureSpace(target);
+      target = ::_pbi::WireFormatLite::WriteDoubleToArray(
+          9, this_._internal_xstep(), target);
     }
   }
 
@@ -3774,7 +3825,7 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
 
   ::_pbi::Prefetch5LinesFrom7Lines(&this_);
   cached_has_bits = this_._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x000000ffU)) {
     // double xs = 2;
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (::absl::bit_cast<::uint64_t>(this_._internal_xs()) != 0) {
@@ -3793,29 +3844,44 @@ PROTOBUF_NOINLINE void ScanRequest::Clear() {
         total_size += 9;
       }
     }
-    // double ye = 5;
+    // .stage.ScanMode mode = 1;
     if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (this_._internal_mode() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_mode());
+      }
+    }
+    // .stage.ScanMainAxis mainAxis = 8;
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (this_._internal_mainaxis() != 0) {
+        total_size += 1 +
+                      ::_pbi::WireFormatLite::EnumSize(this_._internal_mainaxis());
+      }
+    }
+    // double ye = 5;
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (::absl::bit_cast<::uint64_t>(this_._internal_ye()) != 0) {
         total_size += 9;
       }
     }
     // double yStep = 6;
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
       if (::absl::bit_cast<::uint64_t>(this_._internal_ystep()) != 0) {
         total_size += 9;
       }
     }
     // double zFix = 7;
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
       if (::absl::bit_cast<::uint64_t>(this_._internal_zfix()) != 0) {
         total_size += 9;
       }
     }
-    // .stage.ScanMode mode = 1;
-    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
-      if (this_._internal_mode() != 0) {
-        total_size += 1 +
-                      ::_pbi::WireFormatLite::EnumSize(this_._internal_mode());
+  }
+   {
+    // double xStep = 9;
+    if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+      if (::absl::bit_cast<::uint64_t>(this_._internal_xstep()) != 0) {
+        total_size += 9;
       }
     }
   }
@@ -3837,7 +3903,7 @@ void ScanRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
   (void)cached_has_bits;
 
   cached_has_bits = from._impl_._has_bits_[0];
-  if (BatchCheckHasBit(cached_has_bits, 0x0000007fU)) {
+  if (BatchCheckHasBit(cached_has_bits, 0x000000ffU)) {
     if (CheckHasBit(cached_has_bits, 0x00000001U)) {
       if (::absl::bit_cast<::uint64_t>(from._internal_xs()) != 0) {
         _this->_impl_.xs_ = from._impl_.xs_;
@@ -3854,24 +3920,34 @@ void ScanRequest::MergeImpl(::google::protobuf::MessageLite& to_msg,
       }
     }
     if (CheckHasBit(cached_has_bits, 0x00000008U)) {
+      if (from._internal_mode() != 0) {
+        _this->_impl_.mode_ = from._impl_.mode_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+      if (from._internal_mainaxis() != 0) {
+        _this->_impl_.mainaxis_ = from._impl_.mainaxis_;
+      }
+    }
+    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
       if (::absl::bit_cast<::uint64_t>(from._internal_ye()) != 0) {
         _this->_impl_.ye_ = from._impl_.ye_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000010U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
       if (::absl::bit_cast<::uint64_t>(from._internal_ystep()) != 0) {
         _this->_impl_.ystep_ = from._impl_.ystep_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000020U)) {
+    if (CheckHasBit(cached_has_bits, 0x00000080U)) {
       if (::absl::bit_cast<::uint64_t>(from._internal_zfix()) != 0) {
         _this->_impl_.zfix_ = from._impl_.zfix_;
       }
     }
-    if (CheckHasBit(cached_has_bits, 0x00000040U)) {
-      if (from._internal_mode() != 0) {
-        _this->_impl_.mode_ = from._impl_.mode_;
-      }
+  }
+  if (CheckHasBit(cached_has_bits, 0x00000100U)) {
+    if (::absl::bit_cast<::uint64_t>(from._internal_xstep()) != 0) {
+      _this->_impl_.xstep_ = from._impl_.xstep_;
     }
   }
   _this->_impl_._has_bits_[0] |= cached_has_bits;
@@ -3892,8 +3968,8 @@ void ScanRequest::InternalSwap(ScanRequest* PROTOBUF_RESTRICT PROTOBUF_NONNULL o
   _internal_metadata_.InternalSwap(&other->_internal_metadata_);
   swap(_impl_._has_bits_[0], other->_impl_._has_bits_[0]);
   ::google::protobuf::internal::memswap<
-      PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.mode_)
-      + sizeof(ScanRequest::_impl_.mode_)
+      PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.xstep_)
+      + sizeof(ScanRequest::_impl_.xstep_)
       - PROTOBUF_FIELD_OFFSET(ScanRequest, _impl_.xs_)>(
           reinterpret_cast<char*>(&_impl_.xs_),
           reinterpret_cast<char*>(&other->_impl_.xs_));

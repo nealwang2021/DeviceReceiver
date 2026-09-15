@@ -828,6 +828,102 @@ void MainWindow::initUI()
         posVBox->addLayout(stagePositionButtonsLayout);
         stageLayout->addWidget(stagePosGroup);
 
+        // —— 区域扫描 ——
+        QGroupBox* stageScanGroup = new QGroupBox(QStringLiteral("区域扫描 (StartScan / StopScan)"));
+        stageScanGroup->setObjectName(QStringLiteral("stage_group_scan"));
+        stageScanGroup->setToolTip(QStringLiteral("在 XY 平面按模式步进扫描；Z 为固定高度"));
+        QVBoxLayout* scanVBox = new QVBoxLayout(stageScanGroup);
+        scanVBox->setContentsMargins(8, 8, 8, 8);
+        scanVBox->setSpacing(6);
+        QFormLayout* stageScanFormLayout = new QFormLayout();
+        stageScanFormLayout->setSpacing(6);
+        stageScanFormLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+        m_stageScanModeCombo = new QComboBox();
+        m_stageScanModeCombo->setObjectName(QStringLiteral("stage_scanModeCombo"));
+        m_stageScanModeCombo->addItem(QStringLiteral("蛇形"), QStringLiteral("snake"));
+        m_stageScanModeCombo->addItem(QStringLiteral("往返"), QStringLiteral("alternate_return"));
+        m_stageScanXsSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 0.0);
+        m_stageScanXsSpin->setObjectName(QStringLiteral("stage_scanXsSpin"));
+        m_stageScanXeSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 10.0);
+        m_stageScanXeSpin->setObjectName(QStringLiteral("stage_scanXeSpin"));
+        m_stageScanYsSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 0.0);
+        m_stageScanYsSpin->setObjectName(QStringLiteral("stage_scanYsSpin"));
+        m_stageScanYeSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 10.0);
+        m_stageScanYeSpin->setObjectName(QStringLiteral("stage_scanYeSpin"));
+        m_stageScanStepSpin = createStageDoubleSpin(0.001, 10000.0, 0.1, 1.0);
+        m_stageScanStepSpin->setObjectName(QStringLiteral("stage_scanStepSpin"));
+        m_stageScanZFixSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 0.0);
+        m_stageScanZFixSpin->setObjectName(QStringLiteral("stage_scanZFixSpin"));
+        m_stageScanMainAxisCombo = new QComboBox();
+        m_stageScanMainAxisCombo->setObjectName(QStringLiteral("stage_scanMainAxisCombo"));
+        m_stageScanMainAxisCombo->addItem(QStringLiteral("X扫描 Y步进"), 0);   // X_SCAN_Y_STEP
+        m_stageScanMainAxisCombo->addItem(QStringLiteral("Y扫描 X步进"), 1);   // Y_SCAN_X_STEP
+        m_stageScanMainAxisCombo->setToolTip(QStringLiteral("扫描主轴与步进轴切换"));
+        m_stageScanXStepSpin = createStageDoubleSpin(0.001, 10000.0, 0.1, 0.0);
+        m_stageScanXStepSpin->setObjectName(QStringLiteral("stage_scanXStepSpin"));
+        for (QDoubleSpinBox* s : {m_stageScanXsSpin,
+                                  m_stageScanXeSpin,
+                                  m_stageScanYsSpin,
+                                  m_stageScanYeSpin,
+                                  m_stageScanStepSpin,
+                                  m_stageScanZFixSpin,
+                                  m_stageScanXStepSpin}) {
+            s->setMinimumWidth(88);
+        }
+        stageScanFormLayout->addRow(QStringLiteral("扫描模式"), m_stageScanModeCombo);
+        stageScanFormLayout->addRow(QStringLiteral("扫描主轴"), m_stageScanMainAxisCombo);
+        auto makeRangeRow = [](QDoubleSpinBox* from, QDoubleSpinBox* to) {
+            QWidget* w = new QWidget();
+            QHBoxLayout* h = new QHBoxLayout(w);
+            h->setContentsMargins(0, 0, 0, 0);
+            h->setSpacing(4);
+            h->addWidget(new QLabel(QStringLiteral("从")));
+            h->addWidget(from, 1);
+            h->addWidget(new QLabel(QStringLiteral("到")));
+            h->addWidget(to, 1);
+            return w;
+        };
+        stageScanFormLayout->addRow(QStringLiteral("X 范围 (mm)"), makeRangeRow(m_stageScanXsSpin, m_stageScanXeSpin));
+        stageScanFormLayout->addRow(QStringLiteral("Y 范围 (mm)"), makeRangeRow(m_stageScanYsSpin, m_stageScanYeSpin));
+        stageScanFormLayout->addRow(QStringLiteral("Y 步长 (mm)"), m_stageScanStepSpin);
+        stageScanFormLayout->addRow(QStringLiteral("X 步长 (mm)"), m_stageScanXStepSpin);
+        stageScanFormLayout->addRow(QStringLiteral("Z 固定 (mm)"), m_stageScanZFixSpin);
+        scanVBox->addLayout(stageScanFormLayout);
+        QHBoxLayout* stageScanActionLayout = new QHBoxLayout();
+        stageScanActionLayout->setSpacing(6);
+        m_stageStartScanButton = new QPushButton(QStringLiteral("开始扫描"));
+        m_stageStartScanButton->setObjectName(QStringLiteral("stage_startScanButton"));
+        m_stageStartScanButton->setToolTip(QStringLiteral("StartScan"));
+        m_stageStopScanButton = new QPushButton(QStringLiteral("停止扫描"));
+        m_stageStopScanButton->setObjectName(QStringLiteral("stage_stopScanButton"));
+        m_stageStopScanButton->setToolTip(QStringLiteral("StopScan"));
+        m_stageScanStatusButton = new QPushButton(QStringLiteral("查询状态"));
+        m_stageScanStatusButton->setObjectName(QStringLiteral("stage_scanStatusButton"));
+        m_stageScanStatusButton->setToolTip(QStringLiteral("GetScanStatus"));
+        stageScanActionLayout->addWidget(m_stageStartScanButton);
+        stageScanActionLayout->addWidget(m_stageStopScanButton);
+        stageScanActionLayout->addWidget(m_stageScanStatusButton);
+        stageScanActionLayout->addStretch();
+        scanVBox->addLayout(stageScanActionLayout);
+        stageLayout->addWidget(stageScanGroup);
+
+        // —— 反馈信息 ——
+        QGroupBox* stageFbGroup = new QGroupBox(QStringLiteral("执行反馈"));
+        stageFbGroup->setObjectName(QStringLiteral("stage_group_feedback"));
+        QVBoxLayout* fbVBox = new QVBoxLayout(stageFbGroup);
+        fbVBox->setContentsMargins(8, 8, 8, 8);
+        fbVBox->setSpacing(4);
+        m_stageScanStatusLabel = new QLabel(QStringLiteral("扫描状态: —"));
+        m_stageScanStatusLabel->setObjectName(QStringLiteral("stage_scanStatusLabel"));
+        m_stageScanStatusLabel->setWordWrap(true);
+        m_stageCommandResultLabel = new QLabel(QStringLiteral("最近结果: —"));
+        m_stageCommandResultLabel->setObjectName(QStringLiteral("stage_commandResultLabel"));
+        m_stageCommandResultLabel->setWordWrap(true);
+        m_stageCommandResultLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        fbVBox->addWidget(m_stageScanStatusLabel);
+        fbVBox->addWidget(m_stageCommandResultLabel);
+        stageLayout->addWidget(stageFbGroup);
+
         // —— 点动 ——
         QGroupBox* stageJogGroup = new QGroupBox(QStringLiteral("点动 (Jog)"));
         stageJogGroup->setObjectName(QStringLiteral("stage_group_jog"));
@@ -982,92 +1078,6 @@ void MainWindow::initUI()
         stageSpeedLayout->addStretch();
         stageLayout->addWidget(stageSpeedGroup);
 
-        // —— 区域扫描 ——
-        QGroupBox* stageScanGroup = new QGroupBox(QStringLiteral("区域扫描 (StartScan / StopScan)"));
-        stageScanGroup->setObjectName(QStringLiteral("stage_group_scan"));
-        stageScanGroup->setToolTip(QStringLiteral("在 XY 平面按模式步进扫描；Z 为固定高度"));
-        QVBoxLayout* scanVBox = new QVBoxLayout(stageScanGroup);
-        scanVBox->setContentsMargins(8, 8, 8, 8);
-        scanVBox->setSpacing(6);
-        QFormLayout* stageScanFormLayout = new QFormLayout();
-        stageScanFormLayout->setSpacing(6);
-        stageScanFormLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-        m_stageScanModeCombo = new QComboBox();
-        m_stageScanModeCombo->setObjectName(QStringLiteral("stage_scanModeCombo"));
-        m_stageScanModeCombo->addItem(QStringLiteral("蛇形"), QStringLiteral("snake"));
-        m_stageScanModeCombo->addItem(QStringLiteral("往返"), QStringLiteral("alternate_return"));
-        m_stageScanXsSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 0.0);
-        m_stageScanXsSpin->setObjectName(QStringLiteral("stage_scanXsSpin"));
-        m_stageScanXeSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 10.0);
-        m_stageScanXeSpin->setObjectName(QStringLiteral("stage_scanXeSpin"));
-        m_stageScanYsSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 0.0);
-        m_stageScanYsSpin->setObjectName(QStringLiteral("stage_scanYsSpin"));
-        m_stageScanYeSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 10.0);
-        m_stageScanYeSpin->setObjectName(QStringLiteral("stage_scanYeSpin"));
-        m_stageScanStepSpin = createStageDoubleSpin(0.001, 10000.0, 0.1, 1.0);
-        m_stageScanStepSpin->setObjectName(QStringLiteral("stage_scanStepSpin"));
-        m_stageScanZFixSpin = createStageDoubleSpin(-10000.0, 10000.0, 0.1, 0.0);
-        m_stageScanZFixSpin->setObjectName(QStringLiteral("stage_scanZFixSpin"));
-        for (QDoubleSpinBox* s : {m_stageScanXsSpin,
-                                  m_stageScanXeSpin,
-                                  m_stageScanYsSpin,
-                                  m_stageScanYeSpin,
-                                  m_stageScanStepSpin,
-                                  m_stageScanZFixSpin}) {
-            s->setMinimumWidth(88);
-        }
-        stageScanFormLayout->addRow(QStringLiteral("扫描模式"), m_stageScanModeCombo);
-        auto makeRangeRow = [](QDoubleSpinBox* from, QDoubleSpinBox* to) {
-            QWidget* w = new QWidget();
-            QHBoxLayout* h = new QHBoxLayout(w);
-            h->setContentsMargins(0, 0, 0, 0);
-            h->setSpacing(4);
-            h->addWidget(new QLabel(QStringLiteral("从")));
-            h->addWidget(from, 1);
-            h->addWidget(new QLabel(QStringLiteral("到")));
-            h->addWidget(to, 1);
-            return w;
-        };
-        stageScanFormLayout->addRow(QStringLiteral("X 范围 (mm)"), makeRangeRow(m_stageScanXsSpin, m_stageScanXeSpin));
-        stageScanFormLayout->addRow(QStringLiteral("Y 范围 (mm)"), makeRangeRow(m_stageScanYsSpin, m_stageScanYeSpin));
-        stageScanFormLayout->addRow(QStringLiteral("步长 (mm)"), m_stageScanStepSpin);
-        stageScanFormLayout->addRow(QStringLiteral("Z 固定 (mm)"), m_stageScanZFixSpin);
-        scanVBox->addLayout(stageScanFormLayout);
-        QHBoxLayout* stageScanActionLayout = new QHBoxLayout();
-        stageScanActionLayout->setSpacing(6);
-        m_stageStartScanButton = new QPushButton(QStringLiteral("开始扫描"));
-        m_stageStartScanButton->setObjectName(QStringLiteral("stage_startScanButton"));
-        m_stageStartScanButton->setToolTip(QStringLiteral("StartScan"));
-        m_stageStopScanButton = new QPushButton(QStringLiteral("停止扫描"));
-        m_stageStopScanButton->setObjectName(QStringLiteral("stage_stopScanButton"));
-        m_stageStopScanButton->setToolTip(QStringLiteral("StopScan"));
-        m_stageScanStatusButton = new QPushButton(QStringLiteral("查询状态"));
-        m_stageScanStatusButton->setObjectName(QStringLiteral("stage_scanStatusButton"));
-        m_stageScanStatusButton->setToolTip(QStringLiteral("GetScanStatus"));
-        stageScanActionLayout->addWidget(m_stageStartScanButton);
-        stageScanActionLayout->addWidget(m_stageStopScanButton);
-        stageScanActionLayout->addWidget(m_stageScanStatusButton);
-        stageScanActionLayout->addStretch();
-        scanVBox->addLayout(stageScanActionLayout);
-        stageLayout->addWidget(stageScanGroup);
-
-        // —— 反馈信息 ——
-        QGroupBox* stageFbGroup = new QGroupBox(QStringLiteral("执行反馈"));
-        stageFbGroup->setObjectName(QStringLiteral("stage_group_feedback"));
-        QVBoxLayout* fbVBox = new QVBoxLayout(stageFbGroup);
-        fbVBox->setContentsMargins(8, 8, 8, 8);
-        fbVBox->setSpacing(4);
-        m_stageScanStatusLabel = new QLabel(QStringLiteral("扫描状态: —"));
-        m_stageScanStatusLabel->setObjectName(QStringLiteral("stage_scanStatusLabel"));
-        m_stageScanStatusLabel->setWordWrap(true);
-        m_stageCommandResultLabel = new QLabel(QStringLiteral("最近结果: —"));
-        m_stageCommandResultLabel->setObjectName(QStringLiteral("stage_commandResultLabel"));
-        m_stageCommandResultLabel->setWordWrap(true);
-        m_stageCommandResultLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        fbVBox->addWidget(m_stageScanStatusLabel);
-        fbVBox->addWidget(m_stageCommandResultLabel);
-        stageLayout->addWidget(stageFbGroup);
-
         // —— 文本指令 ——
         QGroupBox* stageTxtGroup = new QGroupBox(QStringLiteral("文本指令 (调试)"));
         stageTxtGroup->setObjectName(QStringLiteral("stage_group_textcmd"));
@@ -1186,7 +1196,8 @@ void MainWindow::initUI()
                                      QStringLiteral("阵列图"),
                                      QStringLiteral("阵列热力图"),
                                      QStringLiteral("漏磁检测"),
-                                     QStringLiteral("脉冲涡流")});
+                                     QStringLiteral("脉冲涡流")
+                                     });//QStringLiteral("多频台位热力图")
         m_createWindowButton = new QPushButton("新建窗口");
         
         createLayout->addRow("窗口类型:", m_windowTypeCombo);
@@ -1441,7 +1452,9 @@ void MainWindow::initConnections()
 
     connect(m_stageStartScanButton, &QPushButton::clicked, this, [this]() {
         const QString mode = m_stageScanModeCombo ? m_stageScanModeCombo->currentData().toString() : QStringLiteral("snake");
-        const QString command = QStringLiteral("start_scan %1 %2 %3 %4 %5 %6 %7")
+        const int mainAxis = m_stageScanMainAxisCombo ? m_stageScanMainAxisCombo->currentData().toInt() : 0;
+        const double xStep = m_stageScanXStepSpin ? m_stageScanXStepSpin->value() : 0.0;
+        QString command = QStringLiteral("start_scan %1 %2 %3 %4 %5 %6 %7")
                                     .arg(mode)
                                     .arg(m_stageScanXsSpin ? m_stageScanXsSpin->value() : 0.0, 0, 'f', 3)
                                     .arg(m_stageScanXeSpin ? m_stageScanXeSpin->value() : 0.0, 0, 'f', 3)
@@ -1449,6 +1462,16 @@ void MainWindow::initConnections()
                                     .arg(m_stageScanYeSpin ? m_stageScanYeSpin->value() : 0.0, 0, 'f', 3)
                                     .arg(m_stageScanStepSpin ? m_stageScanStepSpin->value() : 1.0, 0, 'f', 3)
                                     .arg(m_stageScanZFixSpin ? m_stageScanZFixSpin->value() : 0.0, 0, 'f', 3);
+        // Append optional mainAxis and xStep (only when non-default to keep backward compat)
+        if (mainAxis != 0) {
+            command += QStringLiteral(" %1").arg(mainAxis);
+        }
+        if (xStep != 0.0) {
+            if (mainAxis == 0) {
+                command += QStringLiteral(" 0"); // placeholder mainAxis=0 for xStep
+            }
+            command += QStringLiteral(" %1").arg(xStep, 0, 'f', 3);
+        }
         sendStageCommandText(command);
     });
 
@@ -1952,6 +1975,8 @@ QStringList MainWindow::collectCurrentPlotWindowTypes() const
             types.append(QString::number(static_cast<int>(PlotWindowManager::PulsedDecayPlot)));
         } else if (title.contains(QStringLiteral("阵列"))) {
             types.append(QString::number(static_cast<int>(PlotWindowManager::ArrayPlot)));
+        } else if (title.contains(QStringLiteral("多频台位"))) {
+            types.append(QString::number(static_cast<int>(PlotWindowManager::MultiFreqStageHeatmapPlot)));
         } else if (title.contains(QStringLiteral("热力图"))) {
             types.append(QString::number(static_cast<int>(PlotWindowManager::HeatmapPlot)));
         } else {
@@ -2467,6 +2492,8 @@ void MainWindow::updateStagePanelUiState()
              static_cast<QWidget*>(m_stageScanYeSpin),
              static_cast<QWidget*>(m_stageScanStepSpin),
              static_cast<QWidget*>(m_stageScanZFixSpin),
+             static_cast<QWidget*>(m_stageScanMainAxisCombo),
+             static_cast<QWidget*>(m_stageScanXStepSpin),
              static_cast<QWidget*>(m_stageStartScanButton),
              static_cast<QWidget*>(m_stageStopScanButton),
              static_cast<QWidget*>(m_stageScanStatusButton),
@@ -3526,6 +3553,7 @@ void MainWindow::onCreateWindowClicked()
     case 2: type = PlotWindowManager::ArrayHeatmapPlot; break;
     case 3: type = PlotWindowManager::MagArrayPlot; break;
     case 4: type = PlotWindowManager::PulseEddyPlot; break;
+    case 5: type = PlotWindowManager::MultiFreqStageHeatmapPlot; break;
     default:
         qWarning() << "[MainWindow] 窗口类型索引异常:" << typeIndex << "，使用组合图";
         type = PlotWindowManager::CombinedPlot;
